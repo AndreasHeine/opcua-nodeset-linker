@@ -1,0 +1,11 @@
+nodesets:
+  - tests/data/ua_base.xml
+  - tests/data/machinery.xml
+
+mode: STRICT
+
+roots:
+  - browseName=MSSControllerType
+  - nodeid=nsu=http://opcfoundation.org/UA/Machinery/;i=2200
+
+output: out/reduced.xml

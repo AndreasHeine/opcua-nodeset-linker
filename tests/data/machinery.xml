@@ -1,0 +1,194 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+A model document, written like Opc.Ua.Di.NodeSet2.xml: the model namespace is the only
+Uri entry (so it is namespace index 1), the version lives in the Models table, the
+namespace metadata object hangs under the standard Namespaces folder and carries the
+IsNamespaceSubset property.
+-->
+<UANodeSet xmlns="http://opcfoundation.org/UA/2011/03/UANodeSet.xsd">
+  <NamespaceUris>
+    <Uri>http://opcfoundation.org/UA/Machinery/</Uri>
+  </NamespaceUris>
+  <Models>
+    <Model ModelUri="http://opcfoundation.org/UA/Machinery/" XmlSchemaUri="http://opcfoundation.org/UA/Machinery/Types.xsd" Version="1.0.1" PublicationDate="2024-01-01T00:00:00Z" ModelVersion="1.0.1">
+      <RequiredModel ModelUri="http://opcfoundation.org/UA/" XmlSchemaUri="http://opcfoundation.org/UA/2008/02/Types.xsd" Version="1.05.07" PublicationDate="2026-07-30T00:00:00Z" ModelVersion="1.5.7" />
+    </Model>
+  </Models>
+  <Aliases>
+    <Alias Alias="Boolean">i=1</Alias>
+    <Alias Alias="Int32">i=6</Alias>
+    <Alias Alias="String">i=12</Alias>
+    <Alias Alias="Structure">i=22</Alias>
+    <Alias Alias="Organizes">i=35</Alias>
+    <Alias Alias="HasModellingRule">i=37</Alias>
+    <Alias Alias="HasEncoding">i=38</Alias>
+    <Alias Alias="HasTypeDefinition">i=40</Alias>
+    <Alias Alias="HasSubtype">i=45</Alias>
+    <Alias Alias="HasProperty">i=46</Alias>
+    <Alias Alias="HasComponent">i=47</Alias>
+    <Alias Alias="Argument">i=24136</Alias>
+    <Alias Alias="HasInterface">i=17603</Alias>
+  </Aliases>
+
+  <UAObject NodeId="ns=1;i=15001" BrowseName="1:http://opcfoundation.org/UA/Machinery/" SymbolicName="OPCUAMachineryNamespaceMetadata">
+    <DisplayName>http://opcfoundation.org/UA/Machinery/</DisplayName>
+    <Documentation>https://reference.opcfoundation.org/Machinery/v105/docs/12.1</Documentation>
+    <References>
+      <Reference ReferenceType="HasProperty">ns=1;i=15002</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=15003</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=15005</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">i=11715</Reference>
+      <Reference ReferenceType="HasTypeDefinition">i=11616</Reference>
+    </References>
+  </UAObject>
+  <UAVariable NodeId="ns=1;i=15002" BrowseName="NamespaceUri" ParentNodeId="ns=1;i=15001" DataType="String">
+    <DisplayName>NamespaceUri</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=15001</Reference>
+    </References>
+    <Value>
+      <String xmlns="http://opcfoundation.org/UA/2008/02/Types.xsd">http://opcfoundation.org/UA/Machinery/</String>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=15003" BrowseName="NamespaceVersion" ParentNodeId="ns=1;i=15001" DataType="String">
+    <DisplayName>NamespaceVersion</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=15001</Reference>
+    </References>
+    <Value>
+      <String xmlns="http://opcfoundation.org/UA/2008/02/Types.xsd">1.0.1</String>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=15005" BrowseName="IsNamespaceSubset" ParentNodeId="ns=1;i=15001" DataType="Boolean">
+    <DisplayName>IsNamespaceSubset</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=15001</Reference>
+    </References>
+    <Value>
+      <Boolean xmlns="http://opcfoundation.org/UA/2008/02/Types.xsd">false</Boolean>
+    </Value>
+  </UAVariable>
+
+  <UADataType NodeId="ns=1;i=2001" BrowseName="1:JobDataType" SymbolicName="JobDataType">
+    <DisplayName>JobDataType</DisplayName>
+    <Category>Machinery</Category>
+    <Documentation>https://reference.opcfoundation.org/Machinery/v105/docs/5.3</Documentation>
+    <References>
+      <Reference ReferenceType="HasSubtype" IsForward="false">i=22</Reference>
+      <Reference ReferenceType="HasEncoding">ns=1;i=2010</Reference>
+      <Reference ReferenceType="HasEncoding">ns=1;i=2011</Reference>
+    </References>
+    <Definition Name="JobDataType">
+      <Field Name="JobId" DataType="String" />
+      <Field Name="State" DataType="ns=1;i=2002" />
+      <Field Name="Progress" DataType="ns=1;i=2003" IsOptional="true" />
+    </Definition>
+  </UADataType>
+
+  <UADataType NodeId="ns=1;i=2002" BrowseName="1:JobStateEnum" SymbolicName="JobStateEnum">
+    <DisplayName>JobStateEnum</DisplayName>
+    <References>
+      <Reference ReferenceType="HasSubtype" IsForward="false">i=29</Reference>
+    </References>
+    <Definition Name="JobStateEnum">
+      <Field Name="Idle" Value="0" />
+      <Field Name="Running" Value="1" />
+      <Field Name="Done" Value="2" />
+    </Definition>
+  </UADataType>
+
+  <UADataType NodeId="ns=1;i=2003" BrowseName="1:JobStageEnum" SymbolicName="JobStageEnum">
+    <DisplayName>JobStageEnum</DisplayName>
+    <References>
+      <Reference ReferenceType="HasSubtype" IsForward="false">i=29</Reference>
+    </References>
+    <Definition Name="JobStageEnum">
+      <Field Name="Prep" Value="0" />
+    </Definition>
+  </UADataType>
+
+  <UADataType NodeId="ns=1;i=2010" BrowseName="1:JobDataTypeBinary" SymbolicName="JobDataTypeBinary" Purpose="ServicesOnly">
+    <DisplayName>JobDataType Binary Encoding</DisplayName>
+    <References>
+      <Reference ReferenceType="HasSubtype" IsForward="false">i=22</Reference>
+    </References>
+  </UADataType>
+  <UADataType NodeId="ns=1;i=2011" BrowseName="1:JobDataTypeXml" SymbolicName="JobDataTypeXml" Purpose="ServicesOnly">
+    <DisplayName>JobDataType XML Encoding</DisplayName>
+    <References>
+      <Reference ReferenceType="HasSubtype" IsForward="false">i=22</Reference>
+    </References>
+  </UADataType>
+
+  <UADataType NodeId="ns=1;i=2020" BrowseName="1:MachineStatusStructure" SymbolicName="MachineStatusStructure">
+    <DisplayName>MachineStatusStructure</DisplayName>
+    <References>
+      <Reference ReferenceType="HasSubtype" IsForward="false">i=22</Reference>
+    </References>
+    <Definition Name="MachineStatusStructure">
+      <Field Name="Job" DataType="ns=1;i=2001" />
+    </Definition>
+  </UADataType>
+
+  <UAObjectType NodeId="ns=1;i=2100" BrowseName="1:IMachineStatus" SymbolicName="IMachineStatus" IsAbstract="true">
+    <DisplayName>IMachineStatus</DisplayName>
+    <References>
+      <Reference ReferenceType="HasSubtype" IsForward="false">i=58</Reference>
+    </References>
+  </UAObjectType>
+
+  <UAObjectType NodeId="ns=1;i=2200" BrowseName="1:MSSControllerInstance" SymbolicName="MSSControllerInstance">
+    <DisplayName>MSSControllerInstance</DisplayName>
+    <References>
+      <Reference ReferenceType="HasSubtype" IsForward="false">i=1002</Reference>
+      <Reference ReferenceType="HasTypeDefinition">i=1002</Reference>
+      <Reference ReferenceType="HasInterface">ns=1;i=2100</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=2201</Reference>
+    </References>
+  </UAObjectType>
+
+  <UAMethod NodeId="ns=1;i=2201" BrowseName="StartJob" ParentNodeId="ns=1;i=2200">
+    <DisplayName>StartJob</DisplayName>
+    <References>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=2200</Reference>
+    </References>
+  </UAMethod>
+
+  <UAVariable NodeId="ns=1;i=2202" BrowseName="InputArguments" ParentNodeId="ns=1;i=2201" DataType="Argument" ValueRank="1" ArrayDimensions="0">
+    <DisplayName>InputArguments</DisplayName>
+    <References>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=2201</Reference>
+    </References>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=2203" BrowseName="OutputArguments" ParentNodeId="ns=1;i=2201" DataType="Argument" ValueRank="1" ArrayDimensions="0">
+    <DisplayName>OutputArguments</DisplayName>
+    <References>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=2201</Reference>
+    </References>
+  </UAVariable>
+
+  <UAObject NodeId="ns=1;i=2300" BrowseName="1:MachineDiagnostics" ParentNodeId="ns=1;i=2200">
+    <DisplayName>MachineDiagnostics</DisplayName>
+    <References>
+      <Reference ReferenceType="HasModellingRule">i=80</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=2200</Reference>
+    </References>
+  </UAObject>
+
+  <UAView NodeId="ns=1;i=2400" BrowseName="1:MachineryView" ContainsNoLoops="true" EventNotifier="0">
+    <DisplayName>MachineryView</DisplayName>
+    <References>
+      <Reference ReferenceType="Organizes">ns=1;i=2200</Reference>
+    </References>
+  </UAView>
+
+  <UAObjectType NodeId="ns=1;i=2500" BrowseName="1:UnrelatedType" SymbolicName="UnrelatedType">
+    <DisplayName>UnrelatedType</DisplayName>
+    <References>
+      <Reference ReferenceType="HasSubtype" IsForward="false">i=58</Reference>
+    </References>
+  </UAObjectType>
+</UANodeSet>
