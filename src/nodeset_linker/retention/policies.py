@@ -41,11 +41,10 @@ class OptionalAwarePolicy(StrictPolicy):
 
 @dataclass(slots=True)
 class RuntimePolicy:
-    """RUNTIME — the subset a server actually instantiates.
+    """RUNTIME — omit optional declarations, without inferring live server usage.
 
-    Keeps ``Mandatory`` and ``MandatoryPlaceholder``; drops ``Optional`` and
-    ``OptionalPlaceholder`` unless the dependency closure requires them (the engine
-    treats hard structural/inheritance/datatype dependencies as non-droppable).
+    Keeps Mandatory declarations and required dependencies. Optional branches are skipped
+    by the resolver; the engine protects explicit roots and restores non-prunable targets.
     """
 
     name = "RUNTIME"

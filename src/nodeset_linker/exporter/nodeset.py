@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING
 from lxml.etree import Element, SubElement, fromstring, tostring
 from lxml.etree import indent as xml_indent
 
+from nodeset_linker.graph.engine import SemanticGraph
 from nodeset_linker.models.identifiers import UA_NAMESPACE_URI, ExpandedNodeId, IdentifierKind
 from nodeset_linker.models.namespace import NODESET_XML_NAMESPACE, ModelInfo, Namespace
 from nodeset_linker.models.namespace_metadata import (
@@ -51,6 +52,7 @@ from nodeset_linker.models.node import (
 )
 from nodeset_linker.models.node_class import ModellingRule, NodeClass
 from nodeset_linker.repository.model import SemanticModel
+from nodeset_linker.retention.engine import prune_navigation
 from nodeset_linker.utils.errors import ExportError
 from nodeset_linker.validator.semantic import SemanticValidator
 
@@ -257,6 +259,8 @@ class NodeSetExporter:
             model_el = SubElement(models_el, "Model", **attrs)
             written = True
             for required in info.required_models:
+                if required not in namespaces:
+                    continue
                 SubElement(model_el, "RequiredModel", **self._required_attrs(info, required))
         if not written:
             root.remove(models_el)
@@ -399,6 +403,8 @@ class NodeSetExporter:
             browse_uri = node.node_id.namespace  # an index hint with no resolvable URI
         if browse_uri and browse_uri != UA_NAMESPACE and browse_uri in assigner.indices():
             element.set("BrowseName", f"{assigner.index_of(browse_uri)}:{browse.name}")
+        elif ":" in browse.name:
+            element.set("BrowseName", f"0:{browse.name}")
         else:
             element.set("BrowseName", browse.name)
         if node.symbolic_name:
@@ -462,7 +468,21 @@ class NodeSetExporter:
                 extensions_el.append(fromstring(serialized))
 
         if node.value_xml is not None:
-            element.append(fromstring(node.value_xml))
+            value = fromstring(node.value_xml)
+            dependencies = dict(node.value_dependencies)
+            for field in value.iter():
+                if field.tag.rsplit("}", 1)[-1] not in {"TypeId", "DataType"}:
+                    continue
+                for identifier in field:
+                    if identifier.tag.rsplit("}", 1)[-1] != "Identifier":
+                        continue
+                    dependency = dependencies.get((identifier.text or "").strip())
+                    if dependency is not None:
+                        target = self._id_of(dependency, ids, assigner)
+                        if target is None:
+                            raise ExportError(f"value dependency {dependency} was removed")
+                        identifier.text = target
+            element.append(value)
         if node.inverse_name:
             SubElement(element, "InverseName").text = node.inverse_name
 
@@ -666,7 +686,12 @@ def export_closure(
     model: SemanticModel, closure: Closure, path: Path | str, external: frozenset[str] = frozenset()
 ) -> Path:
     """Export exactly the nodes of a dependency closure."""
-    return export(model, closure.ids(), path, external=external)
+    keep = {node_id for node_id in closure.ids() if node_id.namespace not in external}
+    prepared = prune_navigation(
+        model, SemanticGraph.from_model(model), keep, external,
+        navigation_only=closure.navigation_only,
+    )
+    return export(prepared, keep, path, external=external)
 
 
 def _subset_model(

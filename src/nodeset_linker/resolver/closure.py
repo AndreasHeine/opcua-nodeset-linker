@@ -4,12 +4,9 @@ The traversal is deterministic, cycle-safe and explainable: a breadth-first walk
 an explicit ``deque`` and a visited set records, for every reached node, the *first*
 path that reached it — which is what ``nodeset-linker explain`` prints.
 
-Direction matters only in one place: inheritance must be followed upward.  A retained
-node whose subtype lives elsewhere still needs its own base chain, so ``HasSubtype``
-edges are traversed forward (to bases) and never backward (a base does not pull its
-subtypes).  All other reference kinds are traversed in both directions, because OPC UA
-reference types are symmetric by definition: an inverted ``HasComponent`` still means
-the component belongs to the parent.
+References are directional: types do not pull their users, datatypes do not pull
+variables that use them, and bases do not pull unrelated subtypes. Inverse ownership
+references still let a parent discover its children when only the child declares the link.
 """
 
 from __future__ import annotations
@@ -18,9 +15,15 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from nodeset_linker.graph.engine import SemanticGraph
+from nodeset_linker.graph.engine import (
+    OWNERSHIP_REFERENCES,
+    SemanticGraph,
+    follows_reference,
+    reverse_dependency,
+)
 from nodeset_linker.models.dependency import DependencyKind
 from nodeset_linker.models.identifiers import UA_NAMESPACE_URI, ExpandedNodeId
+from nodeset_linker.models.node_class import ModellingRule, NodeRole
 
 if TYPE_CHECKING:  # pragma: no cover
     from nodeset_linker.models.node import UANode
@@ -80,6 +83,7 @@ class Closure:
 
     retained: dict[ExpandedNodeId, RetentionReason] = field(default_factory=dict)
     roots: tuple[ExpandedNodeId, ...] = ()
+    navigation_only: set[ExpandedNodeId] = field(default_factory=set)
 
     def contains(self, node_id: ExpandedNodeId) -> bool:
         return node_id in self.retained
@@ -98,8 +102,16 @@ QueueEntry = tuple[ExpandedNodeId, tuple[ClosureStep, ...], ExpandedNodeId]
 class DependencyResolver:
     """Computes the transitive dependency closure of selected roots."""
 
-    def __init__(self, graph: SemanticGraph) -> None:
+    def __init__(
+        self,
+        graph: SemanticGraph,
+        *,
+        external: frozenset[str] = frozenset(),
+        include_optional: bool = True,
+    ) -> None:
         self._graph = graph
+        self._external = external
+        self._include_optional = include_optional
 
     def resolve(
         self, roots: list[ExpandedNodeId], root_labels: dict[ExpandedNodeId, str] | None = None
@@ -120,6 +132,7 @@ class DependencyResolver:
         # A reference type a retained node uses has to be declared in the document, and it
         # brings its own bases with it — so the pull and the traversal repeat until stable.
         while True:
+            self._pull_namespace_metadata(closure, queue)
             self._pull_reference_types(closure, queue)
             if not queue:
                 break
@@ -130,7 +143,28 @@ class DependencyResolver:
         """Follow every dependency of the queued nodes until the queue is empty."""
         while queue:
             current, path, origin = queue.popleft()
+            if current.namespace in self._external:
+                continue
             for target, metadata in self._graph.out_edges(current):
+                semantics = self._graph.reference_semantics(metadata.reference_type)
+                if (
+                    semantics in OWNERSHIP_REFERENCES | {"Organizes"}
+                    and not metadata.is_forward
+                ) or semantics == "ParentNodeId":
+                    step = ClosureStep(
+                        target, self._label(target), metadata.reference_type,
+                        metadata.dependency_kind, metadata.is_forward,
+                    )
+                    self._visit(target, origin, (*path, step), closure, queue, navigation_only=True)
+                    continue
+                if current in closure.navigation_only and semantics in (
+                    OWNERSHIP_REFERENCES | {"Organizes"}
+                ):
+                    continue
+                if not follows_reference(semantics, metadata.is_forward):
+                    continue
+                if self._omit_optional_child(target, semantics):
+                    continue
                 step = ClosureStep(
                     node_id=target,
                     browse_name=self._label(target),
@@ -141,8 +175,22 @@ class DependencyResolver:
                 self._visit(target, origin, (*path, step), closure, queue)
 
             for source, metadata in self._graph.in_edges(current):
-                if metadata.dependency_kind is DependencyKind.INHERITANCE:
-                    continue  # never pull subtypes of a retained base
+                semantics = self._graph.reference_semantics(metadata.reference_type)
+                if semantics in OWNERSHIP_REFERENCES | {"Organizes"} and metadata.is_forward:
+                    step = ClosureStep(
+                        source, self._label(source), metadata.reference_type,
+                        metadata.dependency_kind, False,
+                    )
+                    self._visit(source, origin, (*path, step), closure, queue, navigation_only=True)
+                    continue
+                if current in closure.navigation_only and semantics in (
+                    OWNERSHIP_REFERENCES | {"Organizes"}
+                ):
+                    continue
+                if not reverse_dependency(semantics, metadata.is_forward):
+                    continue
+                if self._omit_optional_child(source, semantics):
+                    continue
                 step = ClosureStep(
                     node_id=source,
                     browse_name=self._label(source),
@@ -151,6 +199,34 @@ class DependencyResolver:
                     is_forward=False,
                 )
                 self._visit(source, origin, (*path, step), closure, queue)
+
+    def _pull_namespace_metadata(self, closure: Closure, queue: deque[QueueEntry]) -> None:
+        namespaces = {
+            node_id.namespace: reason
+            for node_id, reason in closure.retained.items()
+            if node_id.namespace not in self._external
+        }
+        for node in self._graph.nodes():
+            if node.role is not NodeRole.NAMESPACE_METADATA or node.node_id in closure.retained:
+                continue
+            reason = namespaces.get(node.node_id.namespace)
+            if reason is None:
+                continue
+            step = ClosureStep(
+                node.node_id, node.browse_name.name, "NamespaceMetadata",
+                DependencyKind.NAMESPACE, True,
+            )
+            self._visit(node.node_id, reason.origin, (*reason.path, step), closure, queue)
+
+    def _omit_optional_child(self, node_id: ExpandedNodeId, reference_type: str) -> bool:
+        node = self._graph.node(node_id)
+        return (
+            not self._include_optional
+            and reference_type in OWNERSHIP_REFERENCES | {"Organizes"}
+            and node is not None
+            and node.modelling_rule
+            in {ModellingRule.OPTIONAL, ModellingRule.OPTIONAL_PLACEHOLDER}
+        )
 
     def _pull_reference_types(self, closure: Closure, queue: deque[QueueEntry]) -> None:
         """Declare every reference type a retained node actually uses.
@@ -162,7 +238,7 @@ class DependencyResolver:
         for node_id in list(closure.retained):
             reason = closure.retained[node_id]
             node: UANode | None = self._graph.node(node_id)
-            if node is None:
+            if node is None or node_id.namespace in self._external:
                 continue
             for ref in node.references:
                 type_id = ref.reference_type
@@ -186,8 +262,13 @@ class DependencyResolver:
         path: tuple[ClosureStep, ...],
         closure: Closure,
         queue: deque[QueueEntry],
+        *,
+        navigation_only: bool = False,
     ) -> None:
         if target in closure.retained:
+            if not navigation_only and target in closure.navigation_only:
+                closure.navigation_only.remove(target)
+                queue.append((target, path, origin))
             return  # cycle-safe: first path wins, traversal stays deterministic
         label = closure.retained[origin].origin_label
         closure.retained[target] = RetentionReason(
@@ -197,6 +278,8 @@ class DependencyResolver:
             path=path,
             kind=path[-1].dependency_kind,
         )
+        if navigation_only:
+            closure.navigation_only.add(target)
         queue.append((target, path, origin))
 
     def _label(self, node_id: ExpandedNodeId) -> str:

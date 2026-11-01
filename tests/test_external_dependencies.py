@@ -346,7 +346,12 @@ class TestExternalOrdinaryModel:
         result, _ = linked
         statistics = json.loads(result.statistics.as_json())
         assert statistics["external_nodes"] == len(DI_NODES)
-        assert statistics["removed_nodes"] >= statistics["external_nodes"]
+        assert statistics["retained_nodes"] == len(result.retained)
+        eligible = statistics["original_nodes"] - statistics["external_nodes"]
+        assert statistics["removed_nodes"] == eligible - statistics["retained_nodes"]
+        assert statistics["reduction_percent"] == round(
+            statistics["removed_nodes"] / eligible * 100, 1
+        )
         namespace_report = json.loads(result.namespace_report.as_json())
         assert namespace_report["external_models"] == [DI_NS]
         assert namespace_report["external_references"]["DI"] > 0  # counted per namespace alias
@@ -495,10 +500,17 @@ class TestStrictnessStaysStrict:
 
     def test_explicit_exclusion_that_breaks_the_model_still_fails(self, tmp_path) -> None:
         """An ordinary exclude rule is not relaxed by an external dependency."""
+        base = write(
+            tmp_path, "base.xml",
+            (DATA / "ua_base.xml").read_text(encoding="utf-8").replace(
+                '<Reference ReferenceType="HasComponent">i=1012</Reference>',
+                '<Reference ReferenceType="RequiresDiagnostics">i=1012</Reference>',
+            ),
+        )
         with pytest.raises(ValidationError) as excinfo:
             run(
                 tmp_path,
-                [DATA / "ua_base.xml", DATA / "machinery.xml"],
+                [base, DATA / "machinery.xml"],
                 ["browseName=MSSControllerType"],
                 external=[DI_NS],
                 mode="CUSTOM",

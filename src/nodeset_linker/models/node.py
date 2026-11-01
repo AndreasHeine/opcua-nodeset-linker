@@ -22,8 +22,8 @@ _EMPTY_ATTRIBUTES: Mapping[str, str] = MappingProxyType({})
 class Reference:
     """A semantic reference between two nodes.
 
-    ``is_forward`` describes the direction as written in the source document; the
-    graph engine normalises inverted references so traversal is direction-independent.
+    ``is_forward`` describes the OPC UA direction as written in the source document;
+    the resolver uses it to distinguish dependencies from inverse navigation.
 
     ``reference_type`` is the *identifier* of the reference type; ``type_name`` is its
     browse name (the alias used in XML).  Either side may be missing in a source
@@ -132,6 +132,8 @@ class UANode:
     documentation: str | None = None
     value_xml: str | None = None
     """Serialised ``<Value>`` element; kept verbatim so values survive a reduction."""
+    value_dependencies: tuple[tuple[str, ExpandedNodeId], ...] = ()
+    """Source spellings and resolved IDs of encoding and argument datatypes in Value."""
     extensions_xml: tuple[str, ...] = ()
     role_permissions_xml: tuple[str, ...] = ()
     inverse_name: str | None = None
@@ -308,4 +310,5 @@ def referenced_identifiers(node: UANode) -> tuple[ExpandedNodeId, ...]:
     if isinstance(node, UADataType) and definition is not None:
         found.extend(field.data_type for field in definition.fields)
         found.extend(alternative.data_type for alternative in definition.union_alternatives)
+    found.extend(identifier for _, identifier in node.value_dependencies)
     return tuple(dict.fromkeys(found))

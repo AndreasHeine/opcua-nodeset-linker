@@ -26,7 +26,7 @@ from nodeset_linker.reports.data import (
 from nodeset_linker.repository.model import SemanticModel, load_nodesets
 from nodeset_linker.resolver.closure import Closure, DependencyResolver
 from nodeset_linker.resolver.roots import RootResolver, RootSelector
-from nodeset_linker.retention.engine import RetentionEngine
+from nodeset_linker.retention.engine import RetentionEngine, prune_navigation
 from nodeset_linker.utils.errors import ResolutionError, ValidationError
 from nodeset_linker.validator.semantic import SemanticValidator, ValidationReport
 
@@ -76,32 +76,51 @@ class LinkerPipeline:
         self._reject_external_roots(roots, external)
         labels = {root: _label(model, root) for root in roots}
 
-        closure = DependencyResolver(graph).resolve(roots, labels)
+        custom_rules = self._config.custom_rules()
+        custom_roots = [
+            node.node_id
+            for node in model.iter_nodes()
+            if node.node_id.namespace not in external
+            and next((rule.include for rule in custom_rules if rule.matches(node)), False)
+            and node.node_id not in roots
+        ]
+        labels.update(
+            {node_id: f"custom retain: {_label(model, node_id)}" for node_id in custom_roots}
+        )
+        closure = DependencyResolver(
+            graph, external=external, include_optional=self._config.mode != "RUNTIME"
+        ).resolve([*roots, *custom_roots], labels)
+        closure.roots = tuple(roots)
 
         engine = RetentionEngine(
-            policy=build_policy(self._config.mode, self._config.custom_rules()),
-            custom_rules=self._config.custom_rules(),
+            policy=build_policy(self._config.mode, custom_rules),
+            custom_rules=custom_rules,
         )
         retained: set[ExpandedNodeId] = set()
         for node in model.iter_nodes():
             if engine.decide(
                 node,
                 retained_by_closure=node.node_id in closure.ids(),
-                is_root=node.node_id in roots,
+                is_root=(
+                    node.node_id in roots or node.node_id in custom_roots
+                    or node.node_id in closure.navigation_only
+                ),
             ):
                 retained.add(node.node_id)
         # An externalized model is never shipped — not even when its nodes survived the
         # closure, because the dependency it represents is stated in the output header.
         retained -= external_ids
 
-        # Dropping a node must not leave a retained reference pointing at it.  Nodes the
-        # policy dropped are repaired; nodes a user excluded on purpose stay gone, and an
-        # exclusion that breaks the model is reported by validation below.  Nodes of an
-        # externalized model are never repaired back in: they are referenced, not shipped.
+        export_model = prune_navigation(
+            model, graph, retained, external, navigation_only=closure.navigation_only
+        )
         engine.repair(
-            graph,
+            SemanticGraph.from_model(export_model),
             retained,
             repairable=set(engine.dropped) - set(engine.excluded) - external_ids,
+        )
+        export_model = prune_navigation(
+            model, graph, retained, external, navigation_only=closure.navigation_only
         )
 
         effective = Closure(
@@ -111,13 +130,14 @@ class LinkerPipeline:
                 if node_id in closure.ids()
             },
             roots=tuple(roots),
+            navigation_only=closure.navigation_only & retained,
         )
-        statistics = compute_statistics(model, effective, external=external)
+        statistics = compute_statistics(model, effective, retained=retained, external=external)
         dependency_report = build_dependency_report(model, effective)
-        namespace_report = build_namespace_report(model, effective, external=external)
+        namespace_report = build_namespace_report(export_model, effective, external=external)
 
         validation = SemanticValidator(
-            _subset_model(model, retained), source=model, external=external
+            _subset_model(export_model, retained), source=model, external=external
         ).validate()
         if not validation.ok:
             # A retention choice that breaks the model must never be exported; report it
@@ -126,7 +146,7 @@ class LinkerPipeline:
         output_path: Path | None = None
         if export_output and self._config.output:
             output_path = export(
-                model,
+                export_model,
                 retained,
                 self._config.output,
                 validate=self._config.validate_before_export,

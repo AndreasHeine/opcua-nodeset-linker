@@ -22,7 +22,12 @@ from nodeset_linker.validator.semantic import SemanticValidator, validate_model
 
 
 def ref(name: str, target: int) -> tuple[Reference, ...]:
-    return (Reference(reference_type=node_id(0, UA_NS), type_name=name, target=node_id(target)),)
+    return (
+        Reference(
+            reference_type=node_id(0, UA_NS), type_name=name, target=node_id(target),
+            is_forward=name != "HasSubtype",
+        ),
+    )
 
 
 class TestValidation:

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 
 import pytest
-from tests.conftest import DATA, Machinery_NS
+from tests.conftest import DATA, UA_NS, Machinery_NS
 
 from nodeset_linker.explain.explainer import Explainer
 from nodeset_linker.graph.engine import SemanticGraph
@@ -16,7 +16,7 @@ from nodeset_linker.reports.data import (
     compute_statistics,
 )
 from nodeset_linker.repository.model import load_nodesets
-from nodeset_linker.resolver.closure import DependencyResolver
+from nodeset_linker.resolver.closure import Closure, DependencyResolver
 from nodeset_linker.utils.errors import ResolutionError
 
 
@@ -71,6 +71,39 @@ class TestReports:
         assert payload["original_nodes"] == model.node_count()
         assert payload["retained_nodes"] == len(closure.ids())
         assert payload["removed_nodes"] == payload["original_nodes"] - payload["retained_nodes"]
+
+    def test_external_nodes_are_not_removed_or_in_the_percentage_baseline(self) -> None:
+        model, closure = closure_for_machinery()
+        external_ids = {node_id for node_id in model.nodes if node_id.namespace == UA_NS}
+        eligible_ids = set(model.nodes) - external_ids
+        expected_retained = closure.ids() & eligible_ids
+        statistics = compute_statistics(model, closure, external=frozenset({UA_NS}))
+        assert statistics.external_nodes == len(external_ids)
+        assert statistics.retained_nodes == len(expected_retained)
+        assert statistics.removed_nodes == len(eligible_ids - expected_retained)
+        assert statistics.reduction_percent == pytest.approx(
+            statistics.removed_nodes / len(eligible_ids) * 100
+        )
+        assert statistics.original_nodes == (
+            statistics.retained_nodes + statistics.removed_nodes + statistics.external_nodes
+        )
+
+    @pytest.mark.parametrize(
+        "external", [frozenset({UA_NS}), frozenset({UA_NS, Machinery_NS})]
+    )
+    def test_externalization_alone_is_zero_reduction(self, external) -> None:
+        model, _ = closure_for_machinery()
+        retained = set(model.nodes)
+        statistics = compute_statistics(model, Closure(), retained=retained, external=external)
+        assert statistics.removed_nodes == 0
+        assert statistics.reduction_percent == 0.0
+        assert statistics.original_nodes == statistics.retained_nodes + statistics.external_nodes
+
+    def test_unloaded_external_namespace_does_not_change_statistics(self) -> None:
+        model, closure = closure_for_machinery()
+        assert compute_statistics(
+            model, closure, external=frozenset({"http://example.org/unloaded/"})
+        ) == compute_statistics(model, closure)
 
     def test_dependency_report_contents(self) -> None:
         model, closure = closure_for_machinery()

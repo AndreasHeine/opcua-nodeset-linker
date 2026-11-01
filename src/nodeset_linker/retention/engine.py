@@ -2,14 +2,68 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Protocol
 
-from nodeset_linker.graph.engine import SemanticGraph
+from nodeset_linker.graph.engine import OWNERSHIP_REFERENCES, SemanticGraph, follows_reference
 from nodeset_linker.models.dependency import MandatoryLevel
 from nodeset_linker.models.identifiers import ExpandedNodeId
 from nodeset_linker.models.node import UANode, mandatory_level_of
 from nodeset_linker.models.node_class import ModellingRule, NodeRole
+from nodeset_linker.repository.model import SemanticModel
+
+
+def prune_navigation(
+    model: SemanticModel,
+    graph: SemanticGraph,
+    keep: set[ExpandedNodeId],
+    external: frozenset[str] = frozenset(),
+    *,
+    navigation_only: set[ExpandedNodeId] | None = None,
+) -> SemanticModel:
+    """Prepare retained nodes without legal boundary links; preserve missing hard targets."""
+    result = SemanticModel(
+        nodes=dict(model.nodes),
+        namespaces=dict(model.namespaces),
+        documents=list(model.documents),
+        models=dict(model.models),
+    )
+    for node_id in keep:
+        node = model.nodes[node_id]
+        references = []
+        for ref in node.references:
+            semantics = graph.reference_semantics(ref.type_name)
+            target = model.get(ref.target)
+            omitted = (
+                target is not None
+                and ref.target not in keep
+                and ref.target.namespace not in external
+            )
+            optional_child = (
+                target is not None
+                and semantics in OWNERSHIP_REFERENCES | {"Organizes"}
+                and target.modelling_rule
+                in {ModellingRule.OPTIONAL, ModellingRule.OPTIONAL_PLACEHOLDER}
+            )
+            if omitted and (
+                not follows_reference(semantics, ref.is_forward) or optional_child
+                or (
+                    navigation_only is not None and node_id in navigation_only
+                    and semantics in OWNERSHIP_REFERENCES | {"Organizes"}
+                )
+            ):
+                continue
+            references.append(ref)
+        updated = node.with_references(tuple(references))
+        if (
+            node.parent_node_id in model.nodes
+            and node.parent_node_id not in keep
+            and node.parent_node_id is not None
+            and node.parent_node_id.namespace not in external
+        ):
+            updated = replace(updated, parent_node_id=None)
+        result.nodes[node_id] = updated
+    return result
 
 
 @dataclass(slots=True)
@@ -126,8 +180,8 @@ class RetentionEngine:
     ) -> list[ExpandedNodeId]:
         """Bring back dropped nodes that retained nodes still reference.
 
-        Dropping an ``Optional`` component is legal only when nothing points at it any
-        more.  A retained node that keeps a reference to a dropped target would produce a
+        Legal navigation links are pruned before this runs. A retained node that still
+        keeps a reference to a dropped target would produce a
         model with dangling references, so the target is restored and reported as a repair.
         Only nodes in *repairable* (the ones the policy dropped) are brought back; nodes a
         user excluded on purpose stay gone, and validation reports any break they cause.
@@ -155,14 +209,17 @@ class RetentionEngine:
 
     @staticmethod
     def _closure_is_hard(node: UANode) -> bool:
-        """Types, placeholders and Mandatory *declarations* are hard dependencies.
+        """Types and Mandatory declarations/placeholders are hard dependencies.
 
         Inheritance chains, data types, encodings and interfaces must never be broken, so
-        they cannot be dropped by a policy or a custom rule.  A placeholder belongs to its
-        parent's contract too.  Everything else — an instance node without its own
+        they cannot be dropped by a policy or a custom rule. Optional placeholders may
+        be omitted like other optional declarations. Everything else — an instance node
+        without its own
         modelling rule, or one declared ``Optional`` — is droppable; that is what RUNTIME
         drops and what CUSTOM rules exclude.
         """
-        if node.role.is_hard_dependency or node.role is NodeRole.PLACEHOLDER:
+        if node.role.is_hard_dependency:
             return True
+        if node.role is NodeRole.PLACEHOLDER:
+            return node.modelling_rule is not ModellingRule.OPTIONAL_PLACEHOLDER
         return node.modelling_rule in {ModellingRule.MANDATORY, ModellingRule.MANDATORY_PLACEHOLDER}

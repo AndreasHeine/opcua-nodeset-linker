@@ -56,10 +56,17 @@ For the included example, the statistics report shows:
 
 ```text
 original_nodes: 71
-retained_nodes: 54
-removed_nodes: 17
-reduction_percent: 23.9
+retained_nodes: 51
+removed_nodes: 20
+reduction_percent: 28.2
 ```
+
+With external dependencies, `external_nodes` is shown separately and is not included in
+`removed_nodes`. The counts satisfy
+`original_nodes = retained_nodes + removed_nodes + external_nodes`, and the reduction percentage
+is `removed_nodes / (original_nodes - external_nodes) * 100` (zero for an empty baseline).
+Retained counts include nodes added by CUSTOM rules; removed counts include successful exclusions.
+Externalization alone does not count as reduction.
 
 Review the namespace report, dependency origins, and validation findings before linking. If
 the result does not contain the functionality you need, adjust the roots or retention mode

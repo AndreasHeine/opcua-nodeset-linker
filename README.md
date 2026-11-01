@@ -67,13 +67,12 @@ custom:                 # only used with mode: CUSTOM
 Keys of a custom rule are `namespace`, `browseName`, `nodeClass` and `modellingRule`; values may
 contain globs, an unknown key is rejected. `retain:` rules are checked before `exclude:` rules, so
 a retain rule naming the same node as an exclude rule wins. A retain rule can also bring in nodes
-the closure never reached.
+the original roots never reached; their own dependency closures are then included.
 
 An `exclude:` rule only drops nodes that are droppable — a hard dependency (a base type, a
-placeholder, an explicitly `Mandatory` node) is never removed by a rule. Dropping a node a retained
-node still references, such as an `Optional` variable that is pointed at, is reported by validation
-and blocks the export; a node dropped by the *policy* is repaired instead. The tool never silently
-contradicts your rules.
+mandatory placeholder, an explicitly `Mandatory` node) is never removed by a rule.
+Legal links to omitted optional children are pruned. An exclusion that breaks a required
+non-navigation dependency blocks export; policy-dropped required targets are repaired instead.
 
 Root selectors accept `nodeid=`, `expandedNodeId=`, `browseName=`, `namespaceUri=`,
 `typeDefinition=` and globs (`browseName=*Type`); selector keywords are case-insensitive. A bare
@@ -87,10 +86,16 @@ document wins for a shared index — prefer the URI form.
 | --- | --- |
 | `STRICT` | Keeps every dependency required by OPC UA semantics (mandatory *and* optional). |
 | `OPTIONAL_AWARE` | Same retention as `STRICT`; the mandatory/optional split is classified in the reports in every mode. |
-| `RUNTIME` | Drops explicit `Optional` declarations unless the closure requires them; `OptionalPlaceholder` stays, placeholders are hard dependencies. A policy-dropped node that a retained node still references is repaired and reported. |
+| `RUNTIME` | Omits Optional/OptionalPlaceholder ownership branches unless explicitly selected or needed elsewhere. Prunes their links; preserves mandatory declarations and required dependencies. |
 | `CUSTOM` | User-defined `retain:` / `exclude:` rules; retain is checked first, hard dependencies and user exclusions are never repaired. |
 
 ## What is preserved
+
+Reduction uses directional dependencies by default: a datatype does not pull other variables
+using it, a type/interface does not pull its other instances, and a base does not pull unrelated
+subtypes. Parents and folders needed for navigation are kept without expanding their unrelated
+children. Namespace metadata is retained explicitly. See
+[Dependency Resolution](docs/dependency-resolution.md) for the precise rules and limitations.
 
 * selected root nodes and their full transitive closure
 * inheritance chains (`HasSubtype`) — a broken chain is never produced
@@ -160,7 +165,8 @@ What the run does with such a model:
   of structure fields and union alternatives. Nothing is silently dropped; the identifiers are
   rewritten to the namespace index the output gives that model (`ns=2;i=1000`)
 * its namespace URI stays in `<NamespaceUris>`. If the loaded model metadata already declares
-  it as a required model, the matching `<RequiredModel>` is kept under the models that reference
+  it as a required model and the namespace remains used, the matching `<RequiredModel>` is kept
+  under the models that reference
   it, with `Version`, `PublicationDate`, `XmlSchemaUri` and `ModelVersion` only when known. The
   linker does not invent a missing `RequiredModel`; it reports `EXTERNAL_MODEL_NOT_DECLARED`.
   A version is never invented; an unknown one is reported as `EXTERNAL_MODEL_VERSION_UNKNOWN`
@@ -168,6 +174,16 @@ What the run does with such a model:
 * reports keep it apart: `external_nodes` in the statistics, `external_models` and
   `external_references` in the namespace report, and `analyze`/`link` print an
   *External dependencies* panel naming the URIs
+
+Statistics distinguish actual reduction from externalization:
+`original_nodes = retained_nodes + removed_nodes + external_nodes`.
+`retained_nodes` counts the final nodes to be exported, including CUSTOM retain additions.
+`removed_nodes` counts non-external nodes removed by reachability, policy or successful custom
+exclusions; external declarations are counted only in `external_nodes`.
+`reduction_percent = removed_nodes / (original_nodes - external_nodes) * 100`
+(zero when no non-external input nodes exist). Externalization alone is therefore 0% reduction.
+Only loaded declarations contribute to `external_nodes`; declaring an unloaded external model
+does not change the counts. The JSON field is omitted when its count is zero.
 
 The OPC UA namespace is a dependency, but not the same case as DI. Index 0 is reserved for it, so
 `external: ["http://opcfoundation.org/UA/"]` writes **no `<Uri>` entry** for it and leaves its
@@ -223,14 +239,13 @@ dependency path:
 
 ```
 JobStateEnum retained because:
-  MSSControllerType -> Diagnostics -> String -> JobDataType -> JobStateEnum
+  MSSControllerType -> MachineType -> JobManagementType -> CurrentJob -> JobDataType -> JobStateEnum
   (origin: MSSControllerType, dependency kind: datatype)
 ```
 
-The path is the first breadth-first route that reached the node, so a hop can run backwards
-through an edge (`String` reaches `JobDataType` through the `JobId` field of that structure).
-A node included only by a `CUSTOM` `retain:` rule is outside that closure and has no such path;
-the current `explain` command therefore describes it as not reachable, even though it is exported.
+The path is the first breadth-first route that reached the node. Inverse-only child declarations
+can be traversed from their parent, but a field datatype never pulls its users.
+CUSTOM-retained nodes also have closure reasons and their dependencies are traversed.
 
 ## Validation
 

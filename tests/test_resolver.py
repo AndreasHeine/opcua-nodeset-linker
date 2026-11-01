@@ -78,10 +78,11 @@ class TestClosure:
         closure = self.closure_for([a, b], [node_id(1)])
         assert node_id(2) not in closure.ids()
 
-    def test_structural_dependency_both_directions(self) -> None:
+    def test_child_keeps_parent_as_navigation_context(self) -> None:
         parent = make_object_type("P", 1, refs=_ref("HasComponent", 2))
         child = make_object_type("C", 2)
-        assert node_id(1) in self.closure_for([parent, child], [node_id(2)]).ids()
+        resolved = self.closure_for([parent, child], [node_id(2)])
+        assert node_id(1) in resolved.navigation_only
         assert node_id(2) in self.closure_for([parent, child], [node_id(1)]).ids()
 
     def test_cycles_are_safe(self) -> None:
@@ -168,4 +169,9 @@ def _chain():  # type: ignore[no-untyped-def]
 def _ref(name: str, target: int):  # type: ignore[no-untyped-def]
     from nodeset_linker.models.node import Reference
 
-    return (Reference(reference_type=node_id(0, UA_NS), type_name=name, target=node_id(target)),)
+    return (
+        Reference(
+            reference_type=node_id(0, UA_NS), type_name=name, target=node_id(target),
+            is_forward=name != "HasSubtype",
+        ),
+    )

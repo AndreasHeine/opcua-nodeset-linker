@@ -41,6 +41,32 @@ STANDARD_REFERENCE_TYPES: dict[str, DependencyKind] = {
     "Organizes": DependencyKind.NAMESPACE,
 }
 
+OWNERSHIP_REFERENCES = frozenset(
+    {"HasComponent", "HasProperty", "HasOrderedComponent", "HasArgumentDescription",
+     "HasOptionalInputArgumentDescription"}
+)
+FORWARD_DEPENDENCIES = frozenset(
+    {"HasTypeDefinition", "HasInterface", "GeneratesEvent", "HasDescription"}
+)
+
+
+def follows_reference(reference_type: str, is_forward: bool) -> bool:
+    """Whether a declared reference requires its target, rather than just navigation."""
+    if reference_type == "HasSubtype":
+        return not is_forward
+    if reference_type in OWNERSHIP_REFERENCES | FORWARD_DEPENDENCIES | {"Organizes"}:
+        return is_forward
+    return True
+
+
+def reverse_dependency(reference_type: str, is_forward: bool) -> bool:
+    """Dependencies recoverable from a reference declared only at its other end."""
+    if reference_type == "HasSubtype":
+        return is_forward
+    if reference_type == "HasEncoding":
+        return True
+    return reference_type in OWNERSHIP_REFERENCES | {"Organizes"} and not is_forward
+
 
 @dataclass(frozen=True, slots=True)
 class EdgeMetadata:
@@ -73,12 +99,36 @@ class SemanticGraph:
     def __init__(self) -> None:
         self._graph: nx.MultiDiGraph[ExpandedNodeId, dict[str, object]] = nx.MultiDiGraph()
         self._nodes: dict[ExpandedNodeId, _NodeData] = {}
+        self._reference_semantics: dict[str, str] = {}
 
     @classmethod
     def from_model(cls, model: SemanticModel) -> Self:
         graph = cls()
         for node in model.iter_nodes():
             graph.add_node(node)
+        for node in model.iter_nodes():
+            if node.node_class is not NodeClass.REFERENCE_TYPE:
+                continue
+            pending = [node]
+            seen: set[ExpandedNodeId] = set()
+            while pending:
+                reference_type = pending.pop()
+                if reference_type.node_id in seen:
+                    continue
+                seen.add(reference_type.node_id)
+                name = reference_type.browse_name.name
+                if name in OWNERSHIP_REFERENCES | FORWARD_DEPENDENCIES | {"Organizes"}:
+                    graph._reference_semantics[node.browse_name.name] = name
+                    break
+                if name == "Aggregates":
+                    graph._reference_semantics[node.browse_name.name] = "HasComponent"
+                    break
+                pending.extend(
+                    base
+                    for ref in reference_type.references
+                    if ref.type_name == "HasSubtype" and not ref.is_forward
+                    and (base := model.get(ref.target)) is not None
+                )
         for node in model.iter_nodes():
             for ref in node.references:
                 kind = STANDARD_REFERENCE_TYPES.get(ref.type_name, DependencyKind.STRUCTURAL)
@@ -98,6 +148,10 @@ class SemanticGraph:
             for source, target, metadata in _implicit_edges(node):
                 graph.add_edge(source, target, metadata)
         return graph
+
+    def reference_semantics(self, name: str) -> str:
+        """Use a custom reference's declared standard base when one is known."""
+        return self._reference_semantics.get(name, name)
 
     @property
     def raw(self) -> nx.MultiDiGraph[ExpandedNodeId, dict[str, object]]:
@@ -157,6 +211,7 @@ class SemanticGraph:
         """Induced subgraph over ``keep``; references to dropped nodes disappear."""
         subset = nx.subgraph(self._graph, set(keep))
         reduced = type(self)()
+        reduced._reference_semantics = dict(self._reference_semantics)
         for node_id in subset.nodes():
             data = self._nodes[node_id]
             reduced._nodes[node_id] = data
@@ -215,6 +270,30 @@ def _implicit_edges(node: UANode) -> list[tuple[ExpandedNodeId, ExpandedNodeId, 
                     ).as_dict(),
                 )
             )
+    if node.method_declaration_id is not None:
+        edges.append(
+            (
+                node.node_id,
+                node.method_declaration_id,
+                EdgeMetadata("MethodDeclarationId", DependencyKind.STRUCTURAL, True).as_dict(),
+            )
+        )
+    if node.parent_node_id is not None:
+        edges.append(
+            (
+                node.node_id,
+                node.parent_node_id,
+                EdgeMetadata("ParentNodeId", DependencyKind.NAMESPACE, True).as_dict(),
+            )
+        )
+    for _, identifier in node.value_dependencies:
+        edges.append(
+            (
+                node.node_id,
+                identifier,
+                EdgeMetadata("ValueDataType", DependencyKind.DATATYPE, True).as_dict(),
+            )
+        )
     return edges
 
 

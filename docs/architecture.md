@@ -71,7 +71,7 @@ objects and returns domain objects.
 | `parser/` | Reads `UANodeSet` XML into domain objects; resolves `nsu=`/`ns=`/bare ids and `srv=` ids to URIs, resolves a qualified `BrowseName` against the document's own namespace table, and reads every `DataTypeField` attribute (`SymbolicName`, `ValueRank`, `ArrayDimensions`, `MaxStringLength`, `AllowSubTypes`, `Value`, `IsOptional`). Undeclared `ns=`/`srv=` indexes are `ParseError`s. The *only* place XML is interpreted. | Yes (read) |
 | `repository/` | Merged `SemanticModel`: node registry keyed by URI identity, namespace/model metadata, duplicate detection, lookup helpers, unresolved-target detection, reference-type name/id completion. | No |
 | `graph/` | `networkx.MultiDiGraph` over `ExpandedNodeId`, edge metadata `{reference_type, dependency_kind, is_forward, mandatory}`, implicit semantic edges, induced subgraphs. | No |
-| `resolver/` | Root selectors (`nodeid=`, `browseName=`, `namespaceUri=`, `typeDefinition=`, globs) and the transitive dependency closure with per-node reasons. Nodes added only by a custom `retain:` rule are outside that closure. | No |
+| `resolver/` | Root selectors and directional dependency closure with per-node reasons, CUSTOM-retain seeds, and navigation-only ancestor context. | No |
 | `retention/` | Retention engine + policies (STRICT / OPTIONAL_AWARE / RUNTIME / CUSTOM), custom rules, repair of policy-dropped targets. `repair()` returns the brought-back nodes; the pipeline discards that list. | No |
 | `policies/` | Registry mapping a mode name to a policy; documented seam for Conformance Unit / Profile / Facet / Feature Set policies. | No |
 | `validator/` | Nine core semantic checks plus external-dependency diagnostics over a (possibly reduced) model. Errors stop a run; warnings do not. | No |
@@ -141,20 +141,16 @@ Two kinds of edges are created:
    reference whose name is not in that table becomes STRUCTURAL. An edge always goes from the
    node that declares the reference to its target, whatever `IsForward` says: official
    documents name their base with `IsForward="false"`, which reads as "I need that node", and
-   both spellings are accepted.
+   a forward HasSubtype instead declares a subtype at its base.
    A datatype's `HasSubtype` edge is classified **DATATYPE** rather than INHERITANCE
-   (`graph/engine.py:85-88`). That is not a cosmetic choice: backward traversal skips only
-   INHERITANCE (`resolver/closure.py:143-145`), so **a retained datatype base pulls every
-   subtype declared in the loaded documents.** Verified over `tests/data/ua_base.xml` +
-   `tests/data/machinery.xml`: a closure rooted at `BaseDataType` (i=24) keeps 54 of the 71
-   nodes, while a closure rooted at `BaseObjectType` (i=58) keeps just that one node. The
-   shaker only shrinks along object/variable inheritance chains, not along datatype ones.
-   `DependencyKind.METHOD` is declared (`models/dependency.py:24`) but never assigned; a
-   `UAMethod` reaches its parent through a STRUCTURAL `HasComponent` edge.
+   for reporting, but traversal follows reference semantics and direction, not just category.
+   All subtype dependencies point toward bases; types and datatypes do not pull unrelated users.
+   Inverse ownership declarations discover children. Parents/folders can be retained as
+   navigation-only context without expanding siblings.
 2. **Implicit semantic edges** — dependencies the XML does not express as references: a
-   variable's `DataType` attribute, each structure field, each union alternative. They become
-   DATATYPE edges so the closure follows them; otherwise a reduced model would silently lose
-   the datatypes a variable needs.
+   variable's DataType, structure fields, union alternatives, MethodDeclarationId, ParentNodeId,
+   and encoding/argument datatype identifiers in Value. Values' dependency identifiers are
+   resolved at parse time and remapped at export time.
 
 ## Export and determinism
 

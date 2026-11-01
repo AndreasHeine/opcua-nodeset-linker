@@ -482,6 +482,7 @@ class NodeSetParser:
             ),
             "documentation": self._text(_child(element, "Documentation")),
             "value_xml": self._serialize(_child(element, "Value")),
+            "value_dependencies": self._value_dependencies(_child(element, "Value")),
             "extensions_xml": self._serialized_children(element, "Extensions", "Extension"),
             "role_permissions_xml": self._serialized_children(
                 element, "RolePermissions", "RolePermission"
@@ -840,6 +841,22 @@ class NodeSetParser:
             name=def_el.get("Name") or None,
             symbolic_name=def_el.get("SymbolicName") or None,
         )
+
+    def _value_dependencies(
+        self, value: _Element | None
+    ) -> tuple[tuple[str, ExpandedNodeId], ...]:
+        dependencies: dict[str, ExpandedNodeId] = {}
+        if value is not None:
+            for element in value.iter():
+                if _local(element.tag) not in {"TypeId", "DataType"}:
+                    continue
+                identifier = _child(element, "Identifier")
+                text = self._text(identifier)
+                if text is not None:
+                    resolved = self._resolve_id(text)
+                    if resolved is not None:
+                        dependencies[text] = resolved
+        return tuple(dependencies.items())
 
     def _field_metadata(self, element: _Element) -> FieldMetadata:
         """The optional ``DataTypeField`` attributes, kept as they were stated.

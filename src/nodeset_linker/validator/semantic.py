@@ -75,6 +75,11 @@ class SemanticValidator:
         self._model = model
         self._source = source
         self._external = frozenset(external)
+        self._forward_bases: dict[ExpandedNodeId, list[ExpandedNodeId]] = {}
+        for node in model.iter_nodes():
+            for ref in node.references:
+                if ref.type_name == "HasSubtype" and ref.is_forward:
+                    self._forward_bases.setdefault(ref.target, []).append(node.node_id)
 
     def validate(self) -> ValidationReport:
         report = ValidationReport()
@@ -117,6 +122,23 @@ class SemanticValidator:
                     Finding(
                         "REF_TARGET_MISSING",
                         f"reference {ref.type_name} points to unknown node {ref.target}",
+                        node.node_id,
+                    )
+                )
+            for _, target in node.value_dependencies:
+                if target not in self._model.nodes and not self._is_external(target):
+                    report.errors.append(
+                        Finding("VALUE_DEPENDENCY_MISSING", f"value needs {target}", node.node_id)
+                    )
+            if (
+                node.method_declaration_id is not None
+                and self._resolve(node.method_declaration_id) is None
+                and not self._is_external(node.method_declaration_id)
+            ):
+                report.errors.append(
+                    Finding(
+                        "METHOD_DECLARATION_MISSING",
+                        f"method declaration {node.method_declaration_id} was removed",
                         node.node_id,
                     )
                 )
@@ -267,15 +289,20 @@ class SemanticValidator:
 
         A subtype states its base with a *reversed* ``HasSubtype`` reference
         (``IsForward="false"`), because the forward direction runs from base to subtype.
-        Documents that write it forward are tolerated; both spellings mean the same base.
+        A forward reference is declared by the base and names a subtype instead.
         """
-        return [ref.target for ref in node.references if ref.type_name == "HasSubtype"]
+        bases = [
+            ref.target for ref in node.references
+            if ref.type_name == "HasSubtype" and not ref.is_forward
+        ]
+        bases.extend(self._forward_bases.get(node.node_id, []))
+        return list(dict.fromkeys(bases))
 
     def _check_subtype_hierarchy(self, report: ValidationReport) -> None:
         for node in self._model.iter_nodes():
             if not node.node_class.is_type:
                 continue
-            bases = [ref.target for ref in node.references if ref.type_name == "HasSubtype"]
+            bases = self._bases_of(node)
             if node.node_class is NodeClass.INTERFACE and not bases:
                 continue  # interfaces are standalone by definition
             for base in bases:
@@ -319,7 +346,7 @@ class SemanticValidator:
             node = self._resolve(current)
             if node is None:
                 return False
-            bases = [ref.target for ref in node.references if ref.type_name == "HasSubtype"]
+            bases = self._bases_of(node)
             current = bases[0] if bases else None
         return False
 

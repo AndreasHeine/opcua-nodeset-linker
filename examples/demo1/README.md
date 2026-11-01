@@ -36,25 +36,30 @@ nodeset-linker analyze examples\demo1\config.yaml
 This writes no output file. Inspect the statistics, namespace report, dependencies, and
 validation findings before exporting.
 
-With the eight supplied files and current configuration, the preview produces:
+With the eight supplied files and current configuration (`STRICT`, showcase root,
+Core externalized), the precise reduction algorithm produces:
 
 | Measure | Value |
 | --- | --- |
 | Loaded nodes | 6,655 |
-| Retained nodes | 1,669 |
-| Not exported | 4,986 |
-| Reduction | 74.9% |
-| External Core nodes not exported | 4,956 |
-| Other unreachable nodes not exported | 30 |
-| Semantic validation during analysis | 0 errors, 0 warnings |
+| External Core nodes | 4,956 |
+| Non-external input nodes | 1,699 |
+| Retained/exported nodes | 1,110 |
+| Actually removed nodes | 589 |
+| Reduction | 34.7% |
 
 The configuration loads the NodeSets under `examples\demo1\nodesets` and the showcase
 instance file.
 It uses the compatible Core, Machinery/Jobs, and ISA95 JobControl files to resolve and check
-dependencies, but lists Core as `external:` so its node declarations are not exported. The other
-reachable dependencies are retained. The reduction is measured against all 6,655 nodes loaded from all
-eight sources; it is not a claim that only 1,669 nodes are needed for every application
-scenario.
+dependencies. Core's 4,956 loaded declarations are reported separately, not counted as
+removed. The percentage uses only the 1,699 non-external input nodes:
+`589 / (6655 - 4956) * 100 = 34.7%`.
+The counts partition the input: `6655 = 1110 + 589 + 4956`.
+These figures describe this root selection, not every application's requirements.
+
+For comparison, with no external models configured, STRICT retains 2,242 nodes and
+removes 4,413 (66.3%); RUNTIME retains 1,252 and removes 5,403 (81.2%). Those percentages
+include reduction within Core and use all 6,655 input nodes as the baseline.
 
 To inspect the root's retention reason:
 
@@ -86,12 +91,10 @@ nodeset-linker stats examples\demo1\reduced.xml
 nodeset-linker validate examples\demo1\reduced.xml --schema tests\data\schema\UANodeSet.xsd
 ```
 
-For the current inputs, the exported file has 1,669 nodes, 8 namespaces, and 5,501 explicit
-references. The XML passes the repository's XSD. When validating the reduced file by itself,
-semantic validation reports 0 errors and 12 Core dependency warnings: the externalized Core
-declarations are not available to that standalone check. This differs from `analyze`, which
-loads all eight input NodeSets and reports 0 errors and 0 warnings for the current
-configuration.
+The current configuration writes 1,110 node declarations. The exported files pass the
+repository's XSD and reload semantic checks. External
+dependency warnings depend on which models are externalized and which source metadata
+is available to the standalone validation command.
 
 Schema validation is not OPC UA certification. The asyncua import test below is a separate
 check against that server implementation.
@@ -99,18 +102,16 @@ check against that server implementation.
 ## External dependencies
 
 The input set includes Core, DI, IA, Machinery, Machinery/Jobs, MachineTool, ISA95 JobControl,
-and the showcase model. Only Core is listed under `external`: its source file is loaded so
-the linker can inspect and validate dependencies, but Core node declarations are omitted from
-the reduced output.
+and the showcase model. Configure Core under `external:` when importing into an initialized
+asyncua server: it already provides Core declarations. Keep the Core source loaded so
+the linker can inspect and validate the dependency locally.
 
 | External ModelUri | Requirement declared by the showcase source |
 | --- | --- |
 | `http://opcfoundation.org/UA/` | Core 1.05.03, publication date 2023-12-15 |
 
-The Core source NodeSet makes these declarations available to `analyze`, so the current
-analysis reports no findings. The exported file does not contain Core nodes; standalone
-validation therefore warns about the external Core dependency. Neither result proves that a
-consuming application has a compatible Core version.
+With Core externalized, the exported file does not contain Core nodes; standalone validation
+can warn about that dependency. Analysis/import tests do not certify Core version compatibility.
 
 Before importing the reduced file, ensure the consuming server provides compatible Core
 nodes. An initialized asyncua server provides Core nodes, but you must still check version
@@ -120,7 +121,8 @@ compatibility.
 DI, IA, Machinery, and MachineTool declarations reached by the closure are included in this
 output. Avoid importing their full files separately into the same server without checking for
 duplicate NodeIds. Machinery/Jobs and ISA95 JobControl are also bundled in this current
-configuration. If your server already provides any of these models, add their ModelUris to
+STRICT configuration. RUNTIME can omit completely unused models and their RequiredModel
+entries. If your server already provides any bundled models, add their ModelUris to
 `external` and regenerate the output. Keep their source files under `nodesets` if you want
 the linker to check their declarations locally.
 
@@ -139,6 +141,8 @@ Install the project's optional asyncua dependency if needed:
 python -m pip install -e ".[asyncua]"
 ```
 
+Enable `external: [http://opcfoundation.org/UA/]` in the configuration before importing;
+otherwise the initialized server rejects duplicate Core NodeIds.
 Regenerate the reduced file after changing the configuration, then run:
 
 ```powershell
@@ -151,6 +155,11 @@ python examples\demo1\server.py
 network endpoint. Stop the running server with Ctrl+C. The importer helper in `server.py`
 checks external requirements (Core) and avoids asking asyncua to pre-load requirements that
 are already bundled in this same NodeSet.
+
+The current STRICT output was successfully imported into asyncua: **1,110 nodes imported**
+and the `ShowCaseMachineTool` root (`i=5003`) verified. The server assigned its namespace
+index as 8 in that run; the index is server-local, not a fixed identity.
+The server then listened at `opc.tcp://127.0.0.1:4840/demo1/`.
 
 The demo disables asyncua's automatic Python class generation for custom data types. The
 importer currently cannot generate a class for the bundled nested `OutputInfo` OptionSet

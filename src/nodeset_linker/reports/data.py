@@ -24,6 +24,8 @@ class Statistics:
 
     ``external_nodes`` are declarations of a model the output deliberately does not ship:
     they are *not* dropped dependencies, they are a dependency the consumer has to provide.
+    ``removed_nodes`` excludes those declarations; ``reduction_percent`` uses only
+    non-external input nodes as its baseline.
     """
 
     original_nodes: int
@@ -104,21 +106,24 @@ class NamespaceReportData:
 
 
 def compute_statistics(
-    model: SemanticModel, closure: Closure, *, external: frozenset[str] = frozenset()
+    model: SemanticModel,
+    closure: Closure,
+    *,
+    retained: set[ExpandedNodeId] | None = None,
+    external: frozenset[str] = frozenset(),
 ) -> Statistics:
+    """Count the final retained set, or the closure for a closure-only analysis."""
     original = model.node_count()
-    retained = closure.ids()
-    removed = original - len(retained)
+    external_ids = {node_id for node_id in model.nodes if node_id.namespace in external}
+    retained_ids = (closure.ids() if retained is None else retained) - external_ids
+    eligible = original - len(external_ids)
+    removed = eligible - len(retained_ids)
     return Statistics(
         original_nodes=original,
-        retained_nodes=len(retained),
+        retained_nodes=len(retained_ids),
         removed_nodes=removed,
-        reduction_percent=(removed / original * 100.0) if original else 0.0,
-        external_nodes=sum(
-            1
-            for node_id in model.nodes
-            if node_id.namespace in external and node_id not in retained
-        ),
+        reduction_percent=(removed / eligible * 100.0) if eligible else 0.0,
+        external_nodes=len(external_ids),
     )
 
 
