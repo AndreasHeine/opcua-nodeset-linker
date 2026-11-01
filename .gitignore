@@ -6,6 +6,7 @@ dist/
 
 # Tool caches
 .coverage
+coverage.xml
 .mypy_cache/
 .pytest_cache/
 .ruff_cache/

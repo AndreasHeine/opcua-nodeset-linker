@@ -287,9 +287,12 @@ Feature Set support possible without redesigning it (see `policies/registry.py`)
 ## Development
 
 ```bash
-python -m pytest          # unit + integration + graph + resolver + validation + export + CLI tests
+python -m pytest --cov-report=xml  # tests with terminal and XML coverage reports
 mypy src                  # strict typing
 ruff check src tests scripts   # lint
 python scripts/check_official_nodesets.py            # the real OPC UA/DI/Machinery/IA nodesets, end to end
 python scripts/check_official_nodesets.py --ref 1.05.05   # use a separate cache for this ref
 ```
+
+GitHub Actions runs the test suite with coverage on Python 3.12 and 3.13, and runs Ruff
+and mypy on Python 3.12. The XML coverage report is available as a workflow artifact.

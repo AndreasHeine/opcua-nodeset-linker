@@ -62,7 +62,7 @@ class StructureField:
     description: str | None = None
     display_name: str | None = None
     is_optional: bool = False
-    metadata: FieldMetadata = FieldMetadata()
+    metadata: FieldMetadata = field(default_factory=FieldMetadata)
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,7 +73,7 @@ class EnumValue:
     value: int
     description: str | None = None
     display_name: str | None = None
-    metadata: FieldMetadata = FieldMetadata()
+    metadata: FieldMetadata = field(default_factory=FieldMetadata)
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,7 +84,7 @@ class UnionAlternative:
     data_type: ExpandedNodeId
     description: str | None = None
     display_name: str | None = None
-    metadata: FieldMetadata = FieldMetadata()
+    metadata: FieldMetadata = field(default_factory=FieldMetadata)
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,7 +95,7 @@ class OptionSetValue:
     value: int
     description: str | None = None
     display_name: str | None = None
-    metadata: FieldMetadata = FieldMetadata()
+    metadata: FieldMetadata = field(default_factory=FieldMetadata)
 
 
 @dataclass(frozen=True, slots=True)
