@@ -1,0 +1,23 @@
+nodesets:
+  - tests/data/ua_base.xml
+  - tests/data/machinery.xml
+
+mode: CUSTOM
+
+roots:
+  - namespaceUri=http://opcfoundation.org/UA/Machinery/
+
+output: out/custom.xml
+
+custom:
+  retain:
+    # A retain rule can also bring in nodes outside the closure: every DataType of the
+    # UA namespace here, even where nothing in the closure points at it.  A retain rule
+    # that names the same node as an exclude rule wins - order in the YAML does not.
+    - nodeClass=DataType
+  exclude:
+    # MachineDiagnostics is an Optional object nothing references; dropping it is legal.
+    # The *referenced* Diagnostics variable must stay — excluding it would break
+    # MSSControllerType and validation blocks the export.
+    - browseName=MachineDiagnostics
+    - browseName=MachineryView

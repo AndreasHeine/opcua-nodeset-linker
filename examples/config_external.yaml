@@ -1,0 +1,17 @@
+# The importing application already provides the OPC UA namespace, so its declarations are
+# referenced here instead of copied into the reduced file.  Only machinery.xml is loaded, so
+# the linker cannot check the Core declarations it did not read and reports
+# EXTERNAL_MODEL_NOT_LOADED; the ids stay unqualified (i=11715) because namespace 0 is never
+# listed in NamespaceUris.
+nodesets:
+  - tests/data/machinery.xml
+
+mode: STRICT
+
+roots:
+  - namespaceUri=http://opcfoundation.org/UA/Machinery/
+
+external:
+  - http://opcfoundation.org/UA/
+
+output: out/reduced_external_core.xml

@@ -1,0 +1,24 @@
+nodesets:
+  - examples/demo1/nodesets/Opc.Ua.NodeSet2.xml
+  - examples/demo1/nodesets/Opc.Ua.Di.NodeSet2.xml
+  - examples/demo1/nodesets/Opc.Ua.IA.NodeSet2.xml
+  - examples/demo1/nodesets/Opc.Ua.Machinery.NodeSet2.xml
+  - examples/demo1/nodesets/Opc.Ua.MachineTool.NodeSet2.xml
+  - examples/demo1/nodesets/ShowCaseMachineTool.xml
+  - examples/demo1/nodesets/Opc.Ua.Machinery.Jobs.Nodeset2.xml
+  - examples/demo1/nodesets/opc.ua.isa95-jobcontrol.nodeset2.xml
+
+mode: STRICT
+
+roots:
+  - nodeid=nsu=http://umati.org/UA/ShowCaseMachineTool/;i=5003
+
+external:
+  - http://opcfoundation.org/UA/
+  # - http://opcfoundation.org/UA/Machinery/Jobs/
+  # - http://opcfoundation.org/UA/ISA95-JOBCONTROL_V2/
+
+output: examples/demo1/reduced.xml
+
+validate_before_export: true
+mark_namespace_subsets: true

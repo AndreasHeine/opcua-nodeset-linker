@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+The pre-schema spelling this project used before: the core XML namespace on the root,
+UriIndex/Alias attributes on the Uri entries, a NamespaceMetadata header element,
+attribute-form references, a ModellingRule element and DefinitionType/EnumeratedValues.
+The reader still accepts it; the writer never produces it.
+-->
+<UANodeSet xmlns="http://opcfoundation.org/UA/">
+  <NamespaceUris>
+    <Uri UriIndex="0">http://opcfoundation.org/UA/</Uri>
+    <Uri UriIndex="1" Alias="Legacy">http://example.org/UA/Legacy/</Uri>
+  </NamespaceUris>
+  <NamespaceMetadata Uri="http://example.org/UA/Legacy/" Version="0.9.0" PublicationDate="2022-05-01T00:00:00Z"/>
+  <Models>
+    <Model ModelName="Legacy">
+      <NamespaceUri>http://example.org/UA/Legacy/</NamespaceUri>
+      <RequiredModels>http://opcfoundation.org/UA/</RequiredModels>
+    </Model>
+  </Models>
+
+  <UADataType NodeId="ns=1;i=1" BrowseName="1:LegacyEnum">
+    <DisplayName>LegacyEnum</DisplayName>
+    <References ReferenceType="HasSubtype" TypeId="s=HasSubtype" TargetId="i=29"/>
+    <Definition DefinitionType="Enum">
+      <EnumeratedValues Name="Off" Value="0"/>
+      <EnumeratedValues Name="On" Value="1"/>
+    </Definition>
+  </UADataType>
+
+  <UAInterface NodeId="ns=1;i=2" BrowseName="1:ILegacy">
+    <DisplayName>ILegacy</DisplayName>
+  </UAInterface>
+
+  <UAObject NodeId="ns=1;i=3" BrowseName="1:LegacyObject">
+    <DisplayName>LegacyObject</DisplayName>
+    <ModellingRule Id="i=387"/>
+    <References ReferenceType="HasProperty" TypeId="s=HasProperty" TargetId="ns=1;i=4"/>
+  </UAObject>
+
+  <UAVariable NodeId="ns=1;i=4" BrowseName="1:LegacyValue" DataType="i=12">
+    <DisplayName>LegacyValue</DisplayName>
+    <References ReferenceType="HasProperty" TypeId="s=HasProperty" TargetId="ns=1;i=3" IsForward="false"/>
+  </UAVariable>
+</UANodeSet>

@@ -1,0 +1,10 @@
+nodesets:
+  - tests/data/ua_base.xml
+  - tests/data/machinery.xml
+
+mode: RUNTIME
+
+roots:
+  - typeDefinition=MSSControllerType
+
+output: out/runtime.xml
