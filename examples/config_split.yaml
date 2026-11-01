@@ -1,0 +1,23 @@
+# The same reduction as examples/config.yaml, written as one NodeSet per namespace instead of one
+# merged file.  The retained nodes are identical: each keeps its own namespace and appears in
+# exactly one file, and a dependency on a namespace another file ships stays a reference.
+#
+# The OPC UA core is externalized, so it is referenced but never becomes a file of its own; the
+# JobControl file points at the Machinery datatypes it uses and states Machinery as a RequiredModel.
+# Load the written files *together*: nodeset-linker validate out/split
+nodesets:
+  - tests/data/ua_base.xml
+  - tests/data/machinery.xml
+  - tests/data/jobcontrol.xml
+
+mode: STRICT
+
+roots:
+  - namespaceUri=http://example.org/UA/JobControl/
+
+external:
+  - http://opcfoundation.org/UA/
+
+export:
+  mode: split
+  directory: out/split

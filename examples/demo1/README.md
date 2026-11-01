@@ -96,6 +96,46 @@ configuration.
 Schema validation is not OPC UA certification. The asyncua import test below is a separate
 check against that server implementation.
 
+## Split export
+
+The same reduction can be written as one NodeSet per namespace instead of one merged file, using
+[config_split.yaml](config_split.yaml). Nothing about the reduction changes: the same 1,669 nodes
+are retained, each keeps its own namespace, and every cross-namespace dependency stays a reference.
+
+```powershell
+nodeset-linker link examples\demo1\config_split.yaml
+```
+
+That writes seven NodeSets plus `manifest.json` into `out\demo1_split`:
+
+| File | Nodes | Reduced | Depends on |
+| --- | --- | --- | --- |
+| `DI.xml` | 398 | yes | Core |
+| `IA.xml` | 108 | yes | Core, DI |
+| `ISA95-JOBCONTROL_V2.xml` | 258 | no | Core |
+| `Jobs.xml` | 60 | no | Core, ISA95 JobControl |
+| `Machinery.xml` | 180 | no | Core, DI, IA |
+| `MachineTool.xml` | 579 | yes | Core, DI, IA, ISA95 JobControl, Machinery, Jobs |
+| `ShowCaseMachineTool.xml` | 86 | no | Core, DI, IA, MachineTool, Machinery |
+
+The OPC UA Core is externalized, so it never becomes a file of its own; each file states it as a
+`RequiredModel`. `manifest.json` lists the namespaces with their URIs, the file each one ships, the
+node count, whether the namespace was reduced, and the namespaces it needs — generated from the same
+namespace dependency analysis `analyze` prints.
+
+Read the export back as a folder; the files only resolve when loaded together:
+
+```powershell
+nodeset-linker stats out\demo1_split
+nodeset-linker validate out\demo1_split --schema tests\data\schema\UANodeSet.xsd
+```
+
+For the current inputs this reports 7 NodeSets, 1,669 nodes, 8 namespaces and 5,501 references —
+the same graph as `reduced.xml` — passes the XSD for every file, and exits 0 with 8 warnings about
+the externalized Core declarations, which standalone validation cannot see. A single split file is
+not self-contained: validating one file alone reports the namespaces its siblings declare as
+missing, by design.
+
 ## External dependencies
 
 The input set includes Core, DI, IA, Machinery, Machinery/Jobs, MachineTool, ISA95 JobControl,

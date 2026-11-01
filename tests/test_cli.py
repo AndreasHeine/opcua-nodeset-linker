@@ -120,3 +120,76 @@ class TestCli:
         result = CliRunner().invoke(main, ["analyze", str(bad)])
         assert result.exit_code == 1
         assert "error:" in result.output
+
+
+def split_config_file(tmp_path: Path) -> Path:
+    """A split-export configuration: the OPC UA core is externalized, so two files are written."""
+    path = tmp_path / "split.yaml"
+    path.write_text(
+        "\n".join(
+            [
+                "nodesets:",
+                f"  - {(DATA / 'ua_base.xml').as_posix()}",
+                f"  - {(DATA / 'machinery.xml').as_posix()}",
+                f"  - {(DATA / 'jobcontrol.xml').as_posix()}",
+                "mode: STRICT",
+                "roots: [namespaceUri=http://example.org/UA/JobControl/]",
+                "external: [http://opcfoundation.org/UA/]",
+                "export:",
+                "  mode: split",
+                f"  directory: {(tmp_path / 'out').as_posix()}",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+class TestSplitExportCli:
+    def test_link_split_writes_one_file_per_namespace(self, tmp_path) -> None:
+        result = CliRunner().invoke(main, ["link", str(split_config_file(tmp_path))])
+        assert result.exit_code == 0, result.output
+        assert (tmp_path / "out" / "JobControl.xml").exists()
+        assert (tmp_path / "out" / "Machinery.xml").exists()
+        assert (tmp_path / "out" / "manifest.json").exists()
+        assert "NodeSets" in result.output
+        assert "manifest.json" in result.output
+
+    def test_link_split_output_override_writes_the_given_folder(self, tmp_path) -> None:
+        result = CliRunner().invoke(
+            main, ["link", str(split_config_file(tmp_path)), "--output", str(tmp_path / "dist")]
+        )
+        assert result.exit_code == 0, result.output
+        assert (tmp_path / "dist" / "JobControl.xml").exists()
+        assert (tmp_path / "dist" / "manifest.json").exists()
+        assert not (tmp_path / "out").exists()
+
+    def test_stats_reads_a_whole_split_export(self, tmp_path) -> None:
+        CliRunner().invoke(main, ["link", str(split_config_file(tmp_path))])
+        result = CliRunner().invoke(main, ["stats", str(tmp_path / "out")])
+        assert result.exit_code == 0, result.output
+        assert '"nodesets": 2' in result.output
+
+    def test_validate_loads_the_split_files_together(self, tmp_path) -> None:
+        CliRunner().invoke(main, ["link", str(split_config_file(tmp_path))])
+        result = CliRunner().invoke(main, ["validate", str(tmp_path / "out")])
+        assert result.exit_code == 0, result.output
+        assert "validation passed" in result.output
+
+    def test_validate_a_split_export_against_the_schema(self, tmp_path) -> None:
+        CliRunner().invoke(main, ["link", str(split_config_file(tmp_path))])
+        result = CliRunner().invoke(
+            main, ["validate", str(tmp_path / "out"), "--schema", str(NODESET_SCHEMA)]
+        )
+        assert result.exit_code == 0, result.output
+        assert "schema validation passed" in result.output
+        # A folder is several documents, so each pass names the file it checked.
+        assert "JobControl.xml" in result.output
+        assert "Machinery.xml" in result.output
+
+    def test_a_folder_without_nodesets_fails(self, tmp_path) -> None:
+        empty = tmp_path / "empty"
+        empty.mkdir()
+        result = CliRunner().invoke(main, ["stats", str(empty)])
+        assert result.exit_code == 1
+        assert "no NodeSet files found" in result.output

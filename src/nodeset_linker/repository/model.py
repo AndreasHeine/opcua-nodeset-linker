@@ -8,7 +8,7 @@ automatically.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
@@ -89,7 +89,7 @@ class SemanticModel:
         return len(self.nodes)
 
 
-def load_nodesets(paths: list[Path | str]) -> SemanticModel:
+def load_nodesets(paths: Sequence[Path | str]) -> SemanticModel:
     """Load and merge NodeSet files into one semantic model."""
     model = SemanticModel()
     for path in paths:

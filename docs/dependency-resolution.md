@@ -230,6 +230,17 @@ namespaces still used, and `RequiredModel` children declared by the source metad
 loaded — a required model whose namespace is not in `NamespaceUris` still appears, which is how a
 dependency that is not shipped is stated. The linker does not invent a missing `RequiredModel`.
 
+Steps 1–6 above are the same for both export modes; only the writing changes. `export:` selects the
+strategy in the exporter alone: `merged` writes the one document described here, `split` writes one
+document per namespace the reduction ships, decided by the namespace of each node's own identifier.
+Nothing in the resolution chain learns about files — the closure, retention, repair and validation
+all run on the same keep set, and the split then hands that keep set to per-document writers. A
+retained node appears in exactly one file, dependencies stay references rather than copies, and each
+file states the namespaces it needs as `RequiredModel`. The guarantee is not that one file is
+self-contained but that the files loaded *together* reload as the same graph: the exporter verifies
+the node count and every cross-file reference before the run is considered written, and
+`manifest.json` records the file of each namespace plus its dependencies.
+
 ## Success criteria the design satisfies
 
 smallest semantically valid model containing the selected roots · inherited base types kept ·

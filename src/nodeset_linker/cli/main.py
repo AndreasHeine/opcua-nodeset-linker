@@ -3,8 +3,8 @@
 nodeset-linker analyze config.yaml
 nodeset-linker link config.yaml
 nodeset-linker explain --node JobStateEnum config.yaml
-nodeset-linker stats output.xml
-nodeset-linker validate output.xml [--schema tests/data/schema/UANodeSet.xsd]
+nodeset-linker stats out/            # a split export: the files are counted together
+nodeset-linker validate out/ [--schema tests/data/schema/UANodeSet.xsd]
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from rich.json import JSON
 from rich.panel import Panel
 from rich.tree import Tree
 
-from nodeset_linker.config.schema import load_config
+from nodeset_linker.config.schema import ExportConfig, LinkerConfig, load_config
 from nodeset_linker.explain.explainer import Explainer
 from nodeset_linker.pipeline import LinkerPipeline
 from nodeset_linker.reports.data import DependencyReportData, Statistics
@@ -60,17 +60,27 @@ def analyze(config: Path) -> None:
 
 @main.command()
 @click.argument("config", type=Path)
-@click.option("--output", "-o", type=Path, default=None, help="Override the output path.")
+@click.option(
+    "--output",
+    "-o",
+    type=Path,
+    default=None,
+    help="Override the output target: a file for a merged export, a folder for a split one.",
+)
 def link(config: Path, output: Path | None) -> None:
     """Reduce the nodesets and write a NodeSet.
 
     Models listed under ``external`` are referenced but not shipped: their declarations are
     left out while the references, namespace URI and ``RequiredModel`` entry stay in the
     file, so the importing application has to make those models available itself.
+
+    ``export.mode=split`` writes one NodeSet per namespace the reduction ships plus a
+    ``manifest.json``; each retained node then lives in exactly one file, and a reference
+    into another namespace still points at the node that file declares.
     """
     cfg = load_config(config)
     if output is not None:
-        cfg = cfg.model_copy(update={"output": str(output)})
+        cfg = _override_target(cfg, output)
     try:
         result = LinkerPipeline(cfg).run()
     except LinkerError as exc:
@@ -78,7 +88,14 @@ def link(config: Path, output: Path | None) -> None:
 
     _render_statistics(result.statistics)
     _render_external(result.external)
-    if result.output_path is not None:
+    if result.export_mode == "split" and result.output_files:
+        folder = result.output_files[0].parent
+        console.print(f"[green]wrote {len(result.output_files)} NodeSets[/] into {folder}")
+        for path in result.output_files:
+            console.print(f"  [green]{path.name}[/]")
+        if result.manifest_path is not None:
+            console.print(f"  [green]{result.manifest_path.name}[/]")
+    elif result.output_path is not None:
         console.print(f"[green]wrote[/] {result.output_path}")
     else:
         console.print("[yellow]no output path configured; nothing written[/]")
@@ -110,12 +127,14 @@ def explain(config: Path, node: str) -> None:
 @main.command()
 @click.argument("output", type=Path)
 def stats(output: Path) -> None:
-    """Show node statistics of a produced NodeSet."""
-    model = load_nodesets([output])
+    """Show node statistics of a produced NodeSet, or of a whole split export."""
+    paths = _node_set_paths(output)
+    model = load_nodesets(paths)
     console.print(
         JSON(
             json.dumps(
                 {
+                    "nodesets": len(paths),
                     "nodes": model.node_count(),
                     "namespaces": len(model.namespaces),
                     "edges": sum(len(node.references) for node in model.iter_nodes()),
@@ -137,6 +156,10 @@ def stats(output: Path) -> None:
 def validate(output: Path, schema: Path | None) -> None:
     """Validate a produced NodeSet: semantics, and the XSD when ``--schema`` is given.
 
+    A directory is read as a split export: every NodeSet in it is schema-checked, and they
+    are loaded *together*, so a reference a file points at a sibling namespace resolves and
+    only genuinely missing targets are reported.
+
     Without ``--schema`` this is *semantic* validation only — reference targets, type
     hierarchies, encodings, namespace links and subset markers.  Schema conformance is a
     separate check and is only claimed when a schema was actually supplied.
@@ -145,10 +168,13 @@ def validate(output: Path, schema: Path | None) -> None:
     dependency: references into it are accepted, references into any other namespace that
     the file does not contain are errors.
     """
+    paths = _node_set_paths(output)
     failures = 0
     if schema is not None:
-        failures += _validate_schema(output, schema)
-    model = load_nodesets([output])
+        named = len(paths) > 1
+        for path in paths:
+            failures += _validate_schema(path, schema, named=named)
+    model = load_nodesets(paths)
     report = validate_model(model, external=declared_external_namespaces(model))
     _render_validation(report)
     if not report.ok:
@@ -157,8 +183,36 @@ def validate(output: Path, schema: Path | None) -> None:
         raise SystemExit(1)
 
 
-def _validate_schema(output: Path, schema: Path) -> int:
-    """Validate the document against an XSD; returns the number of schema errors."""
+def _node_set_paths(target: Path) -> list[Path]:
+    """One NodeSet file, or — for a split export — every NodeSet written in a folder."""
+    if target.is_dir():
+        paths = sorted(path for path in target.glob("*.xml") if path.is_file())
+        if not paths:
+            _fail(f"no NodeSet files found in {target}")
+        return paths
+    return [target]
+
+
+def _override_target(cfg: LinkerConfig, output: Path) -> LinkerConfig:
+    """``--output`` replaces the configured target for the mode the configuration asks for.
+
+    A split export writes a folder, not a file, so the override has to go to the field of
+    that mode; otherwise ``export.file`` would keep winning over ``output``.
+    """
+    plan = cfg.export_plan()
+    if plan is not None and plan[0] == "split":
+        return cfg.model_copy(update={"export": ExportConfig(mode="split", directory=str(output))})
+    if cfg.export is not None:
+        return cfg.model_copy(update={"export": ExportConfig(mode="merged", file=str(output))})
+    return cfg.model_copy(update={"output": str(output)})
+
+
+def _validate_schema(output: Path, schema: Path, *, named: bool = False) -> int:
+    """Validate the document against an XSD; returns the number of schema errors.
+
+    ``named`` says which file passed — a split export is a folder of files, and "passed"
+    without a name would not say which of them was checked.
+    """
     if not schema.exists():
         console.print(f"[bold red]error:[/] schema not found: {schema}")
         raise SystemExit(1)
@@ -169,7 +223,8 @@ def _validate_schema(output: Path, schema: Path) -> int:
         return 1
     xsd = XMLSchema(parse(str(schema)))
     if xsd.validate(document):
-        console.print(f"[green]schema validation passed[/] ({schema})")
+        which = f" in {output.name}" if named else ""
+        console.print(f"[green]schema validation passed[/]{which} ({schema})")
         return 0
     console.print(f"[red]schema errors in {output}[/]")
     for error in xsd.error_log:

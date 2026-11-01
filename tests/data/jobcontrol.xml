@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+A second model that *depends* on Machinery: its datatype embeds Machinery datatypes and its
+controller calls a Machinery method.  Machinery is the second Uri entry here (index 2), so
+cross-namespace identifiers are written with that index — the case a split export has to keep
+pointing at the node Machinery.xml declares, without copying it in.
+-->
+<UANodeSet xmlns="http://opcfoundation.org/UA/2011/03/UANodeSet.xsd">
+  <NamespaceUris>
+    <Uri Alias="JobControl">http://example.org/UA/JobControl/</Uri>
+    <Uri>http://opcfoundation.org/UA/Machinery/</Uri>
+  </NamespaceUris>
+  <Models>
+    <Model ModelUri="http://example.org/UA/JobControl/" XmlSchemaUri="http://example.org/UA/JobControl/Types.xsd" Version="1.0.0" PublicationDate="2024-06-01T00:00:00Z" ModelVersion="1.0.0">
+      <RequiredModel ModelUri="http://opcfoundation.org/UA/" XmlSchemaUri="http://opcfoundation.org/UA/2008/02/Types.xsd" Version="1.05.07" PublicationDate="2026-07-30T00:00:00Z" ModelVersion="1.5.7" />
+      <RequiredModel ModelUri="http://opcfoundation.org/UA/Machinery/" XmlSchemaUri="http://opcfoundation.org/UA/Machinery/Types.xsd" Version="1.0.1" PublicationDate="2024-01-01T00:00:00Z" ModelVersion="1.0.1" />
+    </Model>
+  </Models>
+  <Aliases>
+    <Alias Alias="Boolean">i=1</Alias>
+    <Alias Alias="Int32">i=6</Alias>
+    <Alias Alias="String">i=12</Alias>
+    <Alias Alias="Structure">i=22</Alias>
+    <Alias Alias="NodeId">i=17</Alias>
+    <Alias Alias="Organizes">i=35</Alias>
+    <Alias Alias="HasModellingRule">i=37</Alias>
+    <Alias Alias="HasTypeDefinition">i=40</Alias>
+    <Alias Alias="HasSubtype">i=45</Alias>
+    <Alias Alias="HasProperty">i=46</Alias>
+    <Alias Alias="HasComponent">i=47</Alias>
+    <Alias Alias="Argument">i=24136</Alias>
+  </Aliases>
+
+  <UAObject NodeId="ns=1;i=3001" BrowseName="1:http://example.org/UA/JobControl/" SymbolicName="OPCUAJobControlNamespaceMetadata">
+    <DisplayName>http://example.org/UA/JobControl/</DisplayName>
+    <References>
+      <Reference ReferenceType="HasProperty">ns=1;i=3002</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=3003</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=3005</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">i=11715</Reference>
+      <Reference ReferenceType="HasTypeDefinition">i=11616</Reference>
+    </References>
+  </UAObject>
+  <UAVariable NodeId="ns=1;i=3002" BrowseName="NamespaceUri" ParentNodeId="ns=1;i=3001" DataType="String">
+    <DisplayName>NamespaceUri</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=3001</Reference>
+    </References>
+    <Value>
+      <String xmlns="http://opcfoundation.org/UA/2008/02/Types.xsd">http://example.org/UA/JobControl/</String>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=3003" BrowseName="NamespaceVersion" ParentNodeId="ns=1;i=3001" DataType="String">
+    <DisplayName>NamespaceVersion</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=3001</Reference>
+    </References>
+    <Value>
+      <String xmlns="http://opcfoundation.org/UA/2008/02/Types.xsd">1.0.0</String>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=3005" BrowseName="IsNamespaceSubset" ParentNodeId="ns=1;i=3001" DataType="Boolean">
+    <DisplayName>IsNamespaceSubset</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=3001</Reference>
+    </References>
+    <Value>
+      <Boolean xmlns="http://opcfoundation.org/UA/2008/02/Types.xsd">false</Boolean>
+    </Value>
+  </UAVariable>
+
+  <UADataType NodeId="ns=1;i=3100" BrowseName="1:JobControlSettingsType" SymbolicName="JobControlSettingsType">
+    <DisplayName>JobControlSettingsType</DisplayName>
+    <Category>JobControl</Category>
+    <References>
+      <Reference ReferenceType="HasSubtype" IsForward="false">i=22</Reference>
+    </References>
+    <Definition Name="JobControlSettingsType">
+      <Field Name="Job" DataType="ns=2;i=2001" />
+      <Field Name="State" DataType="ns=2;i=2002" />
+      <Field Name="Retries" DataType="Int32" IsOptional="true" />
+    </Definition>
+  </UADataType>
+
+  <UAObjectType NodeId="ns=1;i=3200" BrowseName="1:JobControlControllerType" SymbolicName="JobControlControllerType">
+    <DisplayName>JobControlControllerType</DisplayName>
+    <References>
+      <Reference ReferenceType="HasSubtype" IsForward="false">i=58</Reference>
+      <Reference ReferenceType="HasComponent">ns=2;i=2201</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=3201</Reference>
+    </References>
+  </UAObjectType>
+  <UAVariable NodeId="ns=1;i=3201" BrowseName="1:Settings" ParentNodeId="ns=1;i=3200" DataType="ns=1;i=3100">
+    <DisplayName>Settings</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=62</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=3200</Reference>
+      <Reference ReferenceType="HasModellingRule">i=80</Reference>
+    </References>
+  </UAVariable>
+</UANodeSet>

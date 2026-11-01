@@ -171,6 +171,22 @@ in URI order, and `srv=<index>` is written from that table (`exporter/nodeset.py
 Nodes are emitted sorted by assigned id, references and definitions in declaration order, and
 no `LastModified` is written: the same keep set yields byte-identical XML.
 
+The export strategy is a second, separate decision, and it is entirely inside the exporter.
+`export_split()` (`exporter/nodeset.py`) partitions the keep set by the namespace each node's own
+identifier carries — `node_id.namespace`, never a document-local index — and builds one document
+per namespace. Because identity is `(namespace URI, LocalPart)` and indexes are per document, the
+per-document `NamespaceIndexAssigner` is built from *that document's* used URIs only: a file gets a
+contiguous table starting at 1 (`JobControl.xml` says JobControl=1, Machinery=2), and identifiers
+pointing at a namespace another file ships are written with that file's local index instead of
+being dropped. `<Model>` is scoped to the namespace the file ships, and namespaces it only points
+at are appended as `<RequiredModel>` children when the metadata does not already state them. No
+node is duplicated, merged or moved, and no dependency is inlined: the same keep set produces the
+same semantic graph, spread over files. The manifest is derived from the existing namespace
+dependency analysis, and the export reloads the written files to prove the count matches and every
+cross-file reference resolves — a split that loses a node or breaks a reference raises
+`ExportError` instead of reaching disk. The merged path is untouched: `export()` and
+`export_closure()` keep writing one document exactly as before.
+
 The writer produces the schema form of OPC 10000-6 and nothing else — `NamespaceUris` and
 `ServerUris` with plain `<Uri>` entries (indexes are the table positions, index 0 never listed),
 `Models` with `ModelUri`, `XmlSchemaUri`, `Version`, `PublicationDate`, `ModelVersion`, `Aliases`

@@ -86,6 +86,12 @@ class NamespaceReportData:
     cross_namespace_edges: list[tuple[str, str]] = field(default_factory=list)
     external_models: list[str] = field(default_factory=list)
     external_dependencies: dict[str, int] = field(default_factory=dict)
+    output_files: dict[str, str] = field(default_factory=dict)
+    """The file each namespace was written to: the merged NodeSet, or its own file.
+
+    A split export ships one namespace per file, so this says where a namespace's nodes
+    actually live — and that they were not duplicated into another file.
+    """
 
     def as_json(self) -> str:
         payload = {
@@ -97,6 +103,8 @@ class NamespaceReportData:
                 {"from": source, "to": target} for source, target in self.cross_namespace_edges
             ],
         }
+        if self.output_files:
+            payload["output_file"] = self.output_files
         if self.external_models:
             payload["external_models"] = self.external_models
             payload["external_references"] = self.external_dependencies
@@ -160,10 +168,10 @@ def build_namespace_report(
     retained = closure.ids()
     counts: Counter[str] = Counter()
     for node_id in retained:
-        counts[_alias_of(model, node_id.namespace)] += 1
+        counts[namespace_alias(model, node_id.namespace)] += 1
     declared: Counter[str] = Counter()
     for node_id in model.nodes:
-        declared[_alias_of(model, node_id.namespace)] += 1
+        declared[namespace_alias(model, node_id.namespace)] += 1
 
     pairs: set[tuple[str, str]] = set()
     external_refs: Counter[str] = Counter()
@@ -171,24 +179,21 @@ def build_namespace_report(
         node = model.get(node_id)
         if node is None:
             continue
-        source_ns = _alias_of(model, node_id.namespace)
+        source_ns = namespace_alias(model, node_id.namespace)
         for ref in node.references:
             if ref.target in retained and ref.target.namespace != node_id.namespace:
-                pairs.add((source_ns, _alias_of(model, ref.target.namespace)))
+                pairs.add((source_ns, namespace_alias(model, ref.target.namespace)))
         for identifier in referenced_identifiers(node):
             if identifier.namespace in external:
-                external_refs[_alias_of(model, identifier.namespace)] += 1
+                external_refs[namespace_alias(model, identifier.namespace)] += 1
 
     subsets = marked_namespaces(model, retained)
+    alias_of = {uri: namespace_alias(model, uri) for uri in subsets}
     return NamespaceReportData(
         counts=dict(sorted(counts.items())),
         declared=dict(sorted(declared.items())),
-        subsets={
-            _alias_of(model, uri): subset for uri, (subset, _present) in sorted(subsets.items())
-        },
-        marked_in_export={
-            _alias_of(model, uri): present for uri, (_subset, present) in sorted(subsets.items())
-        },
+        subsets={alias_of[uri]: subset for uri, (subset, _) in sorted(subsets.items())},
+        marked_in_export={alias_of[uri]: present for uri, (_, present) in sorted(subsets.items())},
         cross_namespace_edges=sorted(pairs),
         external_models=sorted(external),
         external_dependencies=dict(sorted(external_refs.items())),
@@ -207,6 +212,7 @@ def _label(model: SemanticModel, node_id: ExpandedNodeId) -> str:
     return node.browse_name.name or str(node_id)
 
 
-def _alias_of(model: SemanticModel, uri: str) -> str:
+def namespace_alias(model: SemanticModel, uri: str) -> str:
+    """The name a namespace is reported under: its declared alias, else the URI itself."""
     namespace = model.namespaces.get(uri)
     return namespace.alias if namespace and namespace.alias else uri

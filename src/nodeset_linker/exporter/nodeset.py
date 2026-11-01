@@ -22,10 +22,22 @@ identifier pointing into it survives — as a reference, as a ``DataType``, and 
 ``Definition`` — rewritten to the index the output gives that namespace.  The OPC UA
 namespace is the special case: its index is always 0, so externalising it writes bare
 identifiers and adds no ``Uri`` entry.
+
+The export *strategy* is separate from the reduction.  :func:`export` writes the retained
+nodes as one document (merged mode); :func:`export_split` writes them as one document per
+namespace the reduction ships (split mode), keyed by ``node.namespace_uri``.  A node then
+appears in exactly one file, is never duplicated, is never moved to another namespace and
+never inlines a dependency: a reference that crosses namespaces stays a reference, and the
+namespace it points at is declared in that file's ``NamespaceUris`` so it resolves once the
+exported files are loaded together.
 """
 
 from __future__ import annotations
 
+import json
+import re
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -33,7 +45,12 @@ from lxml.etree import Element, SubElement, fromstring, tostring
 from lxml.etree import indent as xml_indent
 
 from nodeset_linker.models.identifiers import UA_NAMESPACE_URI, ExpandedNodeId, IdentifierKind
-from nodeset_linker.models.namespace import NODESET_XML_NAMESPACE, ModelInfo, Namespace
+from nodeset_linker.models.namespace import (
+    NODESET_XML_NAMESPACE,
+    ModelInfo,
+    Namespace,
+    alias_from_uri,
+)
 from nodeset_linker.models.namespace_metadata import (
     marked_namespaces,
     metadata_object_in,
@@ -50,9 +67,9 @@ from nodeset_linker.models.node import (
     referenced_identifiers,
 )
 from nodeset_linker.models.node_class import ModellingRule, NodeClass
-from nodeset_linker.repository.model import SemanticModel
+from nodeset_linker.repository.model import SemanticModel, load_nodesets
 from nodeset_linker.utils.errors import ExportError
-from nodeset_linker.validator.semantic import SemanticValidator
+from nodeset_linker.validator.semantic import SemanticValidator, declared_external_namespaces
 
 if TYPE_CHECKING:  # pragma: no cover
     from nodeset_linker.resolver.closure import Closure
@@ -113,6 +130,9 @@ MODELLING_RULE_IDS = {
 }
 MODELLING_RULE_TYPE_ID = 37
 
+#: The dependency index a split export writes next to its NodeSets.
+MANIFEST_FILE_NAME = "manifest.json"
+
 
 class NamespaceIndexAssigner:
     """Assigns export indexes to namespace URIs deterministically.
@@ -162,9 +182,25 @@ class NodeSetExporter:
         *,
         mark_namespace_subsets: bool = True,
         external: frozenset[str] = frozenset(),
+        foreign: frozenset[ExpandedNodeId] = frozenset(),
+        model_entries: frozenset[str] | None = None,
+        extra_required: dict[str, tuple[str, ...]] | None = None,
     ) -> None:
+        """``foreign`` and ``model_entries`` are what a split file needs beyond a subset.
+
+        A split document ships one namespace and *references* the rest.  ``foreign`` holds
+        the identifiers a sibling file declares: they are written with this document's own
+        namespace index, so the reference keeps naming the same node instead of being
+        dropped.  ``model_entries`` limits which namespaces appear as ``Model`` table
+        entries — a split file models only the namespace it ships — and ``extra_required``
+        states a dependency this file references but whose ``RequiredModel`` its own model
+        declaration never listed.
+        """
         self._model = model
         self._external = frozenset(external)
+        self._foreign = frozenset(foreign)
+        self._model_entries = model_entries
+        self._extra_required = extra_required or {}
         # An externalized model is never shipped, even when its nodes survived the closure.
         self._keep = {node_id for node_id in keep if node_id.namespace not in self._external}
         self._subset_flags = marked_namespaces(model, self._keep)
@@ -245,6 +281,8 @@ class NodeSetExporter:
                 continue  # a namespace that contributed no node contributes no model entry
             if info.namespace_uri in self._external:
                 continue  # an externalized model is a dependency, not part of this document
+            if self._model_entries is not None and info.namespace_uri not in self._model_entries:
+                continue  # a split file ships one namespace, so it models only that one
             attrs = {"ModelUri": info.namespace_uri}
             for name, value in (
                 ("XmlSchemaUri", info.xml_schema_uri),
@@ -256,8 +294,12 @@ class NodeSetExporter:
                     attrs[name] = value
             model_el = SubElement(models_el, "Model", **attrs)
             written = True
-            for required in info.required_models:
-                SubElement(model_el, "RequiredModel", **self._required_attrs(info, required))
+            required = list(info.required_models)
+            for extra in self._extra_required.get(info.namespace_uri, ()):
+                if extra not in required:
+                    required.append(extra)  # a dependency this file references but did not list
+            for required_uri in required:
+                SubElement(model_el, "RequiredModel", **self._required_attrs(info, required_uri))
         if not written:
             root.remove(models_el)
 
@@ -337,17 +379,20 @@ class NodeSetExporter:
         ids: dict[ExpandedNodeId, tuple[int, str, int | None]],
         assigner: NamespaceIndexAssigner,
     ) -> str | None:
-        """The identifier as written here: retained nodes, externalized models, or nothing.
+        """The identifier as written here: retained nodes, externalized models, sibling files.
 
         An identifier pointing at an externalized model is *always* written; silently
-        dropping it would leave the output without the dependency it still relies on.
-        Anything else that is not in this subset stays out — validation guarantees that
-        only a declared external model can be a target this file does not contain.
+        dropping it would leave the output without the dependency it still relies on.  A
+        split file additionally writes identifiers a *sibling* file declares: the namespace
+        is in this document's ``Uri`` table, so the reference names the same node there
+        rather than being dropped.  Anything else that is not in this subset stays out —
+        validation guarantees that only a declared external model can be a target this
+        export does not contain at all.
         """
         mapped = ids.get(node_id)
         if mapped is not None:
             return _id_xml(*mapped)
-        if self._is_external(node_id):
+        if self._is_external(node_id) or node_id in self._foreign:
             index = assigner.index_of(node_id.namespace)
             server = self._server_indices.get(node_id.server_uri or "")
             return _id_xml(index, node_id.identifier.as_xml(), server)
@@ -667,6 +712,249 @@ def export_closure(
 ) -> Path:
     """Export exactly the nodes of a dependency closure."""
     return export(model, closure.ids(), path, external=external)
+
+
+@dataclass(slots=True)
+class SplitExportResult:
+    """What a split export wrote: one NodeSet per namespace, plus the manifest."""
+
+    files: dict[str, Path]
+    """The namespace URI each file ships, mapped to the path it was written to."""
+    manifest_path: Path
+    manifest: dict[str, object]
+    """The dependency index: mode, namespaces, per-file counts and cross-namespace edges."""
+
+
+def export_split(
+    model: SemanticModel,
+    keep: set[ExpandedNodeId],
+    directory: Path | str,
+    *,
+    validate: bool = True,
+    mark_namespace_subsets: bool = True,
+    external: frozenset[str] = frozenset(),
+    reload_check: bool = True,
+) -> SplitExportResult:
+    """Write the retained nodes as one NodeSet per namespace they belong to.
+
+    Ownership is the namespace a node's own identifier carries: every retained node lands in
+    exactly one file, nothing is duplicated, nothing is merged and nothing is moved to another
+    namespace.  A dependency that lives in another namespace is *referenced*, not copied in:
+    the file declares that namespace in its ``NamespaceUris`` and states it as a
+    ``RequiredModel``, and the node itself stays in its own file.  The reduction is untouched —
+    this only changes how the same semantic graph is spread over files — so the files loaded
+    together describe exactly what :func:`export` would have written as one document.
+    """
+    declared = frozenset(external)
+    shipped = {node_id for node_id in keep if node_id.namespace not in declared}
+    groups = _group_by_namespace(shipped)
+    _assert_ownership(groups, shipped)
+
+    if validate:
+        subset = _subset_model(model, shipped, declared)
+        report = SemanticValidator(subset, source=model, external=declared).validate()
+        if not report.ok:
+            raise ExportError(f"export blocked: {report.summary()}")
+
+    out_dir = Path(directory)
+    if not out_dir.exists():
+        out_dir.mkdir(parents=True)
+    names = _file_names(model, groups)
+    dependencies = _namespace_dependencies(model, groups)
+
+    files: dict[str, Path] = {}
+    requires: dict[str, tuple[str, ...]] = {}
+    subsets: dict[str, bool] = {}
+    for uri, node_ids in groups.items():
+        nodes = [model.nodes[node_id] for node_id in node_ids]
+        referenced = _referenced_namespaces(nodes)
+        # Every namespace this file points at but does not ship — a sibling file or an
+        # externalized model — is a dependency it has to state.
+        deps = tuple(sorted(referenced - {uri} - declared))
+        requires[uri] = deps
+        subsets[uri] = marked_namespaces(model, node_ids).get(uri, (False, False))[0]
+        exporter = NodeSetExporter(
+            model,
+            node_ids,
+            mark_namespace_subsets=mark_namespace_subsets,
+            external=declared,
+            foreign=frozenset(shipped - node_ids),
+            model_entries=frozenset({uri}),
+            extra_required={uri: deps},
+        )
+        files[uri] = exporter.write(out_dir / names[uri])
+
+    manifest = _split_manifest(model, groups, names, dependencies, declared, requires, subsets)
+    manifest_path = out_dir / MANIFEST_FILE_NAME
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    if reload_check:
+        _reload_split_export(sorted(files.values()), len(shipped), declared)
+    return SplitExportResult(files=files, manifest_path=manifest_path, manifest=manifest)
+
+
+def split_file_names(model: SemanticModel, namespaces: Iterable[str]) -> dict[str, str]:
+    """The file name each namespace would get in a split export — no writing, just naming."""
+    return _file_names(model, {uri: set() for uri in namespaces})
+
+
+def _group_by_namespace(shipped: set[ExpandedNodeId]) -> dict[str, set[ExpandedNodeId]]:
+    """Partition the shipped nodes by the namespace their own identifiers carry."""
+    groups: dict[str, set[ExpandedNodeId]] = {}
+    for node_id in shipped:
+        groups.setdefault(node_id.namespace, set()).add(node_id)
+    return groups
+
+
+def _assert_ownership(groups: dict[str, set[ExpandedNodeId]], shipped: set[ExpandedNodeId]) -> None:
+    """One node may only ever land in one file: the partition must cover the set exactly.
+
+    A node in two files would be a duplicated declaration; a node in none would be a silently
+    dropped dependency.  Both are ownership changes, so they are refused rather than written.
+    """
+    entries = sum(len(node_ids) for node_ids in groups.values())
+    distinct = set().union(*groups.values()) if groups else set()
+    if entries != len(distinct) or distinct != shipped:
+        raise ExportError(
+            f"split export would change node ownership: {entries} file entries "
+            f"for {len(shipped)} retained nodes"
+        )
+
+
+def _referenced_namespaces(nodes: list[UANode]) -> set[str]:
+    """The namespaces these nodes point at, references and embedded identifiers alike."""
+    found = {
+        identifier.namespace for node in nodes for identifier in referenced_identifiers(node)
+    }
+    found.update(node.browse_name.namespace_uri for node in nodes if node.browse_name.namespace_uri)
+    return found
+
+
+def _namespace_dependencies(
+    model: SemanticModel, groups: dict[str, set[ExpandedNodeId]]
+) -> dict[str, tuple[str, ...]]:
+    """Direct cross-namespace edges between the namespaces this export ships.
+
+    The same rule the namespace report uses: a retained node that references a retained node
+    of another namespace makes that namespace a dependency of its file.
+    """
+    shipped_uris = set(groups)
+    shipped_ids = set().union(*groups.values()) if groups else set()
+    targets: dict[str, set[str]] = {uri: set() for uri in groups}
+    for uri, node_ids in groups.items():
+        for node_id in node_ids:
+            node = model.get(node_id)
+            if node is None:
+                continue
+            for ref in node.references:
+                target_ns = ref.target.namespace
+                if ref.target in shipped_ids and target_ns != uri and target_ns in shipped_uris:
+                    targets[uri].add(target_ns)
+    return {uri: tuple(sorted(target_ns)) for uri, target_ns in sorted(targets.items())}
+
+
+def _file_names(model: SemanticModel, groups: dict[str, set[ExpandedNodeId]]) -> dict[str, str]:
+    """One readable file name per namespace, made unique without changing ownership."""
+    taken: set[str] = set()
+    names: dict[str, str] = {}
+    for uri in sorted(groups):
+        stem = _stem(model, uri)
+        candidate = stem
+        suffix = 2
+        while candidate in taken:
+            candidate = f"{stem}-{suffix}"
+            suffix += 1
+        taken.add(candidate)
+        names[uri] = f"{candidate}.xml"
+    return names
+
+
+def _stem(model: SemanticModel, namespace_uri: str) -> str:
+    """The declared namespace alias when there is one, else the last segment of the URI."""
+    declared = model.namespaces.get(namespace_uri)
+    alias = (declared.alias if declared and declared.alias else None) or alias_from_uri(
+        namespace_uri
+    )
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "-", alias or "").strip("-.")
+    return cleaned or "namespace"
+
+
+def _lower_stem(entry: tuple[str, object]) -> str:
+    """Order manifest entries by file stem, case-insensitively, so they read in file order."""
+    return entry[0].lower()
+
+
+def _split_manifest(
+    model: SemanticModel,
+    groups: dict[str, set[ExpandedNodeId]],
+    names: dict[str, str],
+    dependencies: dict[str, tuple[str, ...]],
+    declared: frozenset[str],
+    requires: dict[str, tuple[str, ...]],
+    subsets: dict[str, bool],
+) -> dict[str, object]:
+    """``manifest.json`` of a split export: which file ships which namespace, and what it needs.
+
+    Names are the file stems, URIs are the stable identity behind them, and the dependency
+    graph is the namespace dependency analysis restricted to the namespaces this export ships.
+    """
+    order = sorted(names.values(), key=lambda name: name.lower())
+    stem_of = {uri: Path(name).stem for uri, name in names.items()}
+    namespaces = [Path(name).stem for name in order]
+    return {
+        "export_mode": "split",
+        "namespaces": namespaces,
+        "namespace_uris": {stem: uri for uri, stem in sorted(stem_of.items(), key=_lower_stem)},
+        # A namespace without cross-namespace references is not listed: the manifest states
+        # dependencies, and the dependency graph is the namespace analysis restricted to the
+        # namespaces this export ships.
+        "dependencies": {
+            stem_of[uri]: sorted((stem_of[target] for target in targets), key=str.lower)
+            for uri, targets in sorted(dependencies.items(), key=_lower_stem)
+            if uri in stem_of and targets
+        },
+        "files": {
+            stem_of[uri]: {
+                "path": names[uri],
+                "nodes": len(groups[uri]),
+                "subset": subsets.get(uri, False),
+                "requires": sorted({*requires.get(uri, ()), *declared}),
+            }
+            for uri in sorted(groups, key=lambda uri: names[uri].lower())
+        },
+        "external_models": sorted(declared),
+    }
+
+
+def _reload_split_export(
+    paths: Sequence[Path], expected_nodes: int, declared: frozenset[str]
+) -> None:
+    """The exported files must load together and resolve every reference between them.
+
+    Loading them is the real test of the split: identifiers written with a file-local index
+    have to point at the node a sibling file declares, and a namespace that is only referenced
+    must stay out of the node count.
+    """
+    reloaded = load_nodesets(paths)
+    if reloaded.node_count() != expected_nodes:
+        raise ExportError(
+            f"split export changed node ownership: {reloaded.node_count()} nodes reload "
+            f"from {len(paths)} files holding {expected_nodes} retained nodes"
+        )
+    unresolved = [
+        (source, target)
+        for source, target in reloaded.unresolved_targets()
+        if target.namespace not in declared
+    ]
+    if unresolved:
+        sample = ", ".join(f"{source} -> {target}" for source, target in unresolved[:3])
+        raise ExportError(
+            f"split export blocked: references do not resolve across the exported files: {sample}"
+        )
+    report = SemanticValidator(
+        reloaded, external=declared_external_namespaces(reloaded)
+    ).validate()
+    if not report.ok:
+        raise ExportError(f"split export blocked: {report.summary()}")
 
 
 def _subset_model(

@@ -9,9 +9,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from nodeset_linker.config.schema import LinkerConfig
+from nodeset_linker.config.schema import ExportMode, LinkerConfig
 from nodeset_linker.explain.explainer import Explainer
-from nodeset_linker.exporter.nodeset import export
+from nodeset_linker.exporter.nodeset import export, export_split, split_file_names
 from nodeset_linker.graph.engine import SemanticGraph
 from nodeset_linker.models.identifiers import ExpandedNodeId
 from nodeset_linker.policies.registry import build_policy
@@ -22,6 +22,7 @@ from nodeset_linker.reports.data import (
     build_dependency_report,
     build_namespace_report,
     compute_statistics,
+    namespace_alias,
 )
 from nodeset_linker.repository.model import SemanticModel, load_nodesets
 from nodeset_linker.resolver.closure import Closure, DependencyResolver
@@ -44,6 +45,14 @@ class LinkResult:
     namespace_report: NamespaceReportData | None = None
     validation: ValidationReport | None = None
     output_path: Path | None = None
+    output_files: list[Path] = field(default_factory=list)
+    """Every file this run wrote: one NodeSet for a merged export, one per namespace for split."""
+    manifest_path: Path | None = None
+    """The ``manifest.json`` of a split export; None for a merged one."""
+    manifest: dict[str, object] | None = None
+    """The parsed manifest: which file ships which namespace and which namespaces it needs."""
+    export_mode: ExportMode = "merged"
+    """How the retained nodes were written out — the reduction is the same in both modes."""
     external: frozenset[str] = frozenset()
     """ModelUris whose declarations this run left out while keeping the references."""
 
@@ -124,15 +133,45 @@ class LinkerPipeline:
             # instead of producing a broken NodeSet.
             raise ValidationError(validation.summary(), validation)
         output_path: Path | None = None
-        if export_output and self._config.output:
-            output_path = export(
-                model,
-                retained,
-                self._config.output,
-                validate=self._config.validate_before_export,
-                mark_namespace_subsets=self._config.mark_namespace_subsets,
-                external=external,
+        output_files: list[Path] = []
+        manifest_path: Path | None = None
+        manifest: dict[str, object] | None = None
+        plan = self._config.export_plan()
+        export_mode: ExportMode = plan[0] if plan else "merged"
+        if namespace_report is not None and plan is not None:
+            # Even a report-only run can say where each namespace *would* be written.
+            namespace_report.output_files = self._planned_output_files(
+                plan, model, retained, namespace_report
             )
+        if export_output and plan is not None:
+            mode, target = plan
+            if mode == "merged":
+                output_path = export(
+                    model,
+                    retained,
+                    target,
+                    validate=self._config.validate_before_export,
+                    mark_namespace_subsets=self._config.mark_namespace_subsets,
+                    external=external,
+                )
+                output_files = [output_path]
+            else:
+                split = export_split(
+                    model,
+                    retained,
+                    target,
+                    validate=self._config.validate_before_export,
+                    mark_namespace_subsets=self._config.mark_namespace_subsets,
+                    external=external,
+                )
+                output_files = sorted(split.files.values())
+                manifest_path = split.manifest_path
+                manifest = split.manifest
+                if namespace_report is not None:
+                    namespace_report.output_files = {
+                        namespace_alias(model, uri): path.name
+                        for uri, path in sorted(split.files.items())
+                    }
 
         return LinkResult(
             model=model,
@@ -144,12 +183,35 @@ class LinkerPipeline:
             namespace_report=namespace_report,
             validation=validation,
             output_path=output_path,
+            output_files=output_files,
+            manifest_path=manifest_path,
+            manifest=manifest,
+            export_mode=export_mode,
             external=external,
         )
 
     def analyze(self) -> LinkResult:
         """Report-only run: nothing is exported."""
         return self.run(export_output=False)
+
+    def _planned_output_files(
+        self,
+        plan: tuple[ExportMode, str],
+        model: SemanticModel,
+        retained: set[ExpandedNodeId],
+        report: NamespaceReportData,
+    ) -> dict[str, str]:
+        """The file each shipped namespace is written to — named, but not necessarily written.
+
+        A merged export puts every namespace in one document; a split export gives each
+        namespace its own file, keyed by the same namespace name the report counts under.
+        """
+        mode, target = plan
+        if mode == "merged":
+            name = Path(target).name
+            return {alias: name for alias in report.counts}
+        names = split_file_names(model, {node_id.namespace for node_id in retained})
+        return {namespace_alias(model, uri): name for uri, name in names.items()}
 
     def _external_namespaces(self, model: SemanticModel) -> frozenset[str]:
         """The configured ModelUris, resolved to the namespace URIs the model actually uses.

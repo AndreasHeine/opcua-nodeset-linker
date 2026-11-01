@@ -33,6 +33,15 @@ nodeset-linker validate out/reduced.xml                          # semantic chec
 nodeset-linker validate out/reduced.xml --schema tests/data/schema/UANodeSet.xsd
 ```
 
+The same reduction can be written as one NodeSet per namespace (`examples/config_split.yaml`); a
+folder is read back as a whole export:
+
+```bash
+nodeset-linker link     examples/config_split.yaml   # out/split/*.xml + out/split/manifest.json
+nodeset-linker stats    out/split                    # every file, loaded together
+nodeset-linker validate out/split --schema tests/data/schema/UANodeSet.xsd
+```
+
 ## Configuration (YAML, validated with Pydantic)
 
 ```yaml
@@ -49,6 +58,10 @@ roots:
   - namespaceUri=http://opcfoundation.org/UA/Machinery/
 
 output: out/reduced.xml
+
+export:                 # how the reduction is written; see *Export modes*
+  mode: merged          # merged | split
+  file: out/reduced.xml # a merged export names one file; a split one names a directory
 
 external:               # models the consumer provides — referenced, never shipped
   - http://opcfoundation.org/UA/DI/
@@ -189,6 +202,62 @@ to load the required model itself, together with this file. The OPC UA specifica
 dependency in `RequiredModel`, but there is no guarantee that every importer resolves it on its own.
 The file says what it needs — it cannot supply it.
 
+## Export modes (`export:`)
+
+`output:` writes one merged NodeSet, exactly as it always did. The `export:` block chooses *how*
+the reduction is written — the reduction itself does not change: same closure, same retention,
+same validation, same nodes.
+
+```yaml
+export:
+  mode: merged          # default: one NodeSet, the current behaviour
+  file: out/reduced.xml
+
+export:
+  mode: split           # one NodeSet per namespace the reduction ships
+  directory: out/split/
+```
+
+A split export partitions the retained nodes by the namespace their **own identifiers** carry.
+The export strategy is the only thing that differs, and it lives entirely in the exporter:
+
+* every retained node is written to exactly one file — no duplication, no merging, no node moves
+  to another namespace, no dependency copied or inlined into the file that references it
+* `<NamespaceUris>`, `<Models>` and `<Aliases>` are scoped to what that file ships; namespaces
+  the file only points at are listed as `<RequiredModel>` children when the file does not ship them
+* a cross-namespace reference stays a reference: `MachineTool.xml` names the IA datatype in its
+  `DataType` attribute while that datatype is declared in `IA.xml`. The files together are the same
+  semantic graph as the merged export, and they only resolve when loaded together
+* an externalized model (`external:`) never becomes a file of its own; it stays referenced
+* file names are the declared namespace alias, else the last segment of the URI; a colliding name
+  gets a numbered suffix (`Machinery-2.xml`)
+* the exporter checks what it wrote: loading all exported files must yield exactly the retained
+  nodes and resolve every reference between them, otherwise the export is blocked — a split that
+  lost a node or broke a reference never reaches disk
+
+`manifest.json` is written next to the files and is generated from the namespace dependency
+analysis that already exists; file stems are the keys, URIs are the identity behind them:
+
+```json
+{
+  "export_mode": "split",
+  "namespaces": ["JobControl", "Machinery"],
+  "namespace_uris": {"JobControl": "http://example.org/UA/JobControl/"},
+  "dependencies": {"JobControl": ["Machinery"]},
+  "files": {"JobControl": {"path": "JobControl.xml", "nodes": 7, "subset": false,
+                           "requires": ["http://opcfoundation.org/UA/",
+                                        "http://opcfoundation.org/UA/Machinery/"]}},
+  "external_models": ["http://opcfoundation.org/UA/"]
+}
+```
+
+`analyze` reports the file names a split export would write without writing anything, and the
+namespace report gains `output_file` (`{"Machinery": {"declared": 18, "retained": 17,
+"output_file": "Machinery.xml"}`). `stats` and `validate` take a folder as well as a file: a
+folder is read as a split export — every file is schema-checked, and they are loaded *together*,
+so a reference into a sibling namespace resolves and only genuinely missing targets are reported.
+One split file on its own is not self-contained and is not expected to validate alone.
+
 ## Export format (spec conformant)
 
 The written document is a plain `UANodeSet` in
@@ -270,7 +339,10 @@ OPC UA conformance: it says the XML matches `UANodeSet.xsd`, nothing more.
 See `docs/architecture.md`, `docs/dependency-resolution.md` and
 `docs/reduction-example.md` — a complete walkthrough of one reduction across two NodeSets
 with cross-namespace dependencies, node by node.
-For a practical start-to-finish workflow, see the [Usage Guide](docs/usage-guide.md).
+For a practical start-to-finish workflow, see the [Usage Guide](docs/usage-guide.md), and for
+a real eight-NodeSet input set the [Demo 1 walkthrough](examples/demo1/README.md) — including
+the split export in [examples/demo1/config_split.yaml](examples/demo1/config_split.yaml).
+For the release gate, see the [Release Checklist](docs/release-checklist.md).
 
 ```
 nodeset_linker/          # the package; tests live at the repository root

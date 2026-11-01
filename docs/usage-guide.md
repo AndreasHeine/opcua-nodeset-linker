@@ -89,6 +89,49 @@ nodeset-linker link examples/config.yaml --output out/controller.xml
 The linker validates the reduced semantic model before export. An error blocks the write;
 warnings are reported but do not by themselves prevent export.
 
+## Writing one NodeSet per namespace
+
+The default export is one merged NodeSet. The `export:` block chooses *how* the reduction is
+written, not *what* is retained — the same closure, the same validation, the same nodes:
+
+```yaml
+export:
+  mode: split           # one NodeSet per namespace the reduction ships
+  directory: out/split/
+```
+
+`out/split/` then contains one file per namespace plus `manifest.json`:
+
+```text
+out/split/DI.xml
+out/split/IA.xml
+out/split/MachineTool.xml
+out/split/manifest.json
+```
+
+Every retained node keeps the namespace its own identifier carries and appears in exactly one
+file. Nothing is duplicated, inlined or merged, and no node changes owner. A dependency on a
+namespace another file ships stays a *reference* — `MachineTool.xml` names the IA datatype in a
+`DataType` attribute while the datatype itself stays in `IA.xml` — and that namespace is stated
+as a `<RequiredModel>` of the file that points at it. `NamespaceUris`, `Models` and `Aliases`
+are scoped to what the individual file ships, so the files together are the same semantic graph
+as the merged export; they only resolve when loaded together.
+
+`manifest.json` records which namespace each file ships and which namespaces it needs, so a
+build step can load the files in dependency order without reading the XML. `analyze` already
+names the files a split export would write, and the namespace report gains an `output_file`
+entry per namespace.
+
+Read a split export back as a folder — every file is checked and they are loaded together:
+
+```powershell
+nodeset-linker stats out/split
+nodeset-linker validate out/split --schema tests/data/schema/UANodeSet.xsd
+```
+
+One split file on its own is not self-contained: it references namespaces its sibling files
+declare, so validating a single file reports those as missing by design.
+
 ## 5. Validate and inspect the output
 
 Run semantic validation and also provide the NodeSet XSD to check the XML structure:
