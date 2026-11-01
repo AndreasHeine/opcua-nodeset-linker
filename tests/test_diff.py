@@ -1,0 +1,679 @@
+"""Semantic diff tests: model comparison, not XML comparison."""
+
+from __future__ import annotations
+
+import dataclasses
+import json
+import re
+from pathlib import Path
+
+from click.testing import CliRunner
+from tests.conftest import (
+    MACHINERY,
+    Machinery_NS,
+    enum_definition,
+    make_data_type,
+    make_object_type,
+    make_reference_type,
+    make_variable,
+    node_id,
+    structure_definition,
+)
+
+from nodeset_linker.cli.main import main
+from nodeset_linker.diff import (
+    apply_impact,
+    console_text,
+    dependents,
+    diff_models,
+    html_text,
+    json_text,
+    markdown_text,
+    total_impact,
+)
+from nodeset_linker.diff.model import NamespaceChange, SemanticDiff
+from nodeset_linker.models.identifiers import ExpandedNodeId, QualifiedName
+from nodeset_linker.models.node import (
+    Definition,
+    FieldMetadata,
+    OptionSetValue,
+    Reference,
+    StructureField,
+    UnionAlternative,
+)
+from nodeset_linker.models.node_class import ModellingRule
+from nodeset_linker.repository.model import SemanticModel, build_model, load_nodesets
+
+BASE = MACHINERY.read_text(encoding="utf-8")
+
+
+def replace(node, **changes):
+    """A copy of a model node with one attribute changed."""
+    return dataclasses.replace(node, **changes)
+
+
+def in_namespace(node, uri: str):
+    """A copy of a model node in a project namespace rather than the OPC UA namespace."""
+    return replace(node, node_id=node_id(int(node.node_id.identifier.value), uri))
+
+
+def write(tmp_path: Path, name: str, text: str) -> Path:
+    path = tmp_path / name
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def diff_texts(tmp_path: Path, old: str, new: str) -> tuple[SemanticModel, SemanticModel, SemanticDiff]:
+    """Diff two textual variants of the Machinery model."""
+    old_model = load_nodesets([write(tmp_path, "old.xml", old)])
+    new_model = load_nodesets([write(tmp_path, "new.xml", new)])
+    return old_model, new_model, diff_models(old_model, new_model)
+
+
+def labels(entries: list) -> set[str]:
+    return {entry.label for entry in entries}
+
+
+def remove_node(text: str, node_id_value: str) -> str:
+    """Delete one node element from a nodeset document."""
+    pattern = rf"\n\n?  <UA\w+ NodeId=\"{node_id_value}\".*?</UA\w+>\n"
+    return re.sub(pattern, "\n", text, count=1, flags=re.S)
+
+
+def reindex_namespace(text: str) -> str:
+    """Move the model namespace from index 1 to index 2 behind a filler namespace."""
+    text = text.replace(
+        "<Uri>http://opcfoundation.org/UA/Machinery/</Uri>",
+        "<Uri>http://example.org/UA/Filler/</Uri>\n    <Uri>http://opcfoundation.org/UA/Machinery/</Uri>",
+    )
+    return text.replace("ns=1;i=", "ns=2;i=").replace('BrowseName="1:', 'BrowseName="2:')
+
+
+def reversed_nodes(text: str) -> str:
+    """Same nodes, opposite document order."""
+    head, _, tail = text.partition("<UADataType NodeId=\"ns=1;i=2001\"")
+    body = "<UADataType NodeId=\"ns=1;i=2001\"" + tail[:-len("</UANodeSet>")]
+    nodes = re.findall(r"<UA\w+ .*?</UA\w+>", body, flags=re.S)
+    return head + "\n  ".join(reversed(nodes)) + "\n</UANodeSet>"
+
+
+ADDED_TYPE = """
+  <UAObjectType NodeId="ns=1;i=2600" BrowseName="1:MachineHealthType" SymbolicName="MachineHealthType">
+    <DisplayName>MachineHealthType</DisplayName>
+    <References>
+      <Reference ReferenceType="HasSubtype" IsForward="false">i=58</Reference>
+    </References>
+  </UAObjectType>
+"""
+
+REMOVED_TYPE = """
+  <UAObjectType NodeId="ns=1;i=2700" BrowseName="1:LegacyMachineType" SymbolicName="LegacyMachineType">
+    <DisplayName>LegacyMachineType</DisplayName>
+    <References>
+      <Reference ReferenceType="HasSubtype" IsForward="false">i=58</Reference>
+    </References>
+  </UAObjectType>
+"""
+
+
+class TestAddedAndRemovedNodes:
+    def test_added_node(self, tmp_path) -> None:
+        _, _, diff = diff_texts(tmp_path, BASE, BASE.replace("</UANodeSet>", ADDED_TYPE + "</UANodeSet>"))
+        assert "MachineHealthType" in labels(diff.added)
+        assert not diff.removed
+        assert not diff.modified
+        assert not diff.breaking
+
+    def test_removed_node(self, tmp_path) -> None:
+        _, _, diff = diff_texts(tmp_path, BASE.replace("</UANodeSet>", REMOVED_TYPE + "</UANodeSet>"), BASE)
+        assert "LegacyMachineType" in labels(diff.removed)
+        assert not diff.added
+
+    def test_removed_type_definition_is_breaking(self, tmp_path) -> None:
+        _, _, diff = diff_texts(tmp_path, BASE.replace("</UANodeSet>", REMOVED_TYPE + "</UANodeSet>"), BASE)
+        reasons = {change.label: change.reason for change in diff.breaking}
+        assert reasons["LegacyMachineType"] == "ObjectType removed"
+
+    def test_removed_data_type_is_breaking(self, tmp_path) -> None:
+        _, _, diff = diff_texts(tmp_path, BASE, remove_node(BASE, "ns=1;i=2020"))
+        assert labels(diff.removed) == {"MachineStatusStructure"}
+        assert [change.reason for change in diff.breaking] == ["DataType removed"]
+
+    def test_namespace_totals(self, tmp_path) -> None:
+        _, _, diff = diff_texts(tmp_path, BASE, BASE.replace("</UANodeSet>", ADDED_TYPE + "</UANodeSet>"))
+        totals = {entry.alias: entry for entry in diff.namespaces}
+        assert totals["Machinery"].nodes[1] == totals["Machinery"].nodes[0] + 1
+        assert NamespaceChange.delta(*totals["Machinery"].nodes) == "+1"
+        assert totals["Machinery"].references[1] > totals["Machinery"].references[0]
+
+
+class TestDefinitionChanges:
+    def test_structure_field_added_is_not_breaking(self, tmp_path) -> None:
+        new = BASE.replace(
+            '<Field Name="Progress" DataType="ns=1;i=2003" IsOptional="true" />',
+            '<Field Name="Progress" DataType="ns=1;i=2003" IsOptional="true" />\n'
+            '      <Field Name="ProgressPercentage" DataType="Int32" IsOptional="true" />',
+        )
+        _, _, diff = diff_texts(tmp_path, BASE, new)
+        modified = {entry.label: entry for entry in diff.modified}
+        assert "JobDataType" in modified
+        assert any("ProgressPercentage" in change.subject for change in modified["JobDataType"].changes)
+        assert not diff.breaking
+
+    def test_structure_field_datatype_change_is_breaking(self, tmp_path) -> None:
+        new = BASE.replace('<Field Name="JobId" DataType="String" />', '<Field Name="JobId" DataType="Int32" />')
+        _, _, diff = diff_texts(tmp_path, BASE, new)
+        assert diff.breaking
+        assert "JobId" in diff.breaking[0].reason
+
+    def test_enum_value_added_is_not_breaking(self, tmp_path) -> None:
+        new = BASE.replace('<Field Name="Done" Value="2" />', '<Field Name="Done" Value="2" />\n      <Field Name="Paused" Value="3" />')
+        _, _, diff = diff_texts(tmp_path, BASE, new)
+        assert labels(diff.modified) == {"JobStateEnum"}
+        assert not diff.breaking
+
+    def test_enum_value_removed_is_breaking(self, tmp_path) -> None:
+        new = BASE.replace('      <Field Name="Done" Value="2" />\n', "")
+        _, _, diff = diff_texts(tmp_path, BASE, new)
+        assert labels(diff.modified) == {"JobStateEnum"}
+        assert "Done" in diff.breaking[0].reason
+
+
+class TestReferenceChanges:
+    def test_reference_added_and_removed(self, tmp_path) -> None:
+        new = BASE.replace(
+            '      <Reference ReferenceType="HasInterface">ns=1;i=2100</Reference>\n'
+            '      <Reference ReferenceType="HasComponent">ns=1;i=2201</Reference>',
+            '      <Reference ReferenceType="HasComponent">ns=1;i=2300</Reference>',
+        )
+        _, _, diff = diff_texts(tmp_path, BASE, new)
+        modified = {entry.label: entry for entry in diff.modified}
+        areas = [change.area for change in modified["MSSControllerInstance"].changes]
+        assert areas == ["reference", "reference", "reference"]
+        kinds = [change.kind for change in modified["MSSControllerInstance"].changes]
+        assert sorted(kinds) == ["added", "removed", "removed"]
+        assert [change.label for change in diff.breaking] == ["MSSControllerInstance"]
+
+    def test_reference_removal_names_the_target(self, tmp_path) -> None:
+        new = BASE.replace('      <Reference ReferenceType="HasInterface">ns=1;i=2100</Reference>\n', "")
+        _, _, diff = diff_texts(tmp_path, BASE, new)
+        reasons = [change.reason for change in diff.breaking]
+        assert any("HasInterface" in reason for reason in reasons)
+
+    def test_organizes_reference_is_not_breaking(self, tmp_path) -> None:
+        new = BASE.replace(
+            '      <Reference ReferenceType="Organizes">ns=1;i=2200</Reference>',
+            '      <Reference ReferenceType="Organizes">ns=1;i=2500</Reference>\n'
+            '      <Reference ReferenceType="Organizes">ns=1;i=2200</Reference>',
+        )
+        _, _, diff = diff_texts(tmp_path, BASE, new)
+        assert labels(diff.modified) == {"MachineryView"}
+        assert not diff.breaking
+
+
+class TestModellingRules:
+    def test_optional_to_mandatory_is_breaking(self) -> None:
+        old = build_model([make_variable("Status", 3001, rule=ModellingRule.OPTIONAL)])
+        new = build_model([make_variable("Status", 3001, rule=ModellingRule.MANDATORY)])
+        diff = diff_models(old, new)
+        assert diff.breaking
+        assert "Modelling rule" in diff.breaking[0].reason
+
+    def test_mandatory_to_optional_is_not_breaking(self) -> None:
+        old = build_model([make_variable("Status", 3001, rule=ModellingRule.MANDATORY)])
+        new = build_model([make_variable("Status", 3001, rule=ModellingRule.OPTIONAL)])
+        assert not diff_models(old, new).breaking
+
+    def test_mandatory_placeholder_removal_is_breaking(self) -> None:
+        node = in_namespace(
+            make_variable("SubMachine", 5001, rule=ModellingRule.MANDATORY_PLACEHOLDER), Machinery_NS
+        )
+        assert diff_models(build_model([node]), build_model([])).breaking
+
+    def test_optional_placeholder_removal_is_not_breaking(self) -> None:
+        node = in_namespace(
+            make_variable("SubMachine", 5001, rule=ModellingRule.OPTIONAL_PLACEHOLDER), Machinery_NS
+        )
+        assert not diff_models(build_model([node]), build_model([])).breaking
+
+
+class TestIdentityNotXml:
+    def test_namespace_index_reassignment_is_no_change(self, tmp_path) -> None:
+        _, _, diff = diff_texts(tmp_path, BASE, reindex_namespace(BASE))
+        assert diff.is_empty
+        assert console_text(diff) == "No semantic differences found."
+
+    def test_document_order_is_no_change(self, tmp_path) -> None:
+        _, _, diff = diff_texts(tmp_path, BASE, reversed_nodes(BASE))
+        assert diff.is_empty
+
+    def test_whitespace_and_comments_are_no_change(self, tmp_path) -> None:
+        noisy = BASE.replace("<UANodeSet", "<!-- edited -->\n  <UANodeSet").replace("\n", "\n\n")
+        _, _, diff = diff_texts(tmp_path, BASE, noisy)
+        assert diff.is_empty
+
+    def test_renumbered_node_is_reported_as_renumbering(self) -> None:
+        old = build_model([make_object_type("MachineType", 4200)])
+        new = build_model([make_object_type("MachineType", 4201)])
+        diff = diff_models(old, new)
+        assert not diff.added
+        assert not diff.removed
+        assert [entry.label for entry in diff.renumbered] == ["MachineType"]
+        assert not diff.breaking
+
+    def test_renumbered_node_with_changed_content(self) -> None:
+        old = build_model([make_object_type("MachineType", 4200)])
+        new = build_model(
+            [make_object_type("MachineType", 4201, refs=(Reference(target=node_id(58), type_name="HasSubtype"),))]
+        )
+        diff = diff_models(old, new)
+        assert labels(diff.renumbered) == {"MachineType"}
+        assert any(change.kind == "added" for change in diff.renumbered[0].changes)
+
+
+class TestImpact:
+    def test_impact_counts_dependent_nodes(self, tmp_path) -> None:
+        old_model, new_model, diff = diff_texts(tmp_path, BASE, remove_node(BASE, "ns=1;i=2100"))
+        apply_impact(diff, old_model, new_model)
+        assert [entry.label for entry in diff.breaking] == ["IMachineStatus"]
+        assert diff.breaking[0].affected == 5  # the interface user and everything under it
+        assert total_impact(diff) == diff.breaking[0].affected
+        assert "MSSControllerInstance" in console_text(diff, impact=True)
+
+    def test_impact_names_dependents(self, tmp_path) -> None:
+        old_model, new_model, diff = diff_texts(
+            tmp_path, BASE, BASE.replace("</UANodeSet>", ADDED_TYPE + "</UANodeSet>")
+        )
+        apply_impact(diff, old_model, new_model)
+        assert "Total Impact" in console_text(diff, impact=True)
+
+
+class TestOutputFormats:
+    def test_json_shape(self, tmp_path) -> None:
+        _, _, diff = diff_texts(tmp_path, BASE.replace("</UANodeSet>", REMOVED_TYPE + "</UANodeSet>"), BASE)
+        payload = json.loads(json_text(diff))
+        assert set(payload) == {
+            "old",
+            "new",
+            "summary",
+            "added_nodes",
+            "removed_nodes",
+            "modified_nodes",
+            "renumbered_nodes",
+            "namespace_changes",
+            "breaking_changes",
+        }
+        assert payload["removed_nodes"][0]["label"] == "LegacyMachineType"
+        assert payload["breaking_changes"][0]["reason"] == "ObjectType removed"
+
+    def test_markdown(self, tmp_path) -> None:
+        _, _, diff = diff_texts(tmp_path, BASE, BASE.replace("</UANodeSet>", ADDED_TYPE + "</UANodeSet>"))
+        text = markdown_text(diff)
+        assert text.startswith("# Semantic diff")
+        assert "## Added nodes" in text
+
+    def test_html(self, tmp_path) -> None:
+        _, _, diff = diff_texts(tmp_path, BASE.replace("</UANodeSet>", REMOVED_TYPE + "</UANodeSet>"), BASE)
+        text = html_text(diff)
+        assert "<h2>Breaking changes</h2>" in text
+        assert '<strong class="breaking">' in text
+
+    def test_empty_report(self, tmp_path) -> None:
+        _, _, diff = diff_texts(tmp_path, BASE, BASE)
+        assert console_text(diff) == "No semantic differences found."
+        assert markdown_text(diff) == "No semantic differences found."
+        assert "<p>No semantic differences found.</p>" in html_text(diff)
+
+    def test_breaking_only_report(self, tmp_path) -> None:
+        _, _, diff = diff_texts(tmp_path, BASE.replace("</UANodeSet>", REMOVED_TYPE + "</UANodeSet>"), BASE)
+        text = console_text(diff, breaking_only=True)
+        assert "Added nodes" not in text
+        assert "LegacyMachineType" in text
+
+
+class TestCli:
+    def test_diff_console(self, tmp_path) -> None:
+        old = write(tmp_path, "old.xml", BASE.replace("</UANodeSet>", REMOVED_TYPE + "</UANodeSet>"))
+        new = write(tmp_path, "new.xml", BASE)
+        result = CliRunner().invoke(main, ["diff", str(old), str(new)])
+        assert result.exit_code == 0, result.output
+        assert "LegacyMachineType" in result.output
+        assert "Nodes:" in result.output
+
+    def test_diff_json(self, tmp_path) -> None:
+        old = write(tmp_path, "old.xml", BASE)
+        new = write(tmp_path, "new.xml", BASE.replace("</UANodeSet>", ADDED_TYPE + "</UANodeSet>"))
+        result = CliRunner().invoke(main, ["diff", str(old), str(new), "--json"])
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.output)["added_nodes"][0]["label"] == "MachineHealthType"
+
+    def test_diff_no_change(self, tmp_path) -> None:
+        old = write(tmp_path, "old.xml", BASE)
+        new = write(tmp_path, "new.xml", reindex_namespace(BASE))
+        result = CliRunner().invoke(main, ["diff", str(old), str(new)])
+        assert result.exit_code == 0
+        assert "No semantic differences found." in result.output
+
+    def test_fail_on_breaking_exits_1(self, tmp_path) -> None:
+        old = write(tmp_path, "old.xml", BASE)
+        new = write(
+            tmp_path,
+            "new.xml",
+            BASE.replace('<Field Name="JobId" DataType="String" />', '<Field Name="JobId" DataType="Int32" />'),
+        )
+        result = CliRunner().invoke(main, ["diff", str(old), str(new), "--fail-on-breaking"])
+        assert result.exit_code == 1
+        assert "JobId" in result.output
+
+    def test_fail_on_breaking_passes_without_breaking_changes(self, tmp_path) -> None:
+        old = write(tmp_path, "old.xml", BASE)
+        new = write(
+            tmp_path,
+            "new.xml",
+            BASE.replace('<Field Name="Done" Value="2" />', '<Field Name="Done" Value="2" />\n      <Field Name="Paused" Value="3" />'),
+        )
+        result = CliRunner().invoke(main, ["diff", str(old), str(new), "--fail-on-breaking"])
+        assert result.exit_code == 0, result.output
+
+    def test_impact_and_output_file(self, tmp_path) -> None:
+        old = write(tmp_path, "old.xml", BASE)
+        new = write(tmp_path, "new.xml", remove_node(BASE, "ns=1;i=2100"))
+        out = tmp_path / "diff.md"
+        result = CliRunner().invoke(
+            main, ["diff", str(old), str(new), "--markdown", "--impact", "-o", str(out)]
+        )
+        assert result.exit_code == 0, result.output
+        assert out.read_text(encoding="utf-8").startswith("# Semantic diff")
+        assert "Total Impact" in out.read_text(encoding="utf-8")
+
+    def test_missing_file_reports_error(self, tmp_path) -> None:
+        result = CliRunner().invoke(main, ["diff", str(tmp_path / "nope.xml"), str(MACHINERY)])
+        assert result.exit_code == 1
+        assert "nope.xml" in result.output
+
+
+def test_synthetic_structure_field_removal_is_breaking() -> None:
+    fields = (("JobId", node_id(12)), ("State", node_id(29)))
+    old_model = build_model([make_data_type("JobInfo", 6001, definition=structure_definition(fields))])
+    new_model = build_model(
+        [make_data_type("JobInfo", 6001, definition=structure_definition((("JobId", node_id(12)),)))]
+    )
+    diff = diff_models(old_model, new_model)
+    assert diff.breaking
+    assert "State" in diff.breaking[0].reason
+
+
+def test_display_name_change_is_not_breaking() -> None:
+    old = make_object_type("MachineType", 7000)
+    new = replace(old, display_name="Machine Type")
+    diff = diff_models(build_model([old]), build_model([new]))
+    assert labels(diff.modified) == {"MachineType"}
+    assert not diff.breaking
+
+
+def test_enum_definition_value_change_is_breaking() -> None:
+    old_model = build_model([make_data_type("LevelEnum", 8000, definition=enum_definition(("Low", "High")))])
+    new_model = build_model([make_data_type("LevelEnum", 8000, definition=enum_definition(("Low", "VeryHigh")))])
+    diff = diff_models(old_model, new_model)
+    assert labels(diff.modified) == {"LevelEnum"}
+    assert diff.breaking
+
+
+def union_definition(alternatives: tuple[tuple[str, ExpandedNodeId], ...]) -> Definition:
+    return Definition(
+        kind="Union",
+        union_alternatives=tuple(
+            UnionAlternative(name=name, data_type=data_type)
+            for name, data_type in alternatives
+        ),
+    )
+
+
+def option_set_definition(values: tuple[tuple[str, int], ...]) -> Definition:
+    return Definition(
+        kind="OptionSet",
+        option_set_values=tuple(
+            OptionSetValue(name=name, value=value) for name, value in values
+        ),
+    )
+
+
+def structure_of(*fields: StructureField) -> Definition:
+    return Definition(kind="Structure", fields=fields)
+
+
+class TestUnionAndOptionSet:
+    def test_union_alternative_added_is_not_breaking(self) -> None:
+        old_model = build_model(
+            [make_data_type("ValueUnion", 9000, definition=union_definition((("Int", node_id(6)),)))]
+        )
+        new_model = build_model(
+            [
+                make_data_type(
+                    "ValueUnion",
+                    9000,
+                    definition=union_definition(
+                        (("Int", node_id(6)), ("Double", node_id(11)))
+                    ),
+                )
+            ]
+        )
+        diff = diff_models(old_model, new_model)
+        assert not diff.breaking
+        assert any(change.kind == "added" for change in diff.modified[0].changes)
+
+    def test_union_alternative_removed_is_breaking(self) -> None:
+        old_model = build_model(
+            [
+                make_data_type(
+                    "ValueUnion",
+                    9000,
+                    definition=union_definition(
+                        (("Int", node_id(6)), ("Double", node_id(11)))
+                    ),
+                )
+            ]
+        )
+        new_model = build_model(
+            [make_data_type("ValueUnion", 9000, definition=union_definition((("Int", node_id(6)),)))]
+        )
+        diff = diff_models(old_model, new_model)
+        assert diff.breaking
+        assert "Double" in diff.breaking[0].reason
+
+    def test_union_alternative_retyped_is_breaking(self) -> None:
+        old_model = build_model(
+            [make_data_type("ValueUnion", 9000, definition=union_definition((("Int", node_id(6)),)))]
+        )
+        new_model = build_model(
+            [make_data_type("ValueUnion", 9000, definition=union_definition((("Int", node_id(9)),)))]
+        )
+        diff = diff_models(old_model, new_model)
+        assert diff.breaking
+
+    def test_option_set_value_added_is_not_breaking(self) -> None:
+        old_model = build_model(
+            [make_data_type("Flags", 9100, definition=option_set_definition((("Idle", 0),)))]
+        )
+        new_model = build_model(
+            [
+                make_data_type(
+                    "Flags", 9100, definition=option_set_definition((("Idle", 0), ("Busy", 1)))
+                )
+            ]
+        )
+        diff = diff_models(old_model, new_model)
+        assert not diff.breaking
+        assert labels(diff.modified) == {"Flags"}
+
+    def test_option_set_value_removed_is_breaking(self) -> None:
+        old_model = build_model(
+            [
+                make_data_type(
+                    "Flags", 9100, definition=option_set_definition((("Idle", 0), ("Busy", 1)))
+                )
+            ]
+        )
+        new_model = build_model(
+            [make_data_type("Flags", 9100, definition=option_set_definition((("Idle", 0),)))]
+        )
+        diff = diff_models(old_model, new_model)
+        assert diff.breaking
+        assert "Busy" in diff.breaking[0].reason
+
+    def test_definition_kind_change_is_breaking(self) -> None:
+        old_model = build_model(
+            [
+                make_data_type(
+                    "Shape",
+                    9200,
+                    definition=structure_definition((("Width", node_id(7)),)),
+                )
+            ]
+        )
+        new_model = build_model(
+            [make_data_type("Shape", 9200, definition=enum_definition(("Small", "Large")))]
+        )
+        diff = diff_models(old_model, new_model)
+        assert diff.breaking
+        assert any(change.kind == "definition_kind" for change in diff.modified[0].changes)
+
+
+class TestFieldMetadataAndText:
+    def test_field_array_metadata_change_is_breaking(self) -> None:
+        field = StructureField(name="Tags", data_type=node_id(12), metadata=FieldMetadata(value_rank=-1))
+        scalar = replace(field, metadata=FieldMetadata(value_rank=1))
+        diff = diff_models(
+            build_model([make_data_type("TagList", 9300, definition=structure_of(field))]),
+            build_model([make_data_type("TagList", 9300, definition=structure_of(scalar))]),
+        )
+        assert diff.breaking
+        assert "ValueRank" in diff.breaking[0].reason
+
+    def test_field_display_name_change_is_not_breaking(self) -> None:
+        field = StructureField(name="JobId", data_type=node_id(12), display_name="Job Id")
+        other = replace(field, display_name="Identifier")
+        diff = diff_models(
+            build_model([make_data_type("JobInfo", 9400, definition=structure_of(field))]),
+            build_model([make_data_type("JobInfo", 9400, definition=structure_of(other))]),
+        )
+        assert not diff.breaking
+        assert any("JobId" in change.describe() for change in diff.modified[0].changes)
+
+    def test_field_datatype_outside_the_model_is_named_by_its_id(self) -> None:
+        old = StructureField(name="JobId", data_type=node_id(12))
+        new = StructureField(name="JobId", data_type=node_id(9))
+        diff = diff_models(
+            build_model([make_data_type("JobInfo", 9450, definition=structure_of(old))]),
+            build_model([make_data_type("JobInfo", 9450, definition=structure_of(new))]),
+        )
+        assert diff.breaking
+        assert "i=12 → i=9" in diff.breaking[0].reason
+
+    def test_field_order_change_is_breaking(self) -> None:
+        first = StructureField(name="First", data_type=node_id(12))
+        second = StructureField(name="Second", data_type=node_id(12))
+        diff = diff_models(
+            build_model([make_data_type("Pair", 9500, definition=structure_of(first, second))]),
+            build_model([make_data_type("Pair", 9500, definition=structure_of(second, first))]),
+        )
+        assert diff.breaking
+        assert any(change.kind == "field_order" for change in diff.modified[0].changes)
+
+
+class TestNodeAttributes:
+    def test_browse_name_change_is_breaking(self) -> None:
+        old = make_object_type("MachineType", 7100)
+        new = replace(old, browse_name=QualifiedName(name="Machine"))
+        diff = diff_models(build_model([old]), build_model([new]))
+        assert diff.breaking
+        assert "BrowseName" in diff.breaking[0].reason
+
+    def test_symbolic_name_change_is_breaking(self) -> None:
+        old = make_object_type("Level", 7200)
+        new = replace(old, symbolic_name="LevelType")
+        diff = diff_models(build_model([old]), build_model([new]))
+        assert diff.breaking
+        assert "SymbolicName" in diff.breaking[0].reason
+
+    def test_inverse_name_change_is_breaking(self) -> None:
+        old = make_reference_type("HasOwner", 7300)
+        new = replace(old, inverse_name="Owns")
+        diff = diff_models(build_model([old]), build_model([new]))
+        assert diff.breaking
+        assert "InverseName" in diff.breaking[0].reason
+
+    def test_abstract_change_is_breaking(self) -> None:
+        old = make_object_type("MachineType", 7400)
+        new = replace(old, is_abstract=True)
+        diff = diff_models(build_model([old]), build_model([new]))
+        assert diff.breaking
+        assert "IsAbstract" in diff.breaking[0].reason
+
+    def test_categories_and_documentation_are_not_breaking(self) -> None:
+        old = replace(make_object_type("MachineType", 7500), categories=("Machinery",))
+        new = replace(
+            old,
+            categories=("Machinery", "Diagnostics"),
+            documentation="https://example.org/doc",
+        )
+        diff = diff_models(build_model([old]), build_model([new]))
+        assert not diff.breaking
+        kinds = {change.kind for change in diff.modified[0].changes}
+        assert {"categories", "documentation"} <= kinds
+
+    def test_variable_rank_and_dimensions_are_breaking(self) -> None:
+        old = make_variable("Count", 7600, data_type=node_id(6))
+        new = replace(old, value_rank=1, array_dimensions=("2",))
+        diff = diff_models(build_model([old]), build_model([new]))
+        assert len(diff.breaking) == 2
+
+    def test_value_change_is_reported(self) -> None:
+        old = make_variable("Count", 7700, data_type=node_id(6))
+        diff = diff_models(build_model([old]), build_model([old.with_value("<Int32>7</Int32>")]))
+        assert labels(diff.modified) == {"Count"}
+        assert not diff.breaking
+
+
+class TestImpactHelper:
+    def test_dependents_lists_the_consumers(self) -> None:
+        model = build_model(
+            [make_data_type("JobInfo", 6001), make_variable("Job", 6002, data_type=node_id(6001))]
+        )
+        assert dependents(model, node_id(6001)) == ("Job",)
+
+    def test_renumbered_impact_is_measured_in_both_models(self) -> None:
+        old_model = build_model(
+            [make_data_type("JobInfo", 6001), make_variable("Job", 6002, data_type=node_id(6001))]
+        )
+        new_model = build_model(
+            [make_data_type("JobInfo", 6005), make_variable("Job", 6002, data_type=node_id(6005))]
+        )
+        diff = diff_models(old_model, new_model)
+        apply_impact(diff, old_model, new_model)
+        assert labels(diff.renumbered) == {"JobInfo"}
+        assert diff.renumbered[0].impact == ("Job",)
+        assert total_impact(diff) == 1
+
+
+class TestRenumberedRendering:
+    def test_renumbered_node_renders_in_every_format(self) -> None:
+        old_model = build_model([make_object_type("MachineType", 8000)])
+        new_model = build_model([make_object_type("MachineType", 8001)])
+        diff = diff_models(old_model, new_model, old_source="old.xml", new_source="new.xml")
+        assert labels(diff.renumbered) == {"MachineType"}
+        assert not diff.breaking
+        assert "Renumbered: 1" in console_text(diff)
+        assert "## Renumbered nodes" in markdown_text(diff)
+        assert "<h2>Renumbered nodes</h2>" in html_text(diff)
+        assert "old.xml" in html_text(diff)
+
+    def test_breaking_only_report_without_breaking_changes(self) -> None:
+        old_model = build_model([make_object_type("MachineType", 8100)])
+        new_model = build_model(
+            [replace(make_object_type("MachineType", 8100), display_name="Machine Type")]
+        )
+        diff = diff_models(old_model, new_model)
+        text = console_text(diff, breaking_only=True, impact=True)
+        assert "Breaking changes" in text
+        assert "None" in text

@@ -31,6 +31,8 @@ nodeset-linker explain --node JobStateEnum examples/config.yaml
 nodeset-linker stats  out/reduced.xml
 nodeset-linker validate out/reduced.xml                          # semantic checks only
 nodeset-linker validate out/reduced.xml --schema tests/data/schema/UANodeSet.xsd
+nodeset-linker diff old.xml new.xml                              # what changed semantically
+nodeset-linker diff old.xml new.xml --json --fail-on-breaking    # CI gate
 ```
 
 ## Configuration (YAML, validated with Pydantic)
@@ -280,6 +282,85 @@ schema version, and exits non-zero if *any* source fails the schema or the seman
 source that does not validate is a failed run, not a footnote. Schema validation alone is not
 OPC UA conformance: it says the XML matches `UANodeSet.xsd`, nothing more.
 
+## Semantic diff (`diff`)
+
+```bash
+nodeset-linker diff old.xml new.xml                    # human-readable report on stdout
+nodeset-linker diff old.xml new.xml --impact           # which nodes depend on the changes
+nodeset-linker diff old.xml new.xml --breaking         # only what a consumer could break on
+nodeset-linker diff old.xml new.xml --json             # machine-readable
+nodeset-linker diff old.xml new.xml --markdown         # PR comment
+nodeset-linker diff old.xml new.xml --html -o diff.html
+nodeset-linker diff old.xml new.xml --fail-on-breaking # exit 1 when a breaking change exists
+```
+
+The comparison runs on the **semantic models**, never on XML. Node identity is
+`(namespaceUri, identifier)`, so reordered documents, re-formatted output, comments, and a
+reassigned `NamespaceIndex` produce `No semantic differences found.` — a node that only lost its
+identifier is reported separately as a *renumbered* node, not as add plus remove.
+
+The report lists added nodes, removed nodes, and per-node modifications: BrowseName, DisplayName
+and localization, Description, references (`HasSubtype`, `HasComponent`, `HasInterface`,
+`HasTypeDefinition`, `HasEncoding`, `Organizes`, …), modelling rules
+(`Mandatory` / `Optional` / `MandatoryPlaceholder` / `OptionalPlaceholder`), variable datatype,
+`ValueRank` and `ArrayDimensions`, and datatype definitions — Structure fields, Enum and OptionSet
+values, Union alternatives, field metadata and member order. Namespace totals are reported per
+namespace:
+
+```
+Machinery (http://opcfoundation.org/UA/Machinery/)
+  Nodes: 18 → 19 (+1)
+  References: 30 → 32 (+2)
+  DataTypes: 6 → 6
+```
+
+`--impact` walks the dependency graph backwards over the structural edges — the same graph the
+linker uses, so folders and `Organizes` navigation are excluded — and prints the dependent nodes
+plus a total:
+
+```
+Removed nodes
+  JobDataType [DataType, ns=Machinery, i=2001]
+    Impact: MachineStatusStructure
+
+Breaking changes
+  JobDataType [i=2001]: DataType removed
+    Affects 1 node
+```
+
+A change is **breaking** when a consumer that imports the old model could fail: a removed
+DataType/ObjectType/ReferenceType/Interface/encoding, a removed hard reference
+(`HasSubtype`, `HasTypeDefinition`, `HasInterface`, `HasEncoding`, `GeneratesEvent`), a changed
+field datatype, a removed mandatory field, `Optional` → `Mandatory`, a removed enum value or a
+changed enum/OptionSet value, a removed or retyped Union alternative, changed member order,
+`IsOptional` → `false`, a type becoming abstract, a removed `MandatoryPlaceholder` outside the
+OPC UA namespace, and a BrowseName, SymbolicName or InverseName change. A DisplayName,
+Description or Documentation change, a new optional field or component, an added enum value, and
+`Mandatory` → `Optional` are non-breaking. Removing an ordinary optional component, or an
+`Organizes`/`HasDescription` reference, never counts as breaking.
+
+The JSON form is the CI contract; every entry carries its URI identity and, with `--impact`
+applied, how many nodes depend on it:
+
+```json
+{
+  "old": "old.xml", "new": "new.xml",
+  "summary": {"old_nodes": 18, "new_nodes": 18, "added_nodes": 1, "removed_nodes": 1,
+              "modified_nodes": 0, "renumbered_nodes": 0, "breaking_changes": 1,
+              "namespace_changes": 1, "identical": false},
+  "added_nodes": [], "removed_nodes": [], "modified_nodes": [],
+  "renumbered_nodes": [], "namespace_changes": [], "breaking_changes": []
+}
+```
+
+CI gate:
+
+```yaml
+- run: nodeset-linker diff old.xml new.xml --json --fail-on-breaking
+```
+
+Missing files and unparsable nodesets are reported and exit 1, like every other command.
+
 ## Architecture
 
 See `docs/architecture.md`, `docs/dependency-resolution.md` and
@@ -292,6 +373,7 @@ nodeset_linker/          # the package; tests live at the repository root
   cli/        config/     parser/      repository/   graph/       resolver/
   retention/  policies/   validator/   exporter/     reports/     explain/
   models/     utils/      pipeline.py
+  diff/       # semantic model comparison, sits above repository/ and graph/
 ```
 
 Dependencies point inward. The exporter is the outermost layer — it reads the semantic model and

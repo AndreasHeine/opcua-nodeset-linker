@@ -78,8 +78,9 @@ objects and returns domain objects.
 | `exporter/` | Writes the retained subset as a self-contained `UANodeSet`; assigns namespace indexes and the `ServerUris` table here and nowhere else, re-indexes qualified browse names from the URI of the name, writes the `DataTypeField` attributes it kept, and runs the validator again when `export(validate=True)` is called directly. | Yes (write) |
 | `reports/` | Statistics, dependency report, namespace report, validation text. | No |
 | `explain/` | Answers "why is this node retained" with the concrete dependency path. | No |
+| `diff/` | Compares two `SemanticModel`s by URI identity: added/removed/modified/renumbered nodes, reference, definition and modelling-rule changes, namespace totals, breaking classification, impact through the dependency graph, and console/markdown/HTML/JSON rendering. XML is never compared. | No |
 | `config/` | Pydantic-validated YAML configuration; custom rule translation. | File IO only |
-| `cli/` | Click commands `analyze`, `link`, `explain`, `stats`, `validate`; rich rendering. | No |
+| `cli/` | Click commands `analyze`, `link`, `explain`, `stats`, `validate`, `diff`; rich rendering. | No |
 | `pipeline.py` | The single ordered composition of all layers. | No |
 
 In a normal CLI run validation happens twice: `pipeline.run()` validates the retained set

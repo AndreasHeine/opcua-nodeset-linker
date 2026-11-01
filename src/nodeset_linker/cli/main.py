@@ -5,6 +5,7 @@ nodeset-linker link config.yaml
 nodeset-linker explain --node JobStateEnum config.yaml
 nodeset-linker stats output.xml
 nodeset-linker validate output.xml [--schema tests/data/schema/UANodeSet.xsd]
+nodeset-linker diff old.xml new.xml [--json | --markdown | --html] [--impact] [--breaking]
 """
 
 from __future__ import annotations
@@ -20,6 +21,14 @@ from rich.panel import Panel
 from rich.tree import Tree
 
 from nodeset_linker.config.schema import load_config
+from nodeset_linker.diff import (
+    apply_impact,
+    console_text,
+    diff_models,
+    html_text,
+    json_text,
+    markdown_text,
+)
 from nodeset_linker.explain.explainer import Explainer
 from nodeset_linker.pipeline import LinkerPipeline
 from nodeset_linker.reports.data import DependencyReportData, Statistics
@@ -154,6 +163,74 @@ def validate(output: Path, schema: Path | None) -> None:
     if not report.ok:
         failures += len(report.errors)
     if failures:
+        raise SystemExit(1)
+
+
+@main.command()
+@click.argument("old", type=Path)
+@click.argument("new", type=Path)
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable JSON for CI/CD.")
+@click.option("--markdown", is_flag=True, help="Markdown report for a release note or PR.")
+@click.option("--html", is_flag=True, help="Self-contained HTML report.")
+@click.option("--impact", is_flag=True, help="Show the dependent nodes of every change.")
+@click.option("--breaking", "breaking_only", is_flag=True, help="Report breaking changes only.")
+@click.option(
+    "--fail-on-breaking",
+    is_flag=True,
+    help="Exit with code 1 when the diff contains a breaking change.",
+)
+@click.option("--output", "-o", type=Path, default=None, help="Write the report to a file.")
+def diff(
+    old: Path,
+    new: Path,
+    as_json: bool,
+    markdown: bool,
+    html: bool,
+    impact: bool,
+    breaking_only: bool,
+    fail_on_breaking: bool,
+    output: Path | None,
+) -> None:
+    """Compare two semantic OPC UA models.
+
+    The comparison is on the parsed semantic models, never on XML: document order,
+    whitespace and ``NamespaceIndex`` reassignment are not differences, because a node is
+    identified by ``(namespaceUri, identifier)``.  It reports added and removed nodes,
+    reference changes, type-definition changes, BrowseName and DisplayName changes,
+    modelling-rule changes, DataType definition changes (Structure fields, Enum values,
+    Union alternatives, OptionSets) and namespace totals.
+    """
+    for path in (old, new):
+        if not path.exists():
+            _fail(f"no nodeset file at {path}")
+    try:
+        old_model = load_nodesets([old])
+        new_model = load_nodesets([new])
+    except LinkerError as exc:
+        _fail(str(exc))
+
+    result = diff_models(old_model, new_model, old_source=str(old), new_source=str(new))
+    if impact or breaking_only or fail_on_breaking:
+        apply_impact(result, old_model, new_model)
+
+    if as_json:
+        text = json_text(result)
+    elif markdown:
+        text = markdown_text(result, impact=impact, breaking_only=breaking_only)
+    elif html:
+        text = html_text(result, impact=impact, breaking_only=breaking_only)
+    else:
+        text = console_text(result, impact=impact, breaking_only=breaking_only)
+
+    if output is not None:
+        output.write_text(f"{text}\n", encoding="utf-8")
+        console.print(f"[green]wrote[/] {output}")
+    elif as_json or markdown or html:
+        click.echo(text)
+    else:
+        console.print(text, markup=False, soft_wrap=True)
+
+    if fail_on_breaking and result.breaking:
         raise SystemExit(1)
 
 
