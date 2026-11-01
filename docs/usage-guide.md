@@ -115,6 +115,49 @@ Inspect the exported node and namespace counts with:
 nodeset-linker stats out/reduced.xml
 ```
 
+## 6. Compare two model versions
+
+`diff` answers "what changed in this information model" on the semantic model, not on the XML.
+Compare a vendor release against its predecessor, or a reduced export against its source:
+
+```powershell
+nodeset-linker diff out/reduced.xml tests\data\machinery.xml --impact
+nodeset-linker diff release-1.4.xml release-1.5.xml --json --fail-on-breaking
+```
+
+Because identity is `(namespaceUri, identifier)`, reordering the file, re-exporting it, or letting
+the exporter reassign `NamespaceIndex` values reports `No semantic differences found.`; a node
+whose identifier changed alone appears under *Renumbered nodes*.
+
+The report separates added, removed, modified and renumbered nodes, changes per node (references,
+BrowseName, DisplayName, Description, modelling rule, datatype, Structure fields, Enum and
+OptionSet values, Union alternatives), namespace totals, and the breaking subset:
+
+```
+Summary
+Nodes: 18 → 18
+Added: 1   Removed: 1   Modified: 0
+Breaking changes: 1
+Total Impact: 1 node
+
+Removed nodes
+  JobDataType [DataType, ns=Machinery, i=2001]
+    Impact: MachineStatusStructure
+
+Breaking changes
+  JobDataType [i=2001]: DataType removed
+    Affects 1 node
+```
+
+`--impact` names the nodes that depend on each change by walking the dependency graph backwards;
+`--breaking` prints only the changes a consumer could fail on. `--markdown` and `--html` render
+the same report for a pull request or a release note, and `-o <file>` writes it.
+`--fail-on-breaking` exits 1 when any breaking change is present, so a pipeline can gate on it:
+
+```yaml
+- run: nodeset-linker diff old.xml new.xml --json --fail-on-breaking
+```
+
 ## Optional: declare an external dependency
 
 If the consuming application already provides a model such as the OPC UA Core model or DI,
@@ -146,3 +189,4 @@ rules. See [the README](../README.md#retention-modes) for their behavior and con
 - [Dependency Resolution](dependency-resolution.md) describes selectors, traversal rules,
   retention, validation, and external models.
 - [Architecture](architecture.md) documents the implementation layers and data model.
+- [the README](../README.md#semantic-diff-diff) lists which diff changes count as breaking.
