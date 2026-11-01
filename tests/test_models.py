@@ -12,7 +12,13 @@ from nodeset_linker.models.node import (
     Reference,
     StructureField,
     UADataType,
+    UAInterface,
+    UAMethod,
     UANode,
+    UAObject,
+    UAObjectType,
+    UAReferenceType,
+    UAView,
     is_placeholder,
     mandatory_level_of,
 )
@@ -68,6 +74,33 @@ class TestQualifiedName:
 
 
 class TestNodeModel:
+    @pytest.mark.parametrize(
+        ("node_type", "node_class", "role"),
+        [
+            (UAObject, NodeClass.OBJECT, NodeRole.INSTANCE),
+            (UAMethod, NodeClass.METHOD, NodeRole.METHOD),
+            (UAObjectType, NodeClass.OBJECT_TYPE, NodeRole.TYPE_DEFINITION),
+            (UAReferenceType, NodeClass.REFERENCE_TYPE, NodeRole.BASE_TYPE),
+            (UAView, NodeClass.VIEW, NodeRole.VIEW),
+            (UAInterface, NodeClass.INTERFACE, NodeRole.INTERFACE),
+        ],
+    )
+    def test_slotted_constructor_defaults_and_overrides(self, node_type, node_class, role) -> None:
+        identity = ExpandedNodeId.parse("i=1")
+        browse_name = QualifiedName(name="N")
+        node = node_type(node_id=identity, browse_name=browse_name)
+        assert node.node_id == identity
+        assert node.browse_name == browse_name
+        assert node.node_class is node_class
+        assert node.role is role
+        overridden = node_type(
+            node_id=identity,
+            browse_name=browse_name,
+            node_class=node_class,
+            role=NodeRole.PLACEHOLDER,
+        )
+        assert overridden.role is NodeRole.PLACEHOLDER
+
     def make(self, **kwargs: object) -> UANode:
         defaults = {
             "node_id": ExpandedNodeId.parse("i=1"),

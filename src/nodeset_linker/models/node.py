@@ -161,7 +161,7 @@ class UAObject(UANode):
     def __init__(self, **kwargs: object) -> None:
         kwargs.setdefault("node_class", NodeClass.OBJECT)
         kwargs.setdefault("role", NodeRole.INSTANCE)
-        super().__init__(**kwargs)  # type: ignore[arg-type]
+        super(UAObject, self).__init__(**kwargs)  # type: ignore[arg-type]
 
 
 @dataclass(frozen=True, slots=True)
@@ -184,7 +184,7 @@ class UAMethod(UANode):
     def __init__(self, **kwargs: object) -> None:
         kwargs.setdefault("node_class", NodeClass.METHOD)
         kwargs.setdefault("role", NodeRole.METHOD)
-        super().__init__(**kwargs)  # type: ignore[arg-type]
+        super(UAMethod, self).__init__(**kwargs)  # type: ignore[arg-type]
 
 
 @dataclass(frozen=True, slots=True)
@@ -194,7 +194,7 @@ class UAObjectType(UANode):
     def __init__(self, **kwargs: object) -> None:
         kwargs.setdefault("node_class", NodeClass.OBJECT_TYPE)
         kwargs.setdefault("role", NodeRole.TYPE_DEFINITION)
-        super().__init__(**kwargs)  # type: ignore[arg-type]
+        super(UAObjectType, self).__init__(**kwargs)  # type: ignore[arg-type]
 
 
 @dataclass(frozen=True, slots=True)
@@ -221,7 +221,7 @@ class UAReferenceType(UANode):
     def __init__(self, **kwargs: object) -> None:
         kwargs.setdefault("node_class", NodeClass.REFERENCE_TYPE)
         kwargs.setdefault("role", NodeRole.BASE_TYPE)
-        super().__init__(**kwargs)  # type: ignore[arg-type]
+        super(UAReferenceType, self).__init__(**kwargs)  # type: ignore[arg-type]
 
 
 @dataclass(frozen=True, slots=True)
@@ -231,7 +231,7 @@ class UAView(UANode):
     def __init__(self, **kwargs: object) -> None:
         kwargs.setdefault("node_class", NodeClass.VIEW)
         kwargs.setdefault("role", NodeRole.VIEW)
-        super().__init__(**kwargs)  # type: ignore[arg-type]
+        super(UAView, self).__init__(**kwargs)  # type: ignore[arg-type]
 
 
 @dataclass(frozen=True, slots=True)
@@ -241,7 +241,7 @@ class UAInterface(UANode):
     def __init__(self, **kwargs: object) -> None:
         kwargs.setdefault("node_class", NodeClass.INTERFACE)
         kwargs.setdefault("role", NodeRole.INTERFACE)
-        super().__init__(**kwargs)  # type: ignore[arg-type]
+        super(UAInterface, self).__init__(**kwargs)  # type: ignore[arg-type]
 
 
 @dataclass(frozen=True, slots=True)

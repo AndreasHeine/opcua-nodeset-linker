@@ -94,6 +94,8 @@ node carries `attributes: Mapping[str, str]` (`models/node.py:127`), and the par
 with a plain `dict` (`parser/nodeset.py:456`), so `hash(node)` on a loaded node raises
 `unhashable type: 'dict'`. Nothing needs hashed nodes: every registry, graph vertex and keep
 set is keyed by the `ExpandedNodeId` identity, which *is* hashable.
+Custom constructors use two-argument `super(Class, self)` because zero-argument `super()`
+is incompatible with slotted dataclasses on Python 3.12.
 
 * `UANode` — base for objects; subclasses `UAObject`, `UAVariable`, `UAMethod`, `UAObjectType`,
   `UAVariableType`, `UADataType`, `UAReferenceType`, `UAView`, `UAInterface` carry only the
