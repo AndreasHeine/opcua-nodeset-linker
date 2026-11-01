@@ -53,7 +53,7 @@ class RootSelector:
         if match is None:
             raise ResolutionError(f"cannot parse root selector: {text!r}")
         kind = match.group("kind")
-        normalised = _KINDS.get(kind)
+        normalised = _KINDS.get(kind.lower())
         if normalised is None:
             raise ResolutionError(f"unknown root selector kind: {kind!r}")
         return cls(kind=normalised, value=match.group("value"))

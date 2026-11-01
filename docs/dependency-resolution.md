@@ -95,6 +95,8 @@ the model the engine evaluates, in this order:
 4. **Outside the closure** — nothing is kept unless a `retain:` rule matched it.
 
 Nodes outside the closure and not retained are removed; they are what "reduction" means here.
+Nodes added only by a custom `retain:` rule are retained for export but have no closure
+`RetentionReason`; the current `explain` command reports them as not reachable.
 
 Two details that read differently from the mode names:
 

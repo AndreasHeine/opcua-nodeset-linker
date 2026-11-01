@@ -17,6 +17,7 @@ class TestRootSelectors:
     def test_parse_all_documented_kinds(self) -> None:
         for text, kind in (
             ("nodeid=nsu=http://x/;i=1", "nodeid"),
+            ("BROWSENAME=MachineType", "browseName"),
             ("expandedNodeId=nsu=http://x/;i=1", "expandednodeid"),
             ("browseName=MachineType", "browseName"),
             ("namespaceUri=http://x/", "namespaceUri"),

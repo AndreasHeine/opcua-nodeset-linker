@@ -48,10 +48,11 @@ With the eight supplied files and current configuration, the preview produces:
 | Other unreachable nodes not exported | 30 |
 | Semantic validation during analysis | 0 errors, 0 warnings |
 
-The configuration loads the NodeSets under `demo1\nodesets` and the showcase instance file.
+The configuration loads the NodeSets under `examples\demo1\nodesets` and the showcase
+instance file.
 It uses the compatible Core, Machinery/Jobs, and ISA95 JobControl files to resolve and check
-dependencies, but lists Core as `external:` so its node declarations are not exported. The other reachable
-dependencies are retained. The reduction is measured against all 6,655 nodes loaded from all
+dependencies, but lists Core as `external:` so its node declarations are not exported. The other
+reachable dependencies are retained. The reduction is measured against all 6,655 nodes loaded from all
 eight sources; it is not a claim that only 1,669 nodes are needed for every application
 scenario.
 
@@ -64,14 +65,14 @@ nodeset-linker explain --node "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=50
 ## 3. Export
 
 ```powershell
-nodeset-linker link demo1\config.yaml
+nodeset-linker link examples\demo1\config.yaml
 ```
 
-The output is `demo1\reduced.xml`. The output folder is created automatically.
+The output is `examples\demo1\reduced.xml`. The output folder is created automatically.
 You can choose another output path:
 
 ```powershell
-nodeset-linker link demo1\config.yaml --output demo1\out\machine-tool.xml
+nodeset-linker link examples\demo1\config.yaml --output examples\demo1\out\machine-tool.xml
 ```
 
 `STRICT` keeps reachable mandatory and optional declarations. Reduced namespace subset
@@ -81,8 +82,8 @@ warnings do not.
 ## 4. Validate the written file
 
 ```powershell
-nodeset-linker stats demo1\reduced.xml
-nodeset-linker validate demo1\reduced.xml --schema tests\data\schema\UANodeSet.xsd
+nodeset-linker stats examples\demo1\reduced.xml
+nodeset-linker validate examples\demo1\reduced.xml --schema tests\data\schema\UANodeSet.xsd
 ```
 
 For the current inputs, the exported file has 1,669 nodes, 8 namespaces, and 5,501 explicit
@@ -141,9 +142,9 @@ python -m pip install -e ".[asyncua]"
 Regenerate the reduced file after changing the configuration, then run:
 
 ```powershell
-nodeset-linker link demo1\config.yaml
-python demo1\server.py --check-only
-python demo1\server.py
+nodeset-linker link examples\demo1\config.yaml
+python examples\demo1\server.py --check-only
+python examples\demo1\server.py
 ```
 
 `--check-only` imports the file and checks the `ShowCaseMachineTool` node without opening a

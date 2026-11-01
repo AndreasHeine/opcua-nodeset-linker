@@ -5,8 +5,8 @@ A **semantic dependency linker and tree shaker for OPC UA Information Models**.
 It loads one or more `UANodeSet` XML files, builds the *semantic* graph of the
 information model, computes the dependency closure of user-selected root nodes, drops
 everything unreachable, and writes a reduced NodeSet that stays semantically valid for its
-declared dependencies — while explaining **why every retained node exists**. Models listed
-under `external:` are intentionally not bundled; the importing application must provide them.
+declared dependencies — while explaining **why each dependency-reached node exists**. Models
+listed under `external:` are intentionally not bundled; the importing application must provide them.
 
 It is deliberately **not** an XML minifier: XML is treated as a serialization format
 only. All decisions are made on the semantic model.
@@ -53,7 +53,7 @@ output: out/reduced.xml
 external:               # models the consumer provides — referenced, never shipped
   - http://opcfoundation.org/UA/DI/
 
-validate_before_export: true   # default — the exporter validates the subset it writes
+validate_before_export: true   # default — exporter check; pipeline validation is always on
 mark_namespace_subsets: true   # default — reduced namespaces get IsNamespaceSubset=true
 
 custom:                 # only used with mode: CUSTOM
@@ -76,8 +76,8 @@ and blocks the export; a node dropped by the *policy* is repaired instead. The t
 contradicts your rules.
 
 Root selectors accept `nodeid=`, `expandedNodeId=`, `browseName=`, `namespaceUri=`,
-`typeDefinition=` and globs (`browseName=*Type`); keywords are case-insensitive. A bare identifier
-(`nsu=http://opcfoundation.org/UA/Machinery/;i=2200`, `i=24`) is also accepted. Note that
+`typeDefinition=` and globs (`browseName=*Type`); selector keywords are case-insensitive. A bare
+identifier (`nsu=http://opcfoundation.org/UA/Machinery/;i=2200`, `i=24`) is also accepted. Note that
 `ns=<index>` resolves through the namespace table of the *merged* model, where the first loaded
 document wins for a shared index — prefer the URI form.
 
@@ -121,8 +121,8 @@ NamespaceIndexes are **never used as identity**; node identity is
 `QualifiedName` retains its source index as a hint alongside the resolved URI. Index 0 is
 **always** the OPC UA namespace — an
 identifier without an `ns=` prefix means namespace 0 to every importer, so a custom namespace is
-never given index 0, even when no OPC UA node was retained. The namespaces the file uses (NodeId
-namespaces, reference targets *and* the namespaces of qualified browse names) are numbered from 1
+never given index 0, even when no OPC UA node was retained. Every used non-UA namespace (NodeId
+namespaces, reference targets *and* the namespaces of qualified browse names) is numbered from 1
 in URI order, and every identifier and browse name is rewritten to that index; servers are
 numbered the same way in a `ServerUris` table.
 
@@ -218,7 +218,8 @@ validation blocks that. A file that externalized a model needs that model loaded
 
 ## Explainability
 
-Every retained node carries a `RetentionReason` with the concrete dependency path:
+Every node reached by dependency closure carries a `RetentionReason` with the concrete
+dependency path:
 
 ```
 JobStateEnum retained because:
@@ -228,6 +229,8 @@ JobStateEnum retained because:
 
 The path is the first breadth-first route that reached the node, so a hop can run backwards
 through an edge (`String` reaches `JobDataType` through the `JobId` field of that structure).
+A node included only by a `CUSTOM` `retain:` rule is outside that closure and has no such path;
+the current `explain` command therefore describes it as not reachable, even though it is exported.
 
 ## Validation
 
