@@ -1,0 +1,21 @@
+# Byte-venv / wheel cache / build artefacts
+.venv/
+build/
+dist/
+*.egg-info/
+
+# Tool caches
+.coverage
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+htmlcov/
+
+# Generated output of the examples
+out/
+
+# Downloaded official nodesets and ad-hoc checks (scripts/check_official_nodesets.py)
+scratch/
+
+__pycache__/
+*.pyc
