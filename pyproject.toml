@@ -4,12 +4,12 @@ build-backend = "hatchling.build"
 
 [project]
 name = "nodeset-linker"
-version = "0.1.0"
+version = "0.1.1"
 description = "Semantic dependency linker and tree shaker for OPC UA Information Models."
 readme = "README.md"
 requires-python = ">=3.12"
-license = { text = "MIT" }
-authors = [{ name = "OPC UA NodeSet Linker maintainers" }]
+license = { text = "Apache License 2.0" }
+maintainers = [{ name = "Andreas Heine" }]
 classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -24,6 +24,11 @@ dependencies = [
     "rich>=13.7",
     "PyYAML>=6.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/AndreasHeine/opcua-nodeset-linker"
+Repository = "https://github.com/AndreasHeine/opcua-nodeset-linker"
+Issues = "https://github.com/AndreasHeine/opcua-nodeset-linker/issues"
 
 [project.optional-dependencies]
 asyncua = ["asyncua>=1.0"]
