@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "nodeset-linker"
-version = "v0.1.1-alpha"
+version = "0.1.1-alpha"
 description = "Semantic dependency linker and tree shaker for OPC UA Information Models."
 readme = "README.md"
 requires-python = ">=3.12"
