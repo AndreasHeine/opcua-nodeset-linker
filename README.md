@@ -2,6 +2,8 @@
 
 A **semantic dependency linker and tree shaker for OPC UA Information Models**.
 
+[![Publish to PyPI](https://github.com/AndreasHeine/opcua-nodeset-linker/actions/workflows/publish.yml/badge.svg)](https://github.com/AndreasHeine/opcua-nodeset-linker/actions/workflows/publish.yml) [![Dependency Graph](https://github.com/AndreasHeine/opcua-nodeset-linker/actions/workflows/dependabot/update-graph/badge.svg)](https://github.com/AndreasHeine/opcua-nodeset-linker/actions/workflows/dependabot/update-graph) [![CI](https://github.com/AndreasHeine/opcua-nodeset-linker/actions/workflows/ci.yml/badge.svg)](https://github.com/AndreasHeine/opcua-nodeset-linker/actions/workflows/ci.yml)
+
 It loads one or more `UANodeSet` XML files, builds the *semantic* graph of the
 information model, computes the dependency closure of user-selected root nodes, drops
 everything unreachable, and writes a reduced NodeSet that stays semantically valid for its
