@@ -2,7 +2,7 @@
 
 A **semantic dependency linker and tree shaker for OPC UA Information Models**.
 
-[![Publish to PyPI](https://github.com/AndreasHeine/opcua-nodeset-linker/actions/workflows/publish.yml/badge.svg)](https://github.com/AndreasHeine/opcua-nodeset-linker/actions/workflows/publish.yml) [![Dependency Graph](https://github.com/AndreasHeine/opcua-nodeset-linker/actions/workflows/dependabot/update-graph/badge.svg)](https://github.com/AndreasHeine/opcua-nodeset-linker/actions/workflows/dependabot/update-graph) [![CI](https://github.com/AndreasHeine/opcua-nodeset-linker/actions/workflows/ci.yml/badge.svg)](https://github.com/AndreasHeine/opcua-nodeset-linker/actions/workflows/ci.yml)
+[![Publish to PyPI](https://github.com/AndreasHeine/opcua-nodeset-linker/actions/workflows/publish.yml/badge.svg)](https://github.com/AndreasHeine/opcua-nodeset-linker/actions/workflows/publish.yml) [![Dependency Graph](https://github.com/AndreasHeine/opcua-nodeset-linker/actions/workflows/dependabot/update-graph/badge.svg)](https://github.com/AndreasHeine/opcua-nodeset-linker/actions/workflows/dependabot/update-graph) [![CI](https://github.com/AndreasHeine/opcua-nodeset-linker/actions/workflows/ci.yml/badge.svg)](https://github.com/AndreasHeine/opcua-nodeset-linker/actions/workflows/ci.yml) [![Coverage](https://codecov.io/gh/AndreasHeine/opcua-nodeset-linker/branch/main/graph/badge.svg)](https://codecov.io/gh/AndreasHeine/opcua-nodeset-linker)
 
 It loads one or more `UANodeSet` XML files, builds the *semantic* graph of the
 information model, computes the dependency closure of user-selected root nodes, drops
@@ -408,4 +408,7 @@ python scripts/check_official_nodesets.py --ref 1.05.05   # use a separate cache
 ```
 
 GitHub Actions runs the test suite with coverage on Python 3.12 and 3.13, and runs Ruff
-and mypy on Python 3.12. The XML coverage report is available as a workflow artifact.
+and mypy on Python 3.12. The XML coverage report is available as a workflow artifact and is
+uploaded to Codecov from Python 3.13. Configure the `CODECOV_TOKEN` repository secret, or enable
+tokenless uploads for this public repository in Codecov; the badge updates after the first
+successful upload.
