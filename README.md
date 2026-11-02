@@ -13,13 +13,27 @@ only. All decisions are made on the semantic model.
 
 ## Install
 
+Install the published package from PyPI:
+
 ```bash
-python -m venv .venv
-.venv\Scripts\activate      # Windows  (source .venv/bin/activate on Linux/macOS)
-pip install -e .[dev]
+python -m pip install nodeset-linker
+```
+
+To also install the optional `asyncua` integration:
+
+```bash
+python -m pip install "nodeset-linker[asyncua]"
 ```
 
 Requires Python ≥ 3.12.
+
+### Development install
+
+```bash
+python -m venv .venv
+.venv\Scripts\activate      # Windows  (source .venv/bin/activate on Linux/macOS)
+python -m pip install -e ".[dev]"
+```
 
 ## Quick start
 
