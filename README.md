@@ -16,13 +16,13 @@ only. All decisions are made on the semantic model.
 Install the published package from PyPI:
 
 ```bash
-python -m pip install nodeset-linker
+python -m pip install opcua-nodeset-linker
 ```
 
 To also install the optional `asyncua` integration:
 
 ```bash
-python -m pip install "nodeset-linker[asyncua]"
+python -m pip install "opcua-nodeset-linker[asyncua]"
 ```
 
 Requires Python ≥ 3.12.

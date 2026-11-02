@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "nodeset-linker"
+name = "opcua-nodeset-linker"
 version = "0.1.1-alpha"
 description = "Semantic dependency linker and tree shaker for OPC UA Information Models."
 readme = "README.md"
