@@ -69,26 +69,39 @@ def analyze(config: Path) -> None:
 
 @main.command()
 @click.argument("config", type=Path)
-@click.option("--output", "-o", type=Path, default=None, help="Override the output path.")
+@click.option(
+    "--output", "-o", type=Path, default=None,
+    help="Override the output file (merged) or directory (split).",
+)
 def link(config: Path, output: Path | None) -> None:
-    """Reduce the nodesets and write a NodeSet.
+    """Reduce the nodesets and write merged or namespace-split output.
 
     Models listed under ``external`` are referenced but not shipped: their declarations are
     left out while the references, namespace URI and ``RequiredModel`` entry stay in the
     file, so the importing application has to make those models available itself.
     """
-    cfg = load_config(config)
-    if output is not None:
-        cfg = cfg.model_copy(update={"output": str(output)})
     try:
+        cfg = load_config(config)
+        if output is not None:
+            if cfg.export is not None:
+                key = "directory" if cfg.export.mode == "split" else "file"
+                cfg = cfg.model_copy(
+                    update={"export": cfg.export.model_copy(update={key: str(output)})}
+                )
+            else:
+                cfg = cfg.model_copy(update={"output": str(output)})
         result = LinkerPipeline(cfg).run()
     except LinkerError as exc:
         _fail(str(exc))
 
     _render_statistics(result.statistics)
     _render_external(result.external)
-    if result.output_path is not None:
-        console.print(f"[green]wrote[/] {result.output_path}")
+    if result.manifest_path is not None:
+        for path in result.output_files.values():
+            console.print(f"[green]wrote[/] {path}", soft_wrap=True)
+        console.print(f"[green]wrote[/] {result.manifest_path}", soft_wrap=True)
+    elif result.output_path is not None:
+        console.print(f"[green]wrote[/] {result.output_path}", soft_wrap=True)
     else:
         console.print("[yellow]no output path configured; nothing written[/]")
 

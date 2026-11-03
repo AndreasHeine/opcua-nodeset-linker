@@ -50,6 +50,7 @@ from nodeset_linker.models.node import (
     is_placeholder,
 )
 from nodeset_linker.models.node_class import ModellingRule, NodeClass, NodeRole
+from nodeset_linker.models.standard import STANDARD_DATA_TYPE_IDS as CANONICAL_DATA_TYPE_IDS
 from nodeset_linker.utils.errors import ParseError
 
 UA_NAMESPACE = "http://opcfoundation.org/UA/"
@@ -103,34 +104,9 @@ STANDARD_REFERENCE_TYPE_IDS: Mapping[str, int] = {
 
 #: Standard datatypes, so ``DataType="String"`` works without an ``Aliases`` table.
 STANDARD_DATA_TYPE_IDS: Mapping[str, int] = {
-    "Boolean": 1,
-    "SByte": 2,
-    "Byte": 3,
-    "Int16": 4,
-    "UInt16": 5,
-    "Int32": 6,
-    "UInt32": 7,
-    "Int64": 8,
-    "UInt64": 9,
-    "Float": 10,
-    "Double": 11,
-    "String": 12,
-    "DateTime": 13,
-    "Guid": 14,
-    "ByteString": 15,
-    "XmlElement": 16,
-    "NodeId": 17,
-    "ExpandedNodeId": 18,
-    "StatusCode": 19,
-    "QualifiedName": 20,
-    "LocalizedText": 21,
-    "Structure": 22,
-    "BaseDataType": 24,
+    **CANONICAL_DATA_TYPE_IDS,
+    # Legacy input spellings remain accepted, but are never canonical display names.
     "DataType": 25,
-    "Number": 26,
-    "Integer": 27,
-    "UInteger": 28,
-    "Enumeration": 29,
     "Enum": 29,
     "Message": 332,
 }

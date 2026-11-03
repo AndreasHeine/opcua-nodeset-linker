@@ -164,9 +164,12 @@ class NodeSetExporter:
         *,
         mark_namespace_subsets: bool = True,
         external: frozenset[str] = frozenset(),
+        document_namespace: str | None = None,
     ) -> None:
+        """Keep bundle-wide resolution while optionally writing only one namespace."""
         self._model = model
         self._external = frozenset(external)
+        self._document_namespace = document_namespace
         # An externalized model is never shipped, even when its nodes survived the closure.
         self._keep = {node_id for node_id in keep if node_id.namespace not in self._external}
         self._subset_flags = marked_namespaces(model, self._keep)
@@ -175,6 +178,7 @@ class NodeSetExporter:
             rewrites.get(node.node_id, node)
             for node in model.iter_nodes()
             if node.node_id in self._keep
+            and (document_namespace is None or node.node_id.namespace == document_namespace)
         ]
         self._server_indices: dict[str, int] = {}
 
@@ -242,7 +246,14 @@ class NodeSetExporter:
 
         models_el = SubElement(root, "Models")
         written = False
-        for info in sorted(self._model.models.values(), key=lambda m: m.namespace_uri):
+        infos = self._model.models.values()
+        if self._document_namespace is not None:
+            infos = {
+                self._document_namespace: self._model.models.get(
+                    self._document_namespace, ModelInfo(namespace_uri=self._document_namespace)
+                )
+            }.values()
+        for info in sorted(infos, key=lambda m: m.namespace_uri):
             if info.namespace_uri not in namespaces:
                 continue  # a namespace that contributed no node contributes no model entry
             if info.namespace_uri in self._external:
@@ -258,7 +269,18 @@ class NodeSetExporter:
                     attrs[name] = value
             model_el = SubElement(models_el, "Model", **attrs)
             written = True
-            for required in info.required_models:
+            required_models = set(info.required_models)
+            if self._document_namespace is not None:
+                required_models.update(
+                    self._model.namespace_dependencies(self._keep).get(
+                        self._document_namespace, []
+                    )
+                )
+            ordered_required = (
+                info.required_models
+                if self._document_namespace is None else sorted(required_models)
+            )
+            for required in ordered_required:
                 if required not in namespaces:
                     continue
                 SubElement(model_el, "RequiredModel", **self._required_attrs(info, required))
@@ -341,17 +363,19 @@ class NodeSetExporter:
         ids: dict[ExpandedNodeId, tuple[int, str, int | None]],
         assigner: NamespaceIndexAssigner,
     ) -> str | None:
-        """The identifier as written here: retained nodes, externalized models, or nothing.
+        """The identifier as written here: bundle nodes, externalized models, or nothing.
 
         An identifier pointing at an externalized model is *always* written; silently
         dropping it would leave the output without the dependency it still relies on.
-        Anything else that is not in this subset stays out — validation guarantees that
-        only a declared external model can be a target this file does not contain.
+        A retained target may live in a sibling document. It still uses this document's
+        namespace and server indexes; only its declaration belongs in the sibling file.
         """
         mapped = ids.get(node_id)
         if mapped is not None:
             return _id_xml(*mapped)
-        if self._is_external(node_id):
+        if self._is_external(node_id) or (
+            self._document_namespace is not None and node_id in self._keep
+        ):
             index = assigner.index_of(node_id.namespace)
             server = self._server_indices.get(node_id.server_uri or "")
             return _id_xml(index, node_id.identifier.as_xml(), server)

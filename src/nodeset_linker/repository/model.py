@@ -14,7 +14,7 @@ from pathlib import Path
 
 from nodeset_linker.models.identifiers import ExpandedNodeId
 from nodeset_linker.models.namespace import DocumentInfo, ModelInfo, Namespace
-from nodeset_linker.models.node import Reference, UANode
+from nodeset_linker.models.node import Reference, UANode, referenced_identifiers
 from nodeset_linker.models.node_class import NodeClass
 from nodeset_linker.parser.nodeset import parse_nodeset
 from nodeset_linker.utils.errors import ParseError
@@ -87,6 +87,26 @@ class SemanticModel:
 
     def node_count(self) -> int:
         return len(self.nodes)
+
+    def namespace_dependencies(
+        self, retained: set[ExpandedNodeId]
+    ) -> dict[str, list[str]]:
+        """Direct namespace uses in serialized identifiers and qualified browse names.
+
+        Includes external targets, but neither transitive closure nor unused model-header
+        requirements. Edges describe usage, including inverse references, not load order.
+        """
+        dependencies: dict[str, set[str]] = {}
+        for node in self.iter_nodes():
+            if node.node_id not in retained:
+                continue
+            owner = node.node_id.namespace
+            used = dependencies.setdefault(owner, set())
+            used.update(identifier.namespace for identifier in referenced_identifiers(node))
+            if node.browse_name.namespace_uri:
+                used.add(node.browse_name.namespace_uri)
+            used.discard(owner)
+        return {uri: sorted(used) for uri, used in sorted(dependencies.items())}
 
 
 def load_nodesets(paths: list[Path | str]) -> SemanticModel:

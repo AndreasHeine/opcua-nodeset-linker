@@ -88,6 +88,8 @@ class NamespaceReportData:
     cross_namespace_edges: list[tuple[str, str]] = field(default_factory=list)
     external_models: list[str] = field(default_factory=list)
     external_dependencies: dict[str, int] = field(default_factory=dict)
+    namespace_dependencies: dict[str, list[str]] = field(default_factory=dict)
+    output_files: dict[str, str] = field(default_factory=dict)
 
     def as_json(self) -> str:
         payload = {
@@ -98,7 +100,10 @@ class NamespaceReportData:
             "cross_namespace_dependencies": [
                 {"from": source, "to": target} for source, target in self.cross_namespace_edges
             ],
+            "namespace_dependencies": self.namespace_dependencies,
         }
+        if self.output_files:
+            payload["output_files"] = self.output_files
         if self.external_models:
             payload["external_models"] = self.external_models
             payload["external_references"] = self.external_dependencies
@@ -197,6 +202,7 @@ def build_namespace_report(
         cross_namespace_edges=sorted(pairs),
         external_models=sorted(external),
         external_dependencies=dict(sorted(external_refs.items())),
+        namespace_dependencies=model.namespace_dependencies(retained),
     )
 
 
