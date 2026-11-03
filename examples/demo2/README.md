@@ -112,9 +112,9 @@ Do not treat sibling files as external when validating the bundle: that would hi
 missing output declarations. Core references are expected to be unresolved until a
 Core provider is loaded.
 
-The integration test also regenerates both demo configurations and compares their
-reloaded semantic nodes, references, datatype definitions, attributes, and values after
-document-local namespace/server index normalization.
+Demo checks are manual and independent of the automated test suite. The suite uses
+dedicated test fixtures to check split/merged semantic equivalence, rather than relying
+on these editable example files.
 
 ## Importing into a server
 

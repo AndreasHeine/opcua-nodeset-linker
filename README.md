@@ -448,6 +448,10 @@ python scripts/check_official_nodesets.py            # the real OPC UA/DI/Machin
 python scripts/check_official_nodesets.py --ref 1.05.05   # use a separate cache for this ref
 ```
 
+The automated suite uses dedicated fixtures under `tests/data`, not the editable files
+under `examples`. Run the demo commands documented in each example manually when needed;
+demo configurations, generated outputs, and server helpers are not test dependencies.
+
 GitHub Actions runs the test suite with coverage on Python 3.12 and 3.13, and runs Ruff
 and mypy on Python 3.12. The XML coverage report is available as a workflow artifact and is
 uploaded to Codecov from Python 3.13. Configure the `CODECOV_TOKEN` repository secret, or enable

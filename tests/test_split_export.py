@@ -21,7 +21,7 @@ from tests.test_external_dependencies import (
 )
 
 from nodeset_linker.cli.main import console, main
-from nodeset_linker.config.schema import ExportConfig, LinkerConfig, load_config
+from nodeset_linker.config.schema import ExportConfig, LinkerConfig
 from nodeset_linker.exporter import NodeSetExporter, export, export_split, split_output_files
 from nodeset_linker.models.identifiers import QualifiedName
 from nodeset_linker.models.node import UANode, referenced_identifiers
@@ -286,40 +286,3 @@ def test_new_merged_config_matches_legacy_output(tmp_path) -> None:
 def test_export_config_rejects_ambiguous_or_invalid_options(options) -> None:
     with pytest.raises(ValueError):
         configuration(**options)
-
-
-def test_official_demo_split_matches_merged_graph(tmp_path) -> None:
-    root = Path(__file__).parent.parent
-    config = load_config(root / "examples" / "demo2" / "config.yaml")
-    demo1 = load_config(root / "examples" / "demo1" / "config.yaml")
-    assert config.nodesets == demo1.nodesets
-    assert config.roots == demo1.roots
-    assert config.mode == demo1.mode
-    assert config.external == demo1.external
-    assert config.export.mode == "split"
-    assert config.export.directory == "examples/demo2/reduced"
-    # Resolve source paths independently of the test runner's working directory.
-    config = config.model_copy(update={
-        "nodesets": [str(root / name) for name in config.nodesets],
-        "output": None,
-        "export": ExportConfig(mode="split", directory=str(tmp_path / "split")),
-    })
-    pipeline = LinkerPipeline(config)
-    result = pipeline.run()
-    assert len(result.output_files) == 7
-    assert {path.name for path in result.output_files.values()} == {
-        "DI.xml", "IA.xml", "ISA95-JOBCONTROL_V2.xml", "Jobs.xml",
-        "Machinery.xml", "MachineTool.xml", "ShowCaseMachineTool.xml",
-    }
-    merged = LinkerPipeline(config.model_copy(update={
-        "export": ExportConfig(mode="merged", file=str(tmp_path / "merged.xml")),
-    })).run()
-    reloaded = load_nodesets(list(result.output_files.values()))
-    assert_equivalent(load_nodesets([merged.output_path]), reloaded)
-    assert set(reloaded.nodes) == result.retained == merged.retained
-    assert result.namespace_report.namespace_dependencies == json.loads(
-        result.manifest_path.read_text(encoding="utf-8")
-    )["dependencies"]
-    xsd = XMLSchema(parse(str(NODESET_SCHEMA)))
-    for path in result.output_files.values():
-        assert xsd.validate(parse(str(path))), str(xsd.error_log)

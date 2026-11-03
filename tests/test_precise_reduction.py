@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from pathlib import Path
 
 import pytest
 from lxml.etree import XMLSchema, parse
@@ -19,7 +18,7 @@ from tests.conftest import (
     structure_definition,
 )
 
-from nodeset_linker.config.schema import LinkerConfig, load_config
+from nodeset_linker.config.schema import LinkerConfig
 from nodeset_linker.exporter.nodeset import NodeSetExporter
 from nodeset_linker.graph.engine import SemanticGraph
 from nodeset_linker.models.node import Reference
@@ -279,59 +278,3 @@ def test_unused_required_model_is_not_misrepresented_as_external(tmp_path) -> No
     output = tmp_path / "unused.xml"
     NodeSetExporter(model, {node.node_id}).write(output)
     assert unused not in output.read_text(encoding="utf-8")
-
-
-@pytest.mark.parametrize("mode", ["STRICT", "RUNTIME"])
-def test_official_demo_reduces_substantially_and_reloads(mode: str, tmp_path) -> None:
-    root = Path(__file__).resolve().parents[1]
-    cfg = load_config(root / "examples" / "demo1" / "config.yaml")
-    cfg = cfg.model_copy(update={
-        "nodesets": [str(root / path) for path in cfg.nodesets],
-        "external": [], "mode": mode, "output": str(tmp_path / "demo.xml"),
-    })
-    result = LinkerPipeline(cfg).run()
-    assert result.statistics.reduction_percent > 50
-    reloaded = load_nodesets([result.output_path])
-    assert set(reloaded.nodes) == result.retained
-    assert not reloaded.unresolved_targets()
-    assert SemanticValidator(reloaded).validate().ok
-    assert XMLSchema(parse(str(NODESET_SCHEMA))).validate(parse(str(result.output_path)))
-    root_id = result.closure.roots[0]
-    source_children = {
-        target for target, metadata in result.graph.out_edges(root_id)
-        if metadata.reference_type in {"HasComponent", "HasProperty"} and metadata.is_forward
-    }
-    assert source_children <= result.retained
-
-
-@pytest.mark.parametrize("mode", ["STRICT", "RUNTIME"])
-def test_official_demo_imports_with_preloaded_ua_external(mode: str, tmp_path) -> None:
-    import asyncio
-
-    asyncua = pytest.importorskip("asyncua")
-    from examples.demo1.server import DemoXmlImporter
-
-    from nodeset_linker.models.identifiers import UA_NAMESPACE_URI
-
-    root = Path(__file__).resolve().parents[1]
-    cfg = load_config(root / "examples" / "demo1" / "config.yaml")
-    result = LinkerPipeline(cfg.model_copy(update={
-        "nodesets": [str(root / path) for path in cfg.nodesets],
-        "external": [UA_NAMESPACE_URI], "mode": mode,
-        "output": str(tmp_path / "import.xml"),
-    })).run()
-
-    async def check() -> None:
-        server = asyncua.Server()
-        await server.init()
-        imported = await DemoXmlImporter(server, auto_load_definitions=False).import_xml(
-            xmlpath=result.output_path
-        )
-        assert len(imported) == len(result.retained)
-        root_id = result.closure.roots[0]
-        index = await server.get_namespace_index(root_id.namespace)
-        node = server.get_node(asyncua.ua.NodeId(int(root_id.identifier.value), index))
-        assert (await node.read_browse_name()).Name == "ShowCaseMachineTool"
-        assert len(await node.get_children()) == 6
-
-    asyncio.run(check())

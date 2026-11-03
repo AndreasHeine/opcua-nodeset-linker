@@ -64,8 +64,8 @@ roots:
 
 The showcase already depends on the Machinery Identification type hierarchy, so its
 closure naturally retains `MachineIdentificationType` and both properties in STRICT mode.
-No artificial datatype root or custom retention rule is needed. The test verifies that both edits survive
-the normal reduction in both configurations.
+No artificial datatype root or custom retention rule is needed. Regenerate the outputs
+and run the diff below to verify that both edits survive the normal reduction.
 
 ## 1. Run both reductions
 
