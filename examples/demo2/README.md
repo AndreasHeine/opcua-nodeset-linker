@@ -131,6 +131,6 @@ See the [split export usage guide](../../docs/usage-guide.md#split-namespace-exp
 for configuration defaults, metadata behavior, and manifest semantics.
 
 [Demo 3](../demo3/README.md) uses the edited
-[ShowCaseMachineTool-Modified.xml](reduced/ShowCaseMachineTool-Modified.xml) as an
+[ShowCaseMachineTool-Modified.xml](../nodesets/ShowCaseMachineTool-Modified.xml) as an
 alternative input and demonstrates semantic diff against the original showcase.
-That edited file is an input fixture, not an output listed in this demo's manifest.
+That edited file is a shared input fixture, not an output listed in this demo's manifest.

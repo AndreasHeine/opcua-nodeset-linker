@@ -248,6 +248,8 @@ variable types, structure fields, and union alternatives in console, Markdown, H
 and JSON reports (including JSON `old`/`new` strings and breaking-change reasons).
 Datatype attributes are compared through their resolved identifiers, not again as raw XML
 attribute spellings: changing `String` to the equivalent `i=12` is not a semantic change.
+Reference targets use the same name-and-identifier labels, with an `(inverse)` suffix
+for inverse references, including when a standard datatype target is externalized.
 
 The report separates added, removed, modified and renumbered nodes, changes per node (references,
 BrowseName, DisplayName, Description, modelling rule, datatype, Structure fields, Enum and

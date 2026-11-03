@@ -119,6 +119,9 @@ validation. [Demo 2](examples/demo2/README.md) applies split export to demo1's e
 ShowCaseMachineTool NodeSets and includes the seven generated namespace files.
 [Demo 3](examples/demo3/README.md) reduces original and modified showcase inputs with
 two configurations, then demonstrates semantic diff, impact analysis, and a breaking-change gate.
+[Demo 4](examples/demo4/README.md) changes a standard Machinery Identification
+property's datatype and tightens another property's modelling rule from Optional to
+Mandatory, both naturally retained by the showcase root.
 
 Keys of a custom rule are `namespace`, `browseName`, `nodeClass` and `modellingRule`; values may
 contain globs, an unknown key is rejected. `retain:` rules are checked before `exclude:` rules, so

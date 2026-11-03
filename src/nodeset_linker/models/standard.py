@@ -36,6 +36,7 @@ STANDARD_DATA_TYPE_IDS: Mapping[str, int] = {
     "Integer": 27,
     "UInteger": 28,
     "Enumeration": 29,
+    "Image": 30,
 }
 
 STANDARD_DATA_TYPE_NAMES: Mapping[str, str] = {

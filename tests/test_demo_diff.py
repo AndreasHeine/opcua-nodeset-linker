@@ -34,7 +34,7 @@ def test_showcase_diff_demo(tmp_path) -> None:
     ]
     assert different_inputs == [(
         "examples/nodesets/ShowCaseMachineTool.xml",
-        "examples/demo2/reduced/ShowCaseMachineTool-Modified.xml",
+        "examples/nodesets/ShowCaseMachineTool-Modified.xml",
     )]
 
     schema = XMLSchema(parse(str(NODESET_SCHEMA)))

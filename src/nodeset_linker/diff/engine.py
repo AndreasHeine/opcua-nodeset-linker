@@ -762,10 +762,10 @@ def _lookup(index: ModelIndex, identity_text: str) -> UANode | None:
 
 
 def _target_label(index: ModelIndex, identity_text: str, is_forward: bool) -> str:
-    node = _lookup(index, identity_text)
-    if node is None:
-        return identity_text.partition("|")[1]
-    return _label(node) if is_forward else f"{_label(node)} (inverse)"
+    namespace, _, local = identity_text.partition("|")
+    node_id = ExpandedNodeId(identifier=NodeId.parse(local), namespace_uri=namespace)
+    label = index.label(node_id)
+    return label if is_forward else f"{label} (inverse)"
 
 
 def _reference_removal_breaking(name: str, target: str, index: ModelIndex) -> bool:

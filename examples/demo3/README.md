@@ -7,7 +7,7 @@ the resulting semantic models. The shared companion NodeSets remain under
 | Configuration | Showcase input | Merged output |
 | --- | --- | --- |
 | [config_original.yaml](config_original.yaml) | [Original instance](../nodesets/ShowCaseMachineTool.xml) | [original.xml](original.xml) |
-| [config_modified.yaml](config_modified.yaml) | [Your modified instance](../demo2/reduced/ShowCaseMachineTool-Modified.xml) | [modified.xml](modified.xml) |
+| [config_modified.yaml](config_modified.yaml) | [Your modified instance](../nodesets/ShowCaseMachineTool-Modified.xml) | [modified.xml](modified.xml) |
 
 Both use the same seven dependency inputs, `STRICT` retention, externalized OPC UA
 Core, and the same root:
@@ -16,10 +16,11 @@ Core, and the same root:
 nsu=http://umati.org/UA/ShowCaseMachineTool/;i=5003
 ```
 
-The modified input is the edited namespace-owned file from demo2. It replaces the
+The modified input is the edited namespace-owned file from demo2, now stored with the
+shared inputs. It replaces the
 original showcase input; do not load both versions together, because they declare the
 same NodeIds. The other demo2 outputs are not loaded: dependencies come from the shared
-source NodeSets. Keep the modified file when regenerating demo2.
+source NodeSets.
 
 ## 1. Install
 
