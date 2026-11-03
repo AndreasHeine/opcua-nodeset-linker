@@ -20,7 +20,7 @@ from tests.test_external_dependencies import (
     write,
 )
 
-from nodeset_linker.cli.main import main
+from nodeset_linker.cli.main import console, main
 from nodeset_linker.config.schema import ExportConfig, LinkerConfig, load_config
 from nodeset_linker.exporter import NodeSetExporter, export, export_split, split_output_files
 from nodeset_linker.models.identifiers import QualifiedName
@@ -238,7 +238,9 @@ def test_analyze_plans_files_without_writing(tmp_path) -> None:
     assert result.namespace_report.output_files
 
 
-def test_split_cli_output_override_and_errors(tmp_path) -> None:
+@pytest.mark.parametrize("console_width", [40, 80])
+def test_split_cli_output_override_and_errors(tmp_path, monkeypatch, console_width) -> None:
+    monkeypatch.setattr(console, "width", console_width)
     config = configuration(export={"mode": "split", "directory": str(tmp_path / "unused")})
     path = tmp_path / "config.json"
     path.write_text(config.model_dump_json(), encoding="utf-8")
@@ -248,9 +250,11 @@ def test_split_cli_output_override_and_errors(tmp_path) -> None:
     assert result.exit_code == 0, result.output
     assert (directory / "manifest.json").exists()
     assert "manifest.json" in result.output
+    assert f"wrote {directory / 'manifest.json'}" in result.output.splitlines()
+    assert f"wrote {directory / 'Machinery.xml'}" in result.output.splitlines()
     result = runner.invoke(main, ["link", str(path), "--output", str(directory)])
     assert result.exit_code == 1
-    assert "absent or empty" in result.output
+    assert "absent or empty" in " ".join(result.output.split())
     assert not (tmp_path / "unused").exists()
 
 

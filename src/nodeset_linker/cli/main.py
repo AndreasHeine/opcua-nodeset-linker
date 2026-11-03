@@ -98,10 +98,10 @@ def link(config: Path, output: Path | None) -> None:
     _render_external(result.external)
     if result.manifest_path is not None:
         for path in result.output_files.values():
-            console.print(f"[green]wrote[/] {path}")
-        console.print(f"[green]wrote[/] {result.manifest_path}")
+            console.print(f"[green]wrote[/] {path}", soft_wrap=True)
+        console.print(f"[green]wrote[/] {result.manifest_path}", soft_wrap=True)
     elif result.output_path is not None:
-        console.print(f"[green]wrote[/] {result.output_path}")
+        console.print(f"[green]wrote[/] {result.output_path}", soft_wrap=True)
     else:
         console.print("[yellow]no output path configured; nothing written[/]")
 
