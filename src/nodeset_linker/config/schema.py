@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic import ValidationError as PydanticValidationError
 
 from nodeset_linker.retention.engine import CustomRule
@@ -22,6 +22,30 @@ class CustomRulesConfig(BaseModel):
     exclude: list[str] = Field(default_factory=list)
 
 
+class ExportConfig(BaseModel):
+    """Choose one serialization strategy without changing retention."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    mode: Literal["merged", "split"] = "merged"
+    file: str | None = Field(default=None, min_length=1)
+    directory: str | None = Field(default=None, min_length=1)
+
+    @model_validator(mode="after")
+    def _destination_matches_mode(self) -> ExportConfig:
+        if self.mode == "merged":
+            if self.directory is not None:
+                raise ValueError("merged export uses file, not directory")
+            if self.file is None:
+                self.file = "out/reduced.xml"
+        else:
+            if self.file is not None:
+                raise ValueError("split export uses directory, not file")
+            if self.directory is None:
+                self.directory = "out"
+        return self
+
+
 class LinkerConfig(BaseModel):
     """Top-level configuration of one linking run."""
 
@@ -29,6 +53,7 @@ class LinkerConfig(BaseModel):
     mode: Mode = "STRICT"
     roots: list[str] = Field(min_length=1)
     output: str | None = None
+    export: ExportConfig | None = None
     custom: CustomRulesConfig | None = None
     validate_before_export: bool = True
     mark_namespace_subsets: bool = True
@@ -49,6 +74,12 @@ class LinkerConfig(BaseModel):
     other model.  Declaring a dependency does not free the consumer from it: the
     application importing the file has to make the required model available.
     """
+
+    @model_validator(mode="after")
+    def _one_export_configuration(self) -> LinkerConfig:
+        if self.output is not None and self.export is not None:
+            raise ValueError("configure either output or export, not both")
+        return self
 
     @field_validator("external")
     @classmethod

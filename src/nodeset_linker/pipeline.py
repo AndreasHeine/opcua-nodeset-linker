@@ -12,6 +12,7 @@ from pathlib import Path
 from nodeset_linker.config.schema import LinkerConfig
 from nodeset_linker.explain.explainer import Explainer
 from nodeset_linker.exporter.nodeset import export
+from nodeset_linker.exporter.split import export_split, split_output_files
 from nodeset_linker.graph.engine import SemanticGraph
 from nodeset_linker.models.identifiers import ExpandedNodeId
 from nodeset_linker.policies.registry import build_policy
@@ -46,6 +47,8 @@ class LinkResult:
     output_path: Path | None = None
     external: frozenset[str] = frozenset()
     """ModelUris whose declarations this run left out while keeping the references."""
+    output_files: dict[str, Path] = field(default_factory=dict)
+    manifest_path: Path | None = None
 
     def explainer(self) -> Explainer:
         return Explainer(self.model, self.closure)
@@ -135,6 +138,9 @@ class LinkerPipeline:
         statistics = compute_statistics(model, effective, retained=retained, external=external)
         dependency_report = build_dependency_report(model, effective)
         namespace_report = build_namespace_report(export_model, effective, external=external)
+        split = self._config.export is not None and self._config.export.mode == "split"
+        if split:
+            namespace_report.output_files = split_output_files(export_model, retained)
 
         validation = SemanticValidator(
             _subset_model(export_model, retained), source=model, external=external
@@ -144,11 +150,29 @@ class LinkerPipeline:
             # instead of producing a broken NodeSet.
             raise ValidationError(validation.summary(), validation)
         output_path: Path | None = None
-        if export_output and self._config.output:
+        output_files: dict[str, Path] = {}
+        manifest_path: Path | None = None
+        destination = self._config.output
+        if self._config.export is not None:
+            destination = (
+                self._config.export.directory if split else self._config.export.file
+            )
+        if export_output and destination and split:
+            output_files = export_split(
+                export_model,
+                retained,
+                destination,
+                validate=self._config.validate_before_export,
+                mark_namespace_subsets=self._config.mark_namespace_subsets,
+                external=external,
+            )
+            output_path = Path(destination)
+            manifest_path = output_path / "manifest.json"
+        elif export_output and destination:
             output_path = export(
                 export_model,
                 retained,
-                self._config.output,
+                destination,
                 validate=self._config.validate_before_export,
                 mark_namespace_subsets=self._config.mark_namespace_subsets,
                 external=external,
@@ -165,6 +189,8 @@ class LinkerPipeline:
             validation=validation,
             output_path=output_path,
             external=external,
+            output_files=output_files,
+            manifest_path=manifest_path,
         )
 
     def analyze(self) -> LinkResult:

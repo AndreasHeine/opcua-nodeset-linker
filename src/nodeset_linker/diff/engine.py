@@ -50,6 +50,7 @@ from nodeset_linker.models.node import (
     mandatory_level_of,
 )
 from nodeset_linker.models.node_class import ModellingRule, NodeClass, NodeRole
+from nodeset_linker.models.standard import STANDARD_DATA_TYPE_NAMES
 from nodeset_linker.repository.model import SemanticModel
 
 #: Diff identity: namespace URI plus local identifier.  An index is a document property.
@@ -80,6 +81,7 @@ DOCUMENT_LOCAL_ATTRIBUTES = frozenset(
     {
         "NodeId",
         "BrowseName",
+        "DataType",
         "SymbolicName",
         "ParentNodeId",
         "Handle",
@@ -119,14 +121,19 @@ class ModelIndex:
         return self.nodes.get(identity(node_id))
 
     def label(self, node_id: ExpandedNodeId) -> str:
-        """Readable name of a referenced node; a node outside the model keeps its id."""
+        """Name plus stable identifier, with offline standard datatype fallbacks."""
         node = self.node(node_id)
+        identifier = (
+            node_id.identifier.as_xml()
+            if node_id.namespace == UA_NAMESPACE_URI and node_id.server_uri is None
+            else node_id.as_xml()
+        )
+        name: str | None = None
         if node is not None:
-            return _label(node)
-        if node_id.namespace == UA_NAMESPACE_URI:
-            # The OPC UA namespace is implied in every NodeSet, so `i=12` reads better here.
-            return node_id.identifier.as_xml()
-        return node_id.as_xml()
+            name = node.browse_name.name or node.display_name
+        if not name and node_id.namespace == UA_NAMESPACE_URI and node_id.server_uri is None:
+            name = STANDARD_DATA_TYPE_NAMES.get(identifier)
+        return f"{name} ({identifier})" if name and name != identifier else identifier
 
     def alias(self, uri: str) -> str:
         namespace = self.model.namespaces.get(uri)

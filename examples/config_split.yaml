@@ -1,0 +1,15 @@
+nodesets:
+  - tests/data/ua_base.xml
+  - tests/data/machinery.xml
+
+mode: STRICT
+
+roots:
+  - browseName=JobDataType
+
+external:
+  - http://opcfoundation.org/UA/
+
+export:
+  mode: split
+  directory: out/split

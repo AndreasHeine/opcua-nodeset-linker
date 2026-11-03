@@ -1,0 +1,70 @@
+{
+  "export_mode": "split",
+  "namespaces": [
+    {
+      "uri": "http://opcfoundation.org/UA/DI/",
+      "output_file": "DI.xml"
+    },
+    {
+      "uri": "http://opcfoundation.org/UA/IA/",
+      "output_file": "IA.xml"
+    },
+    {
+      "uri": "http://opcfoundation.org/UA/ISA95-JOBCONTROL_V2/",
+      "output_file": "ISA95-JOBCONTROL_V2.xml"
+    },
+    {
+      "uri": "http://opcfoundation.org/UA/MachineTool/",
+      "output_file": "MachineTool.xml"
+    },
+    {
+      "uri": "http://opcfoundation.org/UA/Machinery/",
+      "output_file": "Machinery.xml"
+    },
+    {
+      "uri": "http://opcfoundation.org/UA/Machinery/Jobs/",
+      "output_file": "Jobs.xml"
+    },
+    {
+      "uri": "http://umati.org/UA/ShowCaseMachineTool/",
+      "output_file": "ShowCaseMachineTool.xml"
+    }
+  ],
+  "dependencies": {
+    "http://opcfoundation.org/UA/DI/": [
+      "http://opcfoundation.org/UA/"
+    ],
+    "http://opcfoundation.org/UA/IA/": [
+      "http://opcfoundation.org/UA/"
+    ],
+    "http://opcfoundation.org/UA/ISA95-JOBCONTROL_V2/": [
+      "http://opcfoundation.org/UA/"
+    ],
+    "http://opcfoundation.org/UA/MachineTool/": [
+      "http://opcfoundation.org/UA/",
+      "http://opcfoundation.org/UA/DI/",
+      "http://opcfoundation.org/UA/IA/",
+      "http://opcfoundation.org/UA/ISA95-JOBCONTROL_V2/",
+      "http://opcfoundation.org/UA/Machinery/",
+      "http://opcfoundation.org/UA/Machinery/Jobs/"
+    ],
+    "http://opcfoundation.org/UA/Machinery/": [
+      "http://opcfoundation.org/UA/",
+      "http://opcfoundation.org/UA/DI/"
+    ],
+    "http://opcfoundation.org/UA/Machinery/Jobs/": [
+      "http://opcfoundation.org/UA/",
+      "http://opcfoundation.org/UA/ISA95-JOBCONTROL_V2/"
+    ],
+    "http://umati.org/UA/ShowCaseMachineTool/": [
+      "http://opcfoundation.org/UA/",
+      "http://opcfoundation.org/UA/DI/",
+      "http://opcfoundation.org/UA/IA/",
+      "http://opcfoundation.org/UA/MachineTool/",
+      "http://opcfoundation.org/UA/Machinery/"
+    ]
+  },
+  "external_models": [
+    "http://opcfoundation.org/UA/"
+  ]
+}

@@ -82,6 +82,44 @@ custom:                 # only used with mode: CUSTOM
     - browseName=MachineDiagnostics
 ```
 
+### Merged or split export
+
+The legacy `output:` setting remains supported. Alternatively, replace it with:
+
+```yaml
+export:
+  mode: merged
+  file: out/reduced.xml
+```
+
+To keep retained declarations in separate namespace-owned NodeSets, use:
+
+```yaml
+export:
+  mode: split
+  directory: out
+```
+
+Split export writes one XML file per namespace with retained nodes, plus `manifest.json`.
+It changes serialization only: reduction, retention and semantic validation are unchanged.
+Nodes are never duplicated or reassigned; cross-file references remain intact. External
+models are still supplied by the consumer and do not get output files. Namespace 0 gets its
+own `UA.xml` when its declarations are retained rather than externalized.
+
+The destination must be absent or empty; split export refuses non-empty directories.
+`--output` overrides the file in merged mode or the directory in split mode. An omitted
+destination defaults to `out/reduced.xml` for an `export:` merged block and `out` for split.
+Without either `output:` or `export:`, linking continues to write nothing. Configuring both
+is an error.
+
+The manifest identifies namespaces by URI, maps them to safe, deterministic filenames, and
+lists direct namespace uses (including external dependencies). See the
+[Usage Guide](docs/usage-guide.md#split-namespace-export) for the manifest format and bundle
+validation. [Demo 2](examples/demo2/README.md) applies split export to demo1's eight
+ShowCaseMachineTool NodeSets and includes the seven generated namespace files.
+[Demo 3](examples/demo3/README.md) reduces original and modified showcase inputs with
+two configurations, then demonstrates semantic diff, impact analysis, and a breaking-change gate.
+
 Keys of a custom rule are `namespace`, `browseName`, `nodeClass` and `modellingRule`; values may
 contain globs, an unknown key is rejected. `retain:` rules are checked before `exclude:` rules, so
 a retain rule naming the same node as an exclude rule wins. A retain rule can also bring in nodes

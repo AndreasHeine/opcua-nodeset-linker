@@ -2,7 +2,7 @@
 
 Reduce the eight supplied NodeSets around the `ShowCaseMachineTool` instance using
 [config.yaml](config.yaml). The source instance is declared in
-[ShowCaseMachineTool.xml](nodesets/ShowCaseMachineTool.xml) with `NodeId="ns=1;i=5003"`.
+[ShowCaseMachineTool.xml](../nodesets/ShowCaseMachineTool.xml) with `NodeId="ns=1;i=5003"`.
 Its stable identifier, used as the configuration's only root, is:
 
 ```text
@@ -48,7 +48,7 @@ Core externalized), the precise reduction algorithm produces:
 | Actually removed nodes | 589 |
 | Reduction | 34.7% |
 
-The configuration loads the NodeSets under `examples\demo1\nodesets` and the showcase
+The configuration loads the shared NodeSets under `examples\nodesets` and the showcase
 instance file.
 It uses the compatible Core, Machinery/Jobs, and ISA95 JobControl files to resolve and check
 dependencies. Core's 4,956 loaded declarations are reported separately, not counted as

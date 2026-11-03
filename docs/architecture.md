@@ -83,6 +83,31 @@ objects and returns domain objects.
 | `cli/` | Click commands `analyze`, `link`, `explain`, `stats`, `validate`, `diff`; rich rendering. | No |
 | `pipeline.py` | The single ordered composition of all layers. | No |
 
+### Split export
+
+The export strategy is selected only after the existing reduction and semantic validation.
+`exporter/split.py` validates the complete shipped subset and partitions its declarations by
+NodeId namespace URI. Each `NodeSetExporter` retains bundle-wide identifier resolution but
+serializes declarations only for its `document_namespace`. Sibling outputs are not added to
+the global external-model set: their nodes must exist in the validated retained graph.
+
+Namespace/server indexes and aliases are local to each document. Its model header declares
+the owned model and relevant required models, not every referenced namespace as a shipped
+model. Subset-marker rewrites are calculated against the entire retained graph, so splitting
+does not itself make an unreduced namespace a subset.
+
+`SemanticModel.namespace_dependencies()` provides the URI-keyed direct-use relation shared
+by the manifest and namespace report. It includes serialized identifiers and qualified
+BrowseNames, including external uses; it is neither transitive closure nor a load-order DAG.
+The legacy reference-target-only report field remains unchanged.
+
+Split publication stages files and the manifest in a temporary sibling directory, then
+renames the bundle into an absent or empty destination. Non-empty destinations are refused.
+The manifest contains namespace URIs, deterministic safe filenames, dependency edges and
+the configured external set. `LinkResult.output_path` is the output directory in split mode;
+`output_files` maps owned URIs to written paths and `manifest_path` points to the manifest.
+Analyze-only runs report planned relative filenames without populating written-output paths.
+
 In a normal CLI run validation happens twice: `pipeline.run()` validates the retained set
 and raises `ValidationError` before the exporter is reached, and `export()` validates the
 same subset again when `validate=True`. Turning `validate_before_export` off skips the

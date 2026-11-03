@@ -8,7 +8,7 @@ The package is organised as a clean-architecture stack:
 * ``resolver``                 — dependency closure over the semantic graph.
 * ``retention`` / ``policies`` — decisions about which nodes survive.
 * ``validator``                — semantic correctness gate before export.
-* ``exporter``                 — writes a self-contained NodeSet and assigns
+* ``exporter``                 — writes merged or namespace-split NodeSets and assigns
   NamespaceIndexes (the only place indexes exist).
 * ``reports`` / ``explain``    — traceability of *why* every node is retained.
 * ``cli`` / ``config``         — human-facing entry points.

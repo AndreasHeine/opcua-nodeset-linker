@@ -1,12 +1,12 @@
 nodesets:
-  - examples/demo1/nodesets/Opc.Ua.NodeSet2.xml
-  - examples/demo1/nodesets/Opc.Ua.Di.NodeSet2.xml
-  - examples/demo1/nodesets/Opc.Ua.IA.NodeSet2.xml
-  - examples/demo1/nodesets/Opc.Ua.Machinery.NodeSet2.xml
-  - examples/demo1/nodesets/Opc.Ua.MachineTool.NodeSet2.xml
-  - examples/demo1/nodesets/ShowCaseMachineTool.xml
-  - examples/demo1/nodesets/Opc.Ua.Machinery.Jobs.Nodeset2.xml
-  - examples/demo1/nodesets/opc.ua.isa95-jobcontrol.nodeset2.xml
+  - examples/nodesets/Opc.Ua.NodeSet2.xml
+  - examples/nodesets/Opc.Ua.Di.NodeSet2.xml
+  - examples/nodesets/Opc.Ua.IA.NodeSet2.xml
+  - examples/nodesets/Opc.Ua.Machinery.NodeSet2.xml
+  - examples/nodesets/Opc.Ua.MachineTool.NodeSet2.xml
+  - examples/nodesets/ShowCaseMachineTool.xml
+  - examples/nodesets/Opc.Ua.Machinery.Jobs.Nodeset2.xml
+  - examples/nodesets/opc.ua.isa95-jobcontrol.nodeset2.xml
 
 mode: STRICT
 

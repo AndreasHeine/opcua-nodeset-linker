@@ -1,0 +1,103 @@
+{
+  "old": "examples\\demo3\\original.xml",
+  "new": "examples\\demo3\\modified.xml",
+  "summary": {
+    "old_nodes": 1110,
+    "new_nodes": 1110,
+    "added_nodes": 0,
+    "removed_nodes": 0,
+    "modified_nodes": 1,
+    "renumbered_nodes": 0,
+    "breaking_changes": 1,
+    "namespace_changes": 0,
+    "identical": false
+  },
+  "added_nodes": [],
+  "removed_nodes": [],
+  "modified_nodes": [
+    {
+      "label": "ProductInstanceUri",
+      "node_id": "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6002",
+      "namespace": "ShowCaseMachineTool",
+      "node_class": "Variable",
+      "breaking": true,
+      "changes": [
+        {
+          "area": "node",
+          "kind": "data_type",
+          "subject": null,
+          "old": "String (i=12)",
+          "new": "Double (i=11)",
+          "breaking": true,
+          "text": "DataType: String (i=12) \u2192 Double (i=11)"
+        }
+      ],
+      "impacted_nodes": [
+        "ActiveProgram",
+        "Channel1",
+        "ChannelMode",
+        "ChannelState",
+        "ControlIdentifier1",
+        "ControlIdentifierInterpretation",
+        "CurrentState",
+        "DeviceClass",
+        "EURange",
+        "EngineeringUnits",
+        "Equipment",
+        "FeedOverride",
+        "Id",
+        "Identification",
+        "IsPartOfBase",
+        "IsRotating",
+        "IsUsedAsAxis",
+        "Light0",
+        "Light1",
+        "Light2",
+        "Location",
+        "Locked",
+        "MachineTool",
+        "MachineryBuildingBlocks",
+        "MachineryItemState",
+        "MachineryOperationMode",
+        "Manufacturer",
+        "Model",
+        "Monitoring",
+        "Name",
+        "Notification",
+        "Number",
+        "NumberInList",
+        "OperationMode",
+        "Override",
+        "PowerOnDuration",
+        "ProductCode",
+        "Production",
+        "ReasonForLocking",
+        "SerialNumber",
+        "ShowCaseMachineTool",
+        "SignalColor",
+        "SignalMode",
+        "SignalOn",
+        "SoftwareRevision",
+        "Spindel",
+        "Stacklight",
+        "StacklightMode",
+        "State",
+        "Tool12",
+        "Tools",
+        "YearOfConstruction"
+      ],
+      "impact_count": 52
+    }
+  ],
+  "renumbered_nodes": [],
+  "namespace_changes": [],
+  "breaking_changes": [
+    {
+      "label": "ProductInstanceUri",
+      "node_id": "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6002",
+      "reason": "DataType: String (i=12) \u2192 Double (i=11)",
+      "affected_nodes": 52,
+      "breaking": true
+    }
+  ]
+}

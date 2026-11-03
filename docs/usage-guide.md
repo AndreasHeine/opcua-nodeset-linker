@@ -96,6 +96,115 @@ nodeset-linker link examples/config.yaml --output out/controller.xml
 The linker validates the reduced semantic model before export. An error blocks the write;
 warnings are reported but do not by themselves prevent export.
 
+### Split namespace export
+
+Replace `output:` with an `export:` block to select the output strategy. These settings are
+mutually exclusive; old configurations keep their existing behavior.
+
+```yaml
+export:
+  mode: split
+  directory: out
+
+external:
+  - http://opcfoundation.org/UA/
+```
+
+For the small fixtures, choose a Machinery-owned root such as `browseName=JobDataType`
+when externalizing UA. A root whose own NodeId belongs to an external model is rejected.
+This configuration produces `out/Machinery.xml` and `out/manifest.json`.
+The complete example is [examples/config_split.yaml](../examples/config_split.yaml).
+
+Use an absent or empty output directory. A non-empty directory is refused, including one
+from an earlier export; select a fresh directory rather than relying on stale-file cleanup.
+Documents and the manifest are staged together before publication. No existing files are
+overwritten by split export.
+
+```powershell
+nodeset-linker analyze examples/config_split.yaml
+nodeset-linker link examples/config_split.yaml --output out/split
+```
+
+`analyze` reports planned filenames without creating files. `--output` overrides the
+directory in split mode, and continues to override the file in merged mode. To use the new
+configuration shape for merged output:
+
+```yaml
+export:
+  mode: merged
+  file: out/reduced.xml
+```
+
+The defaults within an `export:` block are `mode: merged`, `file: out/reduced.xml`, or
+`directory: out` when `mode: split` is selected. Neither setting changes the semantic
+reduction. Each retained node is written exactly once according to its NodeId namespace
+URI, not the source filename or BrowseName namespace. Empty and externalized namespaces
+produce no XML file. Retained UA declarations produce `UA.xml` when UA is not externalized.
+
+Filenames use sanitized URI tails (for example `Machinery/Jobs/` becomes `Jobs.xml`).
+Windows device names are escaped, long names are shortened, and case-insensitive
+collisions receive deterministic URI-hash suffixes. The URI remains the authoritative
+identity; consumers should read the manifest rather than infer identity from filenames.
+
+The manifest has this shape:
+
+```json
+{
+  "export_mode": "split",
+  "namespaces": [
+    {
+      "uri": "http://opcfoundation.org/UA/Machinery/",
+      "output_file": "Machinery.xml"
+    }
+  ],
+  "dependencies": {
+    "http://opcfoundation.org/UA/Machinery/": [
+      "http://opcfoundation.org/UA/"
+    ]
+  },
+  "external_models": ["http://opcfoundation.org/UA/"]
+}
+```
+
+Dependencies are direct uses of other namespaces in retained references, reference types,
+typed attributes, datatype fields, tracked value identifiers, or qualified BrowseNames.
+They include external targets but not transitive closure or unused source-header
+requirements. Inverse references can create cycles: this is not a guaranteed load order.
+The namespace report exposes the same URI-keyed `namespace_dependencies` and a URI-to-file
+`output_files` mapping, while retaining the existing count and dependency fields.
+
+Each XML file has its own namespace/server index tables, relevant aliases, an owned model
+entry and relevant `RequiredModel` entries, preserving known version information. Namespace
+metadata objects and subset properties remain ordinary nodes: they are preserved only
+when retained and are never copied to another namespace or synthesized by split export.
+
+The `validate` CLI command still validates a single XML file, not a bundle. Validate each
+file against the XSD, and validate the combined semantic model with the Python API:
+
+```python
+import json
+from pathlib import Path
+
+from nodeset_linker.repository.model import load_nodesets
+from nodeset_linker.validator.semantic import SemanticValidator
+
+directory = Path("out/split")
+manifest = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
+paths = [directory / entry["output_file"] for entry in manifest["namespaces"]]
+model = load_nodesets(paths)
+report = SemanticValidator(
+    model, external=frozenset(manifest["external_models"])
+).validate()
+assert report.ok, report.errors
+```
+
+Use the manifest's explicit external set when checking the bundle: missing sibling
+declarations must not be accepted as external dependencies. To require
+`model.unresolved_targets() == []`, load all external provider NodeSets alongside the split
+outputs. That method deliberately reports external targets as unresolved when providers
+have not been loaded. Always test importing with the intended OPC UA stack; a stack that
+loads documents sequentially may need dependency ordering or multi-pass loading.
+
 ## 5. Validate and inspect the output
 
 Run semantic validation and also provide the NodeSet XSD to check the XML structure:
@@ -128,6 +237,17 @@ nodeset-linker diff release-1.4.xml release-1.5.xml --json --fail-on-breaking
 Because identity is `(namespaceUri, identifier)`, reordering the file, re-exporting it, or letting
 the exporter reassign `NamespaceIndex` values reports `No semantic differences found.`; a node
 whose identifier changed alone appears under *Renumbered nodes*.
+
+Datatype changes show readable names with identifiers, for example
+`DataType: String (i=12) -> Double (i=11)`. Loaded BrowseNames (or DisplayNames) take
+precedence; canonical namespace-zero datatype names are available offline when Core is
+externalized. Unknown identifiers stay as identifiers rather than receiving guessed names.
+Custom datatype identifiers retain their namespace URIs, so identically named datatypes
+from different models remain distinguishable. The same labels are used for variables,
+variable types, structure fields, and union alternatives in console, Markdown, HTML,
+and JSON reports (including JSON `old`/`new` strings and breaking-change reasons).
+Datatype attributes are compared through their resolved identifiers, not again as raw XML
+attribute spellings: changing `String` to the equivalent `i=12` is not a semantic change.
 
 The report separates added, removed, modified and renumbered nodes, changes per node (references,
 BrowseName, DisplayName, Description, modelling rule, datatype, Structure fields, Enum and

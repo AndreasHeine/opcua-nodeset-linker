@@ -1,0 +1,377 @@
+<UANodeSet xmlns="http://opcfoundation.org/UA/2011/03/UANodeSet.xsd">
+  <NamespaceUris>
+    <Uri>http://opcfoundation.org/UA/DI/</Uri>
+  </NamespaceUris>
+  <Models>
+    <Model ModelUri="http://opcfoundation.org/UA/DI/" XmlSchemaUri="http://opcfoundation.org/UA/DI/Types.xsd" Version="1.04.0" PublicationDate="2022-11-03T00:00:00Z">
+      <RequiredModel ModelUri="http://opcfoundation.org/UA/" XmlSchemaUri="http://opcfoundation.org/UA/2008/02/Types.xsd" Version="1.05.03" PublicationDate="2023-12-15T00:00:00Z" ModelVersion="1.5.3"/>
+    </Model>
+  </Models>
+  <Aliases>
+    <Alias Alias="HasModellingRule">i=37</Alias>
+    <Alias Alias="HasTypeDefinition">i=40</Alias>
+    <Alias Alias="HasSubtype">i=45</Alias>
+    <Alias Alias="HasProperty">i=46</Alias>
+    <Alias Alias="HasComponent">i=47</Alias>
+  </Aliases>
+  <UAObjectType NodeId="ns=1;i=1005" BrowseName="1:FunctionalGroupType">
+    <DisplayName>FunctionalGroupType</DisplayName>
+    <Description>FolderType is used to organize the Parameters and Methods from the complete set (ParameterSet, MethodSet) with regard to their application</Description>
+    <Category>DI Information Model</Category>
+    <Documentation>https://reference.opcfoundation.org/DI/v104/docs/4.4.1</Documentation>
+    <References>
+      <Reference ReferenceType="HasComponent">ns=1;i=6027</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=6243</Reference>
+      <Reference ReferenceType="HasSubtype" IsForward="false">i=61</Reference>
+    </References>
+  </UAObjectType>
+  <UAObject NodeId="ns=1;i=15001" BrowseName="1:http://opcfoundation.org/UA/DI/" SymbolicName="OPCUADINamespaceMetadata">
+    <DisplayName>http://opcfoundation.org/UA/DI/</DisplayName>
+    <Documentation>https://reference.opcfoundation.org/DI/v104/docs/12.1</Documentation>
+    <References>
+      <Reference ReferenceType="HasProperty">ns=1;i=15002</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=15003</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=15004</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=15005</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=15006</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=15007</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=15008</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=15031</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=15032</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=15033</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">i=11715</Reference>
+      <Reference ReferenceType="HasTypeDefinition">i=11616</Reference>
+    </References>
+  </UAObject>
+  <UAVariable NodeId="ns=1;i=15002" BrowseName="NamespaceUri" DataType="i=12" ParentNodeId="ns=1;i=15001">
+    <DisplayName>NamespaceUri</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=15001</Reference>
+    </References>
+    <Value xmlns="http://opcfoundation.org/UA/2011/03/UANodeSet.xsd" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+      <String xmlns="http://opcfoundation.org/UA/2008/02/Types.xsd">http://opcfoundation.org/UA/DI/</String>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=15003" BrowseName="NamespaceVersion" DataType="i=12" ParentNodeId="ns=1;i=15001">
+    <DisplayName>NamespaceVersion</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=15001</Reference>
+    </References>
+    <Value xmlns="http://opcfoundation.org/UA/2011/03/UANodeSet.xsd" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+      <String xmlns="http://opcfoundation.org/UA/2008/02/Types.xsd">1.04.0</String>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=15004" BrowseName="NamespacePublicationDate" DataType="i=13" ParentNodeId="ns=1;i=15001">
+    <DisplayName>NamespacePublicationDate</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=15001</Reference>
+    </References>
+    <Value xmlns="http://opcfoundation.org/UA/2011/03/UANodeSet.xsd" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+      <DateTime xmlns="http://opcfoundation.org/UA/2008/02/Types.xsd">2022-11-03T00:00:00Z</DateTime>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=15005" BrowseName="IsNamespaceSubset" DataType="i=1" ParentNodeId="ns=1;i=15001">
+    <DisplayName>IsNamespaceSubset</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=15001</Reference>
+    </References>
+    <Value xmlns="http://opcfoundation.org/UA/2011/03/UANodeSet.xsd">
+      <Boolean xmlns="http://opcfoundation.org/UA/2008/02/Types.xsd">true</Boolean>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=15006" BrowseName="StaticNodeIdTypes" DataType="i=256" ValueRank="1" ArrayDimensions="0" ParentNodeId="ns=1;i=15001">
+    <DisplayName>StaticNodeIdTypes</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=15001</Reference>
+    </References>
+    <Value xmlns="http://opcfoundation.org/UA/2011/03/UANodeSet.xsd" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+      <ListOfInt32 xmlns="http://opcfoundation.org/UA/2008/02/Types.xsd">
+        <Int32>0</Int32>
+      </ListOfInt32>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=15007" BrowseName="StaticNumericNodeIdRange" DataType="i=291" ValueRank="1" ArrayDimensions="0" ParentNodeId="ns=1;i=15001">
+    <DisplayName>StaticNumericNodeIdRange</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=15001</Reference>
+    </References>
+    <Value xmlns="http://opcfoundation.org/UA/2011/03/UANodeSet.xsd" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+      <ListOfString xmlns="http://opcfoundation.org/UA/2008/02/Types.xsd">
+        <String>1:2147483647</String>
+      </ListOfString>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=15008" BrowseName="StaticStringNodeIdPattern" DataType="i=12" ParentNodeId="ns=1;i=15001">
+    <DisplayName>StaticStringNodeIdPattern</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=15001</Reference>
+    </References>
+    <Value xmlns="http://opcfoundation.org/UA/2011/03/UANodeSet.xsd" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+      <String xmlns="http://opcfoundation.org/UA/2008/02/Types.xsd"/>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=15031" BrowseName="DefaultRolePermissions" DataType="i=96" ValueRank="1" ArrayDimensions="0" ParentNodeId="ns=1;i=15001">
+    <DisplayName>DefaultRolePermissions</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=15001</Reference>
+    </References>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=15032" BrowseName="DefaultUserRolePermissions" DataType="i=96" ValueRank="1" ArrayDimensions="0" ParentNodeId="ns=1;i=15001">
+    <DisplayName>DefaultUserRolePermissions</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=15001</Reference>
+    </References>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=15033" BrowseName="DefaultAccessRestrictions" DataType="i=95" ParentNodeId="ns=1;i=15001">
+    <DisplayName>DefaultAccessRestrictions</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=15001</Reference>
+    </References>
+  </UAVariable>
+  <UAObjectType NodeId="ns=1;i=15035" BrowseName="1:IVendorNameplateType" IsAbstract="true">
+    <DisplayName>IVendorNameplateType</DisplayName>
+    <Category>DI Nameplate</Category>
+    <Documentation>https://reference.opcfoundation.org/DI/v104/docs/4.5.2</Documentation>
+    <References>
+      <Reference ReferenceType="HasProperty">ns=1;i=15036</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=15037</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=15038</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=15039</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=15040</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=15041</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=15042</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=15043</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=15044</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=15045</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=15046</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=15047</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=23</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=24</Reference>
+      <Reference ReferenceType="HasSubtype" IsForward="false">i=17602</Reference>
+    </References>
+  </UAObjectType>
+  <UAVariable NodeId="ns=1;i=15036" BrowseName="1:Manufacturer" DataType="i=21" ParentNodeId="ns=1;i=15035">
+    <DisplayName>Manufacturer</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=15035</Reference>
+      <Reference ReferenceType="HasModellingRule">i=80</Reference>
+    </References>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=15037" BrowseName="1:ManufacturerUri" DataType="i=12" ParentNodeId="ns=1;i=15035">
+    <DisplayName>ManufacturerUri</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=15035</Reference>
+      <Reference ReferenceType="HasModellingRule">i=80</Reference>
+    </References>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=15038" BrowseName="1:Model" DataType="i=21" ParentNodeId="ns=1;i=15035">
+    <DisplayName>Model</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=15035</Reference>
+      <Reference ReferenceType="HasModellingRule">i=80</Reference>
+    </References>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=15039" BrowseName="1:HardwareRevision" DataType="i=12" ParentNodeId="ns=1;i=15035">
+    <DisplayName>HardwareRevision</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=15035</Reference>
+      <Reference ReferenceType="HasModellingRule">i=80</Reference>
+    </References>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=15040" BrowseName="1:SoftwareRevision" DataType="i=12" ParentNodeId="ns=1;i=15035">
+    <DisplayName>SoftwareRevision</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=15035</Reference>
+      <Reference ReferenceType="HasModellingRule">i=80</Reference>
+    </References>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=15041" BrowseName="1:DeviceRevision" DataType="i=12" ParentNodeId="ns=1;i=15035">
+    <DisplayName>DeviceRevision</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=15035</Reference>
+      <Reference ReferenceType="HasModellingRule">i=80</Reference>
+    </References>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=15042" BrowseName="1:ProductCode" DataType="i=12" ParentNodeId="ns=1;i=15035">
+    <DisplayName>ProductCode</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=15035</Reference>
+      <Reference ReferenceType="HasModellingRule">i=80</Reference>
+    </References>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=15043" BrowseName="1:DeviceManual" DataType="i=12" ParentNodeId="ns=1;i=15035">
+    <DisplayName>DeviceManual</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=15035</Reference>
+      <Reference ReferenceType="HasModellingRule">i=80</Reference>
+    </References>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=15044" BrowseName="1:DeviceClass" DataType="i=12" ParentNodeId="ns=1;i=15035">
+    <DisplayName>DeviceClass</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=15035</Reference>
+      <Reference ReferenceType="HasModellingRule">i=80</Reference>
+    </References>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=15045" BrowseName="1:SerialNumber" DataType="i=12" ParentNodeId="ns=1;i=15035">
+    <DisplayName>SerialNumber</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=15035</Reference>
+      <Reference ReferenceType="HasModellingRule">i=80</Reference>
+    </References>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=15046" BrowseName="1:ProductInstanceUri" DataType="i=12" ParentNodeId="ns=1;i=15035">
+    <DisplayName>ProductInstanceUri</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=15035</Reference>
+      <Reference ReferenceType="HasModellingRule">i=80</Reference>
+    </References>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=15047" BrowseName="1:RevisionCounter" DataType="i=6" ParentNodeId="ns=1;i=15035">
+    <DisplayName>RevisionCounter</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=15035</Reference>
+      <Reference ReferenceType="HasModellingRule">i=80</Reference>
+    </References>
+  </UAVariable>
+  <UAObjectType NodeId="ns=1;i=15048" BrowseName="1:ITagNameplateType" IsAbstract="true">
+    <DisplayName>ITagNameplateType</DisplayName>
+    <Category>DI TagNameplate</Category>
+    <Documentation>https://reference.opcfoundation.org/DI/v104/docs/4.5.3</Documentation>
+    <References>
+      <Reference ReferenceType="HasProperty">ns=1;i=15049</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=15050</Reference>
+      <Reference ReferenceType="HasSubtype" IsForward="false">i=17602</Reference>
+    </References>
+  </UAObjectType>
+  <UAVariable NodeId="ns=1;i=15049" BrowseName="1:AssetId" DataType="i=12" ParentNodeId="ns=1;i=15048">
+    <DisplayName>AssetId</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=15048</Reference>
+      <Reference ReferenceType="HasModellingRule">i=80</Reference>
+    </References>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=15050" BrowseName="1:ComponentName" DataType="i=21" ParentNodeId="ns=1;i=15048">
+    <DisplayName>ComponentName</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=15048</Reference>
+      <Reference ReferenceType="HasModellingRule">i=80</Reference>
+    </References>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=23" BrowseName="1:SoftwareReleaseDate" DataType="i=13" ParentNodeId="ns=1;i=15035">
+    <DisplayName>SoftwareReleaseDate</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=15035</Reference>
+      <Reference ReferenceType="HasModellingRule">i=80</Reference>
+    </References>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=24" BrowseName="1:PatchIdentifiers" DataType="i=12" ValueRank="1" ArrayDimensions="0" ParentNodeId="ns=1;i=15035">
+    <DisplayName>PatchIdentifiers</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=15035</Reference>
+      <Reference ReferenceType="HasModellingRule">i=80</Reference>
+    </References>
+  </UAVariable>
+  <UAObjectType NodeId="ns=1;i=480" BrowseName="1:IOperationCounterType" IsAbstract="true">
+    <DisplayName>IOperationCounterType</DisplayName>
+    <Description>Interface defining counters for the duration of operation</Description>
+    <Category>DI OperationCounter Interface</Category>
+    <Documentation>https://reference.opcfoundation.org/DI/v104/docs/4.5.5</Documentation>
+    <References>
+      <Reference ReferenceType="HasProperty">ns=1;i=481</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=482</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=483</Reference>
+      <Reference ReferenceType="HasSubtype" IsForward="false">i=17602</Reference>
+    </References>
+  </UAObjectType>
+  <UAVariable NodeId="ns=1;i=481" BrowseName="1:PowerOnDuration" DataType="i=290" ParentNodeId="ns=1;i=480">
+    <DisplayName>PowerOnDuration</DisplayName>
+    <Description>PowerOnDuration is the duration the Device has been powered. The main purpose is to determine the time in which degradation of the Device occurred. The details, when the time is counted, is implementation-specific. Companion specifications might define specific rules. Typically, when the Device has supply voltage and the main CPU is running, the time is counted. This may include any kind of sleep mode, but may not include pure Wake on LAN. This value shall only increase during the lifetime of the Device and shall not be reset when the Device is restarted. The PowerOnDuration is provided as Duration, i.e., in milliseconds or even fractions of a millisecond. However, the Server is not expected to update the value in such a high frequency, but maybe once a minute or once an hour, depending on the application.</Description>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=480</Reference>
+      <Reference ReferenceType="HasModellingRule">i=80</Reference>
+    </References>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=482" BrowseName="1:OperationDuration" DataType="i=290" ParentNodeId="ns=1;i=480">
+    <DisplayName>OperationDuration</DisplayName>
+    <Description>OperationDuration is the duration the Device has been powered and performing an activity. This counter is intended for Devices where a distinction is made between switched on and in operation. For example, a drive might be powered on but not operating. It is not intended for Devices always performing an activity like sensors always measuring data. This value shall only increase during the lifetime of the Device and shall not be reset when the Device is restarted. The OperationDuration is provided as Duration, i.e., in milliseconds or even fractions of a millisecond. However, the Server is not expected to update the value in such a high frequency, but maybe once a minute or once an hour, depending on the application.</Description>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=480</Reference>
+      <Reference ReferenceType="HasModellingRule">i=80</Reference>
+    </References>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=483" BrowseName="1:OperationCycleCounter" DataType="i=28" ParentNodeId="ns=1;i=480">
+    <DisplayName>OperationCycleCounter</DisplayName>
+    <Description>OperationCycleCounter is counting the times the Device switches from not performing an activity to performing an activity. For example, each time a valve starts moving, is counted. This value shall only increase during the lifetime of the Device and shall not be reset when the Device is restarted.</Description>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=480</Reference>
+      <Reference ReferenceType="HasModellingRule">i=80</Reference>
+    </References>
+  </UAVariable>
+  <UAObject NodeId="ns=1;i=6027" BrowseName="1:&lt;GroupIdentifier&gt;" SymbolicName="GroupIdentifier" ParentNodeId="ns=1;i=1005">
+    <DisplayName>&lt;GroupIdentifier&gt;</DisplayName>
+    <Description>An application specific functional group used to organize parameters and methods.</Description>
+    <References>
+      <Reference ReferenceType="HasComponent">ns=1;i=6242</Reference>
+      <Reference ReferenceType="HasTypeDefinition">ns=1;i=1005</Reference>
+      <Reference ReferenceType="HasModellingRule">i=11508</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=1005</Reference>
+    </References>
+  </UAObject>
+  <UAVariable NodeId="ns=1;i=6242" BrowseName="1:UIElement" ParentNodeId="ns=1;i=6027">
+    <DisplayName>UIElement</DisplayName>
+    <Description>A user interface element assigned to this group.</Description>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">ns=1;i=6246</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=6027</Reference>
+      <Reference ReferenceType="HasModellingRule">i=80</Reference>
+    </References>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=6243" BrowseName="1:UIElement" ParentNodeId="ns=1;i=1005">
+    <DisplayName>UIElement</DisplayName>
+    <Description>A user interface element assigned to this group.</Description>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">ns=1;i=6246</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=1005</Reference>
+      <Reference ReferenceType="HasModellingRule">i=80</Reference>
+    </References>
+  </UAVariable>
+  <UAVariableType NodeId="ns=1;i=6246" BrowseName="1:UIElementType" IsAbstract="true">
+    <DisplayName>UIElementType</DisplayName>
+    <Description>The base type for all UI Element Types.</Description>
+    <Category>DI Information Model</Category>
+    <Documentation>https://reference.opcfoundation.org/DI/v104/docs/4.4.3</Documentation>
+    <References>
+      <Reference ReferenceType="HasSubtype" IsForward="false">i=63</Reference>
+    </References>
+  </UAVariableType>
+</UANodeSet>

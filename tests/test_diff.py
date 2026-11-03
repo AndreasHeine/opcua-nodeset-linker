@@ -7,6 +7,7 @@ import json
 import re
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 from tests.conftest import (
     MACHINERY,
@@ -42,6 +43,7 @@ from nodeset_linker.models.node import (
     UnionAlternative,
 )
 from nodeset_linker.models.node_class import ModellingRule
+from nodeset_linker.models.standard import STANDARD_DATA_TYPE_IDS
 from nodeset_linker.repository.model import SemanticModel, build_model, load_nodesets
 
 BASE = MACHINERY.read_text(encoding="utf-8")
@@ -560,7 +562,7 @@ class TestFieldMetadataAndText:
         assert not diff.breaking
         assert any("JobId" in change.describe() for change in diff.modified[0].changes)
 
-    def test_field_datatype_outside_the_model_is_named_by_its_id(self) -> None:
+    def test_standard_field_datatype_is_named_without_loaded_core(self) -> None:
         old = StructureField(name="JobId", data_type=node_id(12))
         new = StructureField(name="JobId", data_type=node_id(9))
         diff = diff_models(
@@ -568,7 +570,7 @@ class TestFieldMetadataAndText:
             build_model([make_data_type("JobInfo", 9450, definition=structure_of(new))]),
         )
         assert diff.breaking
-        assert "i=12 → i=9" in diff.breaking[0].reason
+        assert "String (i=12) → UInt64 (i=9)" in diff.breaking[0].reason
 
     def test_field_order_change_is_breaking(self) -> None:
         first = StructureField(name="First", data_type=node_id(12))
@@ -582,6 +584,84 @@ class TestFieldMetadataAndText:
 
 
 class TestNodeAttributes:
+    @pytest.mark.parametrize(("name", "number"), STANDARD_DATA_TYPE_IDS.items())
+    def test_standard_datatype_labels_without_a_core_provider(self, name, number) -> None:
+        old = make_variable("Value", 6002, data_type=node_id(999999))
+        diff = diff_models(
+            build_model([old]),
+            build_model([replace(old, data_type=node_id(number))]),
+        )
+        assert diff.modified[0].changes[0].new == f"{name} (i={number})"
+
+    @pytest.mark.parametrize("with_core", [False, True])
+    def test_datatype_change_has_names_and_ids_in_every_report(self, with_core) -> None:
+        old = make_variable("ProductInstanceUri", 6002, data_type=node_id(12))
+        new = replace(old, data_type=node_id(11))
+        core = [make_data_type("String", 12), make_data_type("Double", 11)] if with_core else []
+        diff = diff_models(build_model([*core, old]), build_model([*core, new]))
+        change = diff.modified[0].changes[0]
+        assert (change.kind, change.old, change.new) == (
+            "data_type", "String (i=12)", "Double (i=11)",
+        )
+        expected = "String (i=12) → Double (i=11)"
+        assert expected in console_text(diff)
+        assert expected in markdown_text(diff)
+        assert expected in html_text(diff)
+        payload = json.loads(json_text(diff))
+        assert payload["modified_nodes"][0]["changes"][0]["old"] == "String (i=12)"
+        assert expected in payload["breaking_changes"][0]["reason"]
+
+    def test_custom_datatype_names_keep_uri_identity(self) -> None:
+        first = in_namespace(make_data_type("State", 11), "urn:vendor:first")
+        second = in_namespace(make_data_type("State", 11), "urn:vendor:second")
+        variable = make_variable("StateValue", 6002, data_type=first.node_id)
+        diff = diff_models(
+            build_model([first, second, variable]),
+            build_model([first, second, replace(variable, data_type=second.node_id)]),
+        )
+        change = diff.modified[0].changes[0]
+        assert change.old == "State (nsu=urn:vendor:first;i=11)"
+        assert change.new == "State (nsu=urn:vendor:second;i=11)"
+
+    @pytest.mark.parametrize("identifier", ["i=999999", "nsu=urn:custom;i=12", "s=String"])
+    def test_unknown_datatype_does_not_get_a_guessed_name(self, identifier) -> None:
+        target = ExpandedNodeId.parse(identifier)
+        variable = make_variable("Value", 6002, data_type=node_id(11))
+        diff = diff_models(
+            build_model([variable]),
+            build_model([replace(variable, data_type=target)]),
+        )
+        change = diff.modified[0].changes[0]
+        assert change.new == (
+            target.identifier.as_xml() if target.namespace == node_id(11).namespace
+            else target.as_xml()
+        )
+
+    def test_datatype_attribute_is_not_reported_twice(self, tmp_path) -> None:
+        old_xml = BASE.replace('DataType="String"', 'DataType="i=12"')
+        new_xml = BASE.replace('DataType="String"', 'DataType="i=11"')
+        _, _, diff = diff_texts(tmp_path, old_xml, new_xml)
+        assert diff.breaking
+        assert all(
+            change.kind != "attributes"
+            for entry in diff.modified for change in entry.changes
+        )
+
+    def test_equivalent_datatype_alias_spelling_is_not_a_change(self, tmp_path) -> None:
+        _, _, diff = diff_texts(
+            tmp_path, BASE, BASE.replace('DataType="String"', 'DataType="i=12"')
+        )
+        assert diff.is_empty
+
+    def test_loaded_datatype_name_takes_precedence_over_standard_fallback(self) -> None:
+        datatype = make_data_type("LoadedStringName", 12)
+        variable = make_variable("Value", 6002, data_type=node_id(11))
+        diff = diff_models(
+            build_model([datatype, variable]),
+            build_model([datatype, replace(variable, data_type=datatype.node_id)]),
+        )
+        assert diff.modified[0].changes[0].new == "LoadedStringName (i=12)"
+
     def test_browse_name_change_is_breaking(self) -> None:
         old = make_object_type("MachineType", 7100)
         new = replace(old, browse_name=QualifiedName(name="Machine"))
