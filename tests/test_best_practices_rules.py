@@ -2,8 +2,10 @@
 
 These findings depend on where a node sits in a type tree, not on the node itself: a new type
 above an existing one, an Interface that adds obligations, or a declaration that changed its
-type definition.  Namespace release metadata (§11.1, §11.2, §11.3) belongs to the same class
-of rules: it says what a release *is*, without changing the information model.
+type definition.  Namespace release metadata (§11.1, §11.2, §11.3) belongs to the same class of
+rules: it says what a release *is*, without changing the information model.  The release verdict
+(§3.3, §11.3) then answers the one question a release manager has: may this NamespaceUri be
+reused, or must the release publish a versioned one?
 """
 
 from __future__ import annotations
@@ -11,6 +13,7 @@ from __future__ import annotations
 import dataclasses
 import json
 
+import pytest
 from tests.conftest import (
     UA_NS,
     Machinery_NS,
@@ -24,10 +27,16 @@ from tests.conftest import (
 )
 
 from nodeset_linker.diff import (
+    Baseline,
     Severity,
     console_text,
     diff_models,
+    html_text,
     json_text,
+    load_baseline,
+    markdown_text,
+    release_text,
+    release_verdict,
 )
 from nodeset_linker.models.identifiers import ExpandedNodeId, QualifiedName
 from nodeset_linker.models.namespace import ModelInfo, Namespace
@@ -554,3 +563,144 @@ class TestNamespaceMetadata:
         text = console_text(diff_metadata({"version": "1.0.1"}, {"version": "1.0.2"}))
         assert "Version: 1.0.1 → 1.0.2" in text
         assert "BP-Namespace-Version" not in text
+
+
+def in_namespace(node: object, uri: str) -> object:
+    """A copy of a model node under a given NamespaceUri."""
+    return replace(node, node_id=node_id(int(node.node_id.identifier.value), uri))  # type: ignore[union-attr]
+
+
+def enum_release(values: tuple[str, ...], uri: str = Machinery_NS) -> SemanticModel:
+    """A one-namespace release whose only content is an Enum with these values."""
+    node = in_namespace(make_data_type("JobStateEnum", 2002, definition=enum_definition(values)), uri)
+    return model_of([node], uri=uri)
+
+
+def published(tmp_path, uris: list[str], version: str = "1.0.1") -> Baseline:
+    """A bundle manifest stating which NamespaceUris a previous release published."""
+    (tmp_path / "manifest.json").write_text(
+        json.dumps({"namespaces": [{"uri": uri, "version": version} for uri in uris]}),
+        encoding="utf-8",
+    )
+    return load_baseline(tmp_path)
+
+
+class TestReleaseVerdict:
+    """§3.3, §11.3: may this release reuse its NamespaceUri, or must it publish a new one?"""
+
+    def test_breaking_extension_of_a_published_namespace_publishes_v2(self, tmp_path) -> None:
+        diff = diff_models(enum_release(("Low", "High")), enum_release(("Low", "High", "VeryHigh")))
+        release = release_verdict(diff, published(tmp_path, [Machinery_NS]))
+        assert release.reusable is False
+        assert "Not reusable" in release.recommendation
+        assert "Machinery/V2/" in release.recommendation
+        blocked = release.blocked[0]
+        assert blocked.uri == Machinery_NS
+        assert blocked.published is True
+        assert {found.rule_id for found in blocked.verdicts} == {"BP-BreakingInReleasedNamespace"}
+        assert {found.rule_id for found in blocked.breaking} == {"BP-EnumValue-Added"}
+        assert "BP-BreakingInReleasedNamespace" in release_text(release)
+
+    def test_compatible_extension_of_a_published_namespace_is_reusable(self, tmp_path) -> None:
+        diff = diff_metadata({"version": "1.0.1"}, {"version": "1.0.2"})
+        release = release_verdict(diff, published(tmp_path, [Machinery_NS]))
+        # A metadata-only move touches no identifier (§11.1), so the URI stays.
+        assert release.reusable is True
+        assert release.blocked == ()
+        entry = release.namespaces[0]
+        assert entry.metadata[0].attribute == "version"
+        assert "compatible extension" in entry.recommendation
+
+    def test_without_a_baseline_the_verdict_invents_no_judgement(self) -> None:
+        diff = diff_models(enum_release(("Low", "High")), enum_release(("Low", "High", "VeryHigh")))
+        release = release_verdict(diff)
+        assert release.baseline is None
+        assert release.namespaces[0].published is None
+        # The breaking findings are reported; whether the URI was published is not claimed.
+        assert "baseline unknown" in release.namespaces[0].recommendation
+        assert json.loads(json_text(diff, release=release.as_json()))["release"]["baseline"] == (
+            "baseline unknown"
+        )
+        assert "No baseline given" in release_text(release)
+
+    def test_a_versioned_namespace_may_carry_breaking_changes(self, tmp_path) -> None:
+        bumped_uri = "http://opcfoundation.org/UA/Machinery/V2/"
+        diff = diff_models(
+            enum_release(("Low", "High"), bumped_uri), enum_release(("Low", "High", "VeryHigh"), bumped_uri)
+        )
+        release = release_verdict(diff, published(tmp_path, [Machinery_NS]))
+        # §11.3: the breaking changes belong in the new namespace, the published one stays.
+        assert release.reusable is True
+        entry = release.namespaces[0]
+        assert entry.uri == bumped_uri
+        assert entry.bumped is True
+        assert entry.published is False
+        assert {found.rule_id for found in entry.verdicts} == {"BP-Namespace-Bump"}
+
+    def test_breaking_changes_on_a_published_versioned_namespace_move_one_major(self, tmp_path) -> None:
+        bumped_uri = "http://opcfoundation.org/UA/Machinery/V2/"
+        diff = diff_models(
+            enum_release(("Low", "High"), bumped_uri), enum_release(("Low", "High", "VeryHigh"), bumped_uri)
+        )
+        release = release_verdict(diff, published(tmp_path, [bumped_uri]))
+        assert release.reusable is False
+        assert "V3/" in release.recommendation
+
+    def test_a_moved_namespace_uri_is_not_a_new_release(self, tmp_path) -> None:
+        moved_uri = "http://opcfoundation.org/UA2/Machinery/"
+        diff = diff_models(enum_release(("Low", "High")), enum_release(("Low", "High"), moved_uri))
+        release = release_verdict(diff, published(tmp_path, [Machinery_NS]))
+        # The consumers were built on the old URI; renaming it leaves them nothing to resolve.
+        assert release.reusable is False
+        assert "not a new release" in release.namespaces[0].recommendation
+
+    def test_baseline_reads_a_bundle_manifest_or_a_registry(self, tmp_path) -> None:
+        registry = tmp_path / "registry.json"
+        registry.write_text(json.dumps([Machinery_NS]), encoding="utf-8")
+        assert load_baseline(registry).published == {Machinery_NS: None}
+        assert published(tmp_path, [Machinery_NS]).published == {Machinery_NS: "1.0.1"}
+        for bad, message in (
+            (tmp_path / "absent.json", "baseline not found"),
+            (tmp_path / "broken.json", "baseline is not valid JSON"),
+        ):
+            if bad.name == "broken.json":
+                bad.write_text("{not json", encoding="utf-8")
+            with pytest.raises(ValueError) as excinfo:
+                load_baseline(bad)
+            assert message in str(excinfo.value)
+
+
+def _release_json(diff, tmp_path):
+    release = release_verdict(diff, published(tmp_path, [Machinery_NS]))
+    return json.loads(json_text(diff, release=release.as_json()))
+
+
+class TestReleaseReport:
+    """The verdict belongs at the top of the report, not buried in per-node findings."""
+
+    def test_release_key_is_added_only_when_asked(self, tmp_path) -> None:
+        diff = diff_metadata({"version": "1.0.1"}, {"version": "1.0.2"})
+        assert "release" not in json.loads(json_text(diff))
+        payload = _release_json(diff, tmp_path)
+        assert payload["release"]["reusable"] is True
+        assert payload["release"]["namespaces"][0]["uri"] == Machinery_NS
+        # The established contract keys stay exactly as they are.
+        assert {"old", "new", "paper", "summary", "namespace_changes"} <= set(payload)
+
+    def test_console_and_markdown_lead_with_the_verdict(self, tmp_path) -> None:
+        diff = diff_models(enum_release(("Low", "High")), enum_release(("Low", "High", "VeryHigh")))
+        release = release_verdict(diff, published(tmp_path, [Machinery_NS]))
+        text = console_text(diff, release=release)
+        assert "Release verdict" in text
+        assert text.index("Release verdict") < text.index("Modified nodes")
+        assert "Release: Not reusable" in text
+        assert "## Release verdict" in markdown_text(diff, release=release)
+        assert "Release verdict" in html_text(diff, release=release)
+
+    def test_an_identical_release_still_answers_the_question(self, tmp_path) -> None:
+        diff = diff_models(enum_release(("Low", "High")), enum_release(("Low", "High")))
+        assert diff.is_empty
+        release = release_verdict(diff, published(tmp_path, [Machinery_NS]))
+        text = console_text(diff, release=release)
+        assert "Release verdict" in text
+        assert "Reusable" in text

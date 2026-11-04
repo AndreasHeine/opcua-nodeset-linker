@@ -667,6 +667,21 @@ _RULES: dict[str, RuleVerdict] = {
         "BP-Namespace-ModelPrecedence",
         "11.2",
     ),
+    "breaking_in_released_namespace": RuleVerdict(
+        Severity.BREAKING,
+        "A NamespaceUri that is already published carries breaking findings (§3.3, §11.3): "
+        "consumers built on it cannot upgrade in place. Publish the changes under a new "
+        "versioned namespace and leave the published one as it is.",
+        "BP-BreakingInReleasedNamespace",
+        "3.3",
+    ),
+    "namespace_bump": RuleVerdict(
+        Severity.INFO,
+        "The release moved to a versioned NamespaceUri (…/V<major>/, §11.3): only the major "
+        "version belongs in the URI, and identifiers of the previous namespace stay valid.",
+        "BP-Namespace-Bump",
+        "11.3",
+    ),
     "naming_convention": RuleVerdict(
         Severity.ADVISORY,
         "A name does not follow the naming rules of the paper (§2.1.2, §2.2, §2.3, §2.6): "

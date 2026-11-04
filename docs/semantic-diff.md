@@ -138,14 +138,21 @@ CI.
 
 ```
 nodeset-linker diff old.xml new.xml [--json | --markdown | --html] [--impact]
-                    [--breaking] [--fail-on-breaking] [-o FILE]
+                    [--breaking] [--advisory/--no-advisory]
+                    [--fail-on-breaking] [--fail-on-advisory]
+                    [--release-verdict] [--baseline DIR|manifest.json] [-o FILE]
 ```
 
 * exactly **two files**; each is loaded as a single-node `SemanticModel` via
   `load_nodesets([path])`;
 * impact is computed whenever `--impact`, `--breaking` or `--fail-on-breaking` is given;
-* `--fail-on-breaking` exits 1 if the breaking list is non-empty; missing files and parse
-  errors exit 1;
+* `--fail-on-breaking` exits 1 on a BREAKING finding only; `--fail-on-advisory` is a separate,
+  opt-in gate; advisory and info findings never gate by default; missing files and parse errors
+  exit 1;
+* `--release-verdict` answers "may each NamespaceUri be reused?" (§3.3, §11.3) and exits 1 when
+  a published URI carries breaking findings; `--baseline` is a directory or `manifest.json`
+  listing the published URIs — without it the verdict reports "baseline unknown" instead of
+  guessing, and gating stays `--fail-on-breaking`'s job;
 * format flags are exclusive in practice (`--json` wins over `--markdown`/`--html`);
 * `-o` writes the report; parent directories are **not** created.
 
@@ -153,6 +160,7 @@ The CI gate documented in README/usage guide:
 
 ```yaml
 - run: nodeset-linker diff old.xml new.xml --json --fail-on-breaking
+- run: nodeset-linker diff old.xml new.xml --release-verdict --baseline dist/split/
 ```
 
 ## 4. JSON contract
@@ -163,7 +171,7 @@ The CI gate documented in README/usage guide:
   "summary": {"old_nodes": …, "new_nodes": …, "added_nodes": …, "removed_nodes": …,
               "modified_nodes": …, "renumbered_nodes": …, "breaking_changes": …,
               "namespace_changes": …, "identical": false},
-  "added_nodes": [ { "label", "node_id", "namespace", "node_class", "breaking",
+  "added_nodes": [ { "label", "node_id", "namespace", "namespace_uri", "node_class", "breaking",
                      "impacted_nodes", "impact_count" } ],
   "removed_nodes": [ …same… ],
   "modified_nodes": [ { …, "changes": [ {"area","kind","subject","old","new","breaking","text",
@@ -173,15 +181,20 @@ The CI gate documented in README/usage guide:
                            "rule_id","verdicts":[ … ],
                            "metadata":[ {"attribute","old","new","severity","rule_id",
                                          "rationale","clause","note"} ] } ],
-  "breaking_changes": [ { "label","node_id","reason","affected_nodes","breaking":true } ]
+  "breaking_changes": [ { "label","node_id","reason","affected_nodes","breaking":true } ],
+  "release": { "reusable", "baseline", "recommendation",
+               "namespaces": [ {"uri","reusable","bumped","moved_from","published",
+                                "recommendation","breaking","verdicts","metadata"} ] }
 }
 ```
 
 Keys are added, never renamed or dropped: the boolean `breaking` stays for existing consumers,
 while severity comes as `severity`/`rule_id`/`rationale`/`clause` per change plus a `verdicts`
 list per entry; `paper` names the whitepaper the severities derive from, and `advisory_changes`
-mirrors `breaking_changes` for findings that never gate. There is **no schema version field**;
-`impacted_nodes` only appear after impact was applied.
+mirrors `breaking_changes` for findings that never gate. `namespace` is the document-local alias
+while `namespace_uri` is the URI the node lives in (§11.1). `release` appears **only** when the
+caller asked for a verdict (`--release-verdict` or `--baseline`). There is **no schema version
+field**; `impacted_nodes` only appear after impact was applied.
 
 ---
 
@@ -323,9 +336,11 @@ removal of optional nodes, namespace versioning, deprecation — are mapped clau
 
 ### 5.7 Release-workflow gaps
 
-28. **No baseline concept.** Nothing stores a previous release's model or fingerprint; every
-    comparison re-parses both full models. There is no "diff against the registry baseline",
-    no multi-release aggregation (v1.3 → v1.4 → v1.5), and no history.
+28. **Baseline is publication-only, not a model snapshot.** A release verdict now reads a
+    publication registry (`--baseline <dir|manifest.json>`), which the split export writes
+    itself (§11.1), and answers whether each NamespaceUri may be reused (§3.3, §11.3). It does
+    *not* store a previous model or fingerprint: every comparison still re-parses both full
+    models, and there is no multi-release aggregation (v1.3 → v1.4 → v1.5) or history yet.
 29. **Diff does not validate.** Neither side is semantically validated before comparison; a
     malformed new model can be diffed and even reported "identical" where parsing silently
     degraded (e.g. unresolvable identifiers stay unresolved and compare as unresolved).
@@ -360,8 +375,9 @@ release comparison):
   meaning at scale.
 * **Renumbered releases pass the CI gate silently** (gap 4) — the riskiest release change is
   the one the gate does not catch.
-* **Version metadata moves now reach the report** (gap 12 closed) — but the report still says
-  nothing about whether the release may reuse its identifiers (gap 28 stays open).
+* **Version metadata moves now reach the report** (gap 12 closed), and `--release-verdict` says
+  whether a NamespaceUri may be reused (gap 28 partly closed) — but only when a baseline states
+  what was published; without one the report names the fact rather than judging the release.
 * **One inconsistent declaration aborts everything** (gap 24) — the more specs loaded, the
   higher the chance the diff cannot run at all.
 * **Runtime grows quadratically-ish** (gap 26) — impact per changed node over a growing graph.
@@ -421,9 +437,10 @@ release comparison):
 
 ### 7.4 Classification and CI usability
 
-15. **Severity levels and rule ids**: `info` / `warning` / `breaking` plus stable rule
-    identifiers (`REMOVED_TYPE`, `FIELD_DATATYPE_CHANGE`, `IDENTIFIER_MOVE`, …) in JSON so CI
-    can group, gate per rule and write stable waivers.
+15. **Severity levels and rule ids** *(implemented)*: BREAKING / ADVISORY / INFO plus stable
+    rule identifiers (`BP-NodeId-Immutable`, `BP-EnumValue-Added`, …) in JSON so CI can group,
+    gate per rule and write stable waivers. The identifiers are slugs, not clause numbers, so a
+    later whitepaper revision does not rename them.
 16. **Waiver/allow-list file** (`diff-allowlist.yaml`) for *approved* breaking changes:
     `--fail-on-breaking` skips waived rules; waivers appear in the report so reviewers see
     them.
@@ -437,9 +454,11 @@ release comparison):
 
 ### 7.5 Linker-wide improvements and future features
 
-20. **Baseline & release pipeline**: `nodeset-linker diff --baseline <registry.json>` storing
-    fingerprints/manifests per release; multi-release aggregation (`v1.3…v1.5`); per-spec
-    changelog generation (`--release-notes`).
+20. **Baseline & release pipeline** *(partly implemented)*: `nodeset-linker diff --baseline
+    <dir|manifest.json>` reads the published NamespaceUris and `--release-verdict` gates a
+    release that reuses a published URI (§11.3). Still open: fingerprints per release,
+    multi-release aggregation (`v1.3…v1.5`) and per-spec changelog generation
+    (`--release-notes`).
 21. **`diff` of pipeline results**: `nodeset-linker diff --config old.yaml --config new.yaml`
     comparing what two linker configurations *would produce* (root/external/mode changes shown
     as retained-set differences). High usability value: today diff can only compare written
@@ -477,10 +496,11 @@ release comparison):
 | P0 | Bundle-aware diff + graceful merge degradation (§7.3.10) | Blocks real multi-spec release workflows as soon as specs grow. |
 | P1 | Version/RequiredModel metadata diff (§7.2.7) | Release notes and compatibility decisions depend on it. |
 | P1 | Rule ids + severity + waivers (§7.4.15–16) | Makes CI gating precise instead of all-or-nothing. |
+| P1 | Release verdict over a published namespace (§7.5.20) *(implemented)* | A release that reuses a published NamespaceUri silently breaks consumers (§11.3). |
 | P1 | Impact by NodeId + context loading (§7.3.12) | Impact numbers become trustworthy across specs. |
 | P2 | Scoping filters, grouped reports, performance (§7.3.11/13/14) | Usability at registry scale. |
 | P2 | ServerUri, Extensions/RolePermissions, value-dependency diffs (§7.1.4–5) | Correctness for vendor/server-qualified models. |
-| P3 | CU/Profile policies, baseline registry, PR action (§7.5) | Longer-term roadmap on the existing seams. |
+| P3 | CU/Profile policies, release fingerprints and aggregation, PR action (§7.5) | Longer-term roadmap on the existing seams. |
 
 ## 9. Related documents
 

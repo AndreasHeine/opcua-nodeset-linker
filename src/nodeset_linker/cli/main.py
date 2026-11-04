@@ -7,6 +7,7 @@ nodeset-linker stats output.xml
 nodeset-linker validate output.xml [--schema tests/data/schema/UANodeSet.xsd]
 nodeset-linker diff old.xml new.xml [--json | --markdown | --html] [--impact] [--breaking]
     [--advisory/--no-advisory] [--fail-on-breaking] [--fail-on-advisory]
+    [--release-verdict] [--baseline <dir-or-manifest.json>]
 """
 
 from __future__ import annotations
@@ -29,7 +30,9 @@ from nodeset_linker.diff import (
     diff_models,
     html_text,
     json_text,
+    load_baseline,
     markdown_text,
+    release_verdict,
 )
 from nodeset_linker.explain.explainer import Explainer
 from nodeset_linker.pipeline import LinkerPipeline
@@ -205,6 +208,19 @@ def validate(output: Path, schema: Path | None) -> None:
     is_flag=True,
     help="Exit with code 1 when the diff contains an advisory finding.",
 )
+@click.option(
+    "--release-verdict",
+    "show_release",
+    is_flag=True,
+    help="Answer the release question: may each NamespaceUri be reused? (§3.3, §11.3)",
+)
+@click.option(
+    "--baseline",
+    type=Path,
+    default=None,
+    help="Directory or manifest.json listing the NamespaceUris already published; without it "
+    "the verdict says 'baseline unknown' instead of guessing.",
+)
 @click.option("--output", "-o", type=Path, default=None, help="Write the report to a file.")
 def diff(
     old: Path,
@@ -217,6 +233,8 @@ def diff(
     include_advisory: bool,
     fail_on_breaking: bool,
     fail_on_advisory: bool,
+    show_release: bool,
+    baseline: Path | None,
     output: Path | None,
 ) -> None:
     """Compare two semantic OPC UA models.
@@ -226,7 +244,13 @@ def diff(
     identified by ``(namespaceUri, identifier)``.  It reports added and removed nodes,
     reference changes, type-definition changes, BrowseName and DisplayName changes,
     modelling-rule changes, DataType definition changes (Structure fields, Enum values,
-    Union alternatives, OptionSets) and namespace totals.
+    Union alternatives, OptionSets), namespace totals and namespace release metadata.
+
+    ``--release-verdict`` answers the question the best-practices paper actually asks (§3.3,
+    §11.3): may this NamespaceUri be reused, or must the release publish a versioned one?  It
+    needs to know what was published, so ``--baseline`` points at a bundle manifest or a
+    registry of published NamespaceUris; without one the verdict says so rather than guessing,
+    and a not-reusable verdict exits with code 1.
     """
     for path in (old, new):
         if not path.exists():
@@ -241,19 +265,39 @@ def diff(
     if impact or breaking_only or fail_on_breaking:
         apply_impact(result, old_model, new_model)
 
+    release = None
+    if show_release or baseline is not None:
+        try:
+            registry = None if baseline is None else load_baseline(baseline)
+        except ValueError as exc:
+            _fail(str(exc))
+        release = release_verdict(result, registry)
+
     if as_json:
-        text = json_text(result)
+        text = json_text(result, release=None if release is None else release.as_json())
     elif markdown:
         text = markdown_text(
-            result, impact=impact, breaking_only=breaking_only, include_advisory=include_advisory
+            result,
+            impact=impact,
+            breaking_only=breaking_only,
+            include_advisory=include_advisory,
+            release=release,
         )
     elif html:
         text = html_text(
-            result, impact=impact, breaking_only=breaking_only, include_advisory=include_advisory
+            result,
+            impact=impact,
+            breaking_only=breaking_only,
+            include_advisory=include_advisory,
+            release=release,
         )
     else:
         text = console_text(
-            result, impact=impact, breaking_only=breaking_only, include_advisory=include_advisory
+            result,
+            impact=impact,
+            breaking_only=breaking_only,
+            include_advisory=include_advisory,
+            release=release,
         )
 
     if output is not None:
@@ -270,6 +314,10 @@ def diff(
         entry for entry in result.namespaces if entry.severity is Severity.ADVISORY
     ]
     if fail_on_advisory and (result.advisory or advisory_namespaces):
+        raise SystemExit(1)
+    if release is not None and not release.reusable:
+        # The release question itself is the gate (§11.3): a published URI may not be extended
+        # with breaking findings, so the release has to publish a versioned namespace.
         raise SystemExit(1)
 
 

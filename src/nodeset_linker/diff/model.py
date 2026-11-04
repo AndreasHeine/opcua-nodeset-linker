@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 from collections import Counter
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -119,6 +120,8 @@ class NodeEntry:
     node_id: ExpandedNodeId
     node_class: str
     namespace: str
+    #: The NamespaceUri the node lives in; ``namespace`` is the document-local alias (§11.1).
+    namespace_uri: str = ""
     verdicts: tuple[RuleVerdict, ...] = ()
     impact: tuple[str, ...] = ()
 
@@ -147,6 +150,7 @@ class NodeEntry:
             "label": self.label,
             "node_id": self.node_id.as_xml(),
             "namespace": self.namespace,
+            "namespace_uri": self.namespace_uri,
             "node_class": self.node_class,
             "breaking": self.breaking,
             "severity": self.severity.value,
@@ -164,6 +168,8 @@ class NodeModification:
     node_id: ExpandedNodeId
     node_class: str
     namespace: str
+    #: The NamespaceUri the node lives in; ``namespace`` is the document-local alias (§11.1).
+    namespace_uri: str = ""
     changes: list[Change] = field(default_factory=list)
     verdicts: tuple[RuleVerdict, ...] = ()
     impact: tuple[str, ...] = ()
@@ -206,6 +212,7 @@ class NodeModification:
             "label": self.label,
             "node_id": self.node_id.as_xml(),
             "namespace": self.namespace,
+            "namespace_uri": self.namespace_uri,
             "node_class": self.node_class,
             "breaking": self.breaking,
             "severity": self.severity.value,
@@ -229,6 +236,8 @@ class RenumberedNode:
     new_node_id: ExpandedNodeId
     node_class: str
     namespace: str
+    #: The NamespaceUri the node lives in; ``namespace`` is the document-local alias (§11.1).
+    namespace_uri: str = ""
     #: ``exact`` when namespace, BrowseName and node class paired one removed node with
     #: one added node; ``heuristic`` when a group had more than one candidate and the
     #: engine guessed, which a reader may want to check by hand (§3.2.17).
@@ -275,6 +284,7 @@ class RenumberedNode:
         return {
             "label": self.label,
             "namespace": self.namespace,
+            "namespace_uri": self.namespace_uri,
             "node_class": self.node_class,
             "old_node_id": self.old_node_id.as_xml(),
             "new_node_id": self.new_node_id.as_xml(),
@@ -525,6 +535,15 @@ class SemanticDiff:
         return json.dumps(payload, indent=2)
 
 
-def json_text(diff: SemanticDiff) -> str:
-    """Machine-readable report for CI/CD."""
-    return diff.as_json()
+def json_text(
+    diff: SemanticDiff, *, release: Mapping[str, object] | None = None
+) -> str:
+    """Machine-readable report for CI/CD.
+
+    ``release`` adds the release verdict as an extra key; every existing key keeps its shape.
+    """
+    if release is None:
+        return diff.as_json()
+    payload = json.loads(diff.as_json())
+    payload["release"] = release
+    return json.dumps(payload, indent=2)

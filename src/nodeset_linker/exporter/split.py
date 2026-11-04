@@ -54,6 +54,27 @@ def split_output_files(
     return files
 
 
+def _manifest_entry(model: SemanticModel, uri: str, filename: str) -> dict[str, str]:
+    """What this bundle publishes under one namespace URI.
+
+    The release metadata belongs in the bundle (§11.1): the next release reads it back as its
+    baseline and can tell whether this URI was already published (§11.3).
+    """
+    entry = {"uri": uri, "output_file": filename}
+    namespace = model.namespaces.get(uri)
+    if namespace is not None:
+        for key, value in (
+            ("alias", namespace.alias),
+            ("version", namespace.version),
+            ("publication_date", namespace.publication_date),
+            ("model_version", namespace.model_version),
+            ("xml_schema_uri", namespace.xml_schema_uri),
+        ):
+            if value:
+                entry[key] = value
+    return entry
+
+
 def export_split(
     model: SemanticModel,
     keep: set[ExpandedNodeId],
@@ -97,7 +118,7 @@ def export_split(
             manifest = {
                 "export_mode": "split",
                 "namespaces": [
-                    {"uri": uri, "output_file": filename} for uri, filename in files.items()
+                    _manifest_entry(model, uri, filename) for uri, filename in files.items()
                 ],
                 "dependencies": model.namespace_dependencies(shipped),
                 "external_models": sorted(external),

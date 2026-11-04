@@ -343,6 +343,7 @@ def _pair_renumbering(
                     new_node_id=new_node.node_id,
                     node_class=key[2].value,
                     namespace=new_index.alias(key[0]),
+                    namespace_uri=key[0],
                     confidence=confidence,
                     changes=_node_changes(old_node, new_node, old_index, new_index),
                     verdicts=(verdict("identifier_move"),),
@@ -396,6 +397,7 @@ def _pair_renames(
                 new_node_id=new_node.node_id,
                 node_class=new_node.node_class.value,
                 namespace=new_index.alias(new_node.node_id.namespace),
+                namespace_uri=new_node.node_id.namespace,
                 confidence="heuristic",
                 changes=[
                     Change(
@@ -440,6 +442,7 @@ def _modified_nodes(
                 node_id=node.node_id,
                 node_class=node.node_class.value,
                 namespace=new_index.alias(node.node_id.namespace),
+                namespace_uri=node.node_id.namespace,
                 changes=changes,
             )
         )
@@ -455,6 +458,7 @@ def _entry(
         node_id=node.node_id,
         node_class=node.node_class.value,
         namespace=index.alias(node.node_id.namespace),
+        namespace_uri=node.node_id.namespace,
         verdicts=verdicts,
     )
 

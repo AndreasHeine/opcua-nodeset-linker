@@ -23,17 +23,28 @@ from nodeset_linker.diff.model import (
     SemanticDiff,
     json_text,
 )
+from nodeset_linker.diff.release import (
+    Baseline,
+    NamespaceVerdict,
+    ReleaseVerdict,
+    load_baseline,
+    release_text,
+    release_verdict,
+)
 from nodeset_linker.diff.render import console_text, html_text, markdown_text
 from nodeset_linker.diff.rules import PAPER, RuleContext, RuleVerdict, Severity, verdict
 
 __all__ = [
     "PAPER",
+    "Baseline",
     "BreakingChange",
     "Change",
     "MetadataDelta",
     "NamespaceChange",
+    "NamespaceVerdict",
     "NodeEntry",
     "NodeModification",
+    "ReleaseVerdict",
     "RenumberedNode",
     "RuleContext",
     "RuleVerdict",
@@ -45,8 +56,11 @@ __all__ = [
     "diff_models",
     "html_text",
     "json_text",
+    "load_baseline",
     "markdown_text",
     "node_label",
+    "release_text",
+    "release_verdict",
     "total_impact",
     "verdict",
 ]

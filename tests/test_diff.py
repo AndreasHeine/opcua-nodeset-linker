@@ -468,6 +468,15 @@ class TestOutputFormats:
         assert "LegacyMachineType" in text
 
 
+def published_manifest(tmp_path: Path, uris: list[str]) -> Path:
+    """A bundle manifest stating which NamespaceUris an earlier release already published (§11.1)."""
+    (tmp_path / "manifest.json").write_text(
+        json.dumps({"namespaces": [{"uri": uri, "version": "1.0.1"} for uri in uris]}),
+        encoding="utf-8",
+    )
+    return tmp_path
+
+
 class TestCli:
     def test_diff_console(self, tmp_path) -> None:
         old = write(tmp_path, "old.xml", BASE.replace("</UANodeSet>", REMOVED_TYPE + "</UANodeSet>"))
@@ -571,6 +580,87 @@ class TestCli:
         assert result.exit_code == 1, result.output
         assert "Renumbered nodes" in result.output
         assert "BP-NodeId-Immutable" in result.output
+
+    def test_release_verdict_blocks_a_breaking_extension_of_a_published_namespace(self, tmp_path) -> None:
+        old = write(tmp_path, "old.xml", BASE)
+        new = write(
+            tmp_path,
+            "new.xml",
+            BASE.replace('<Field Name="Done" Value="2" />', '<Field Name="Done" Value="2" />\n      <Field Name="Paused" Value="3" />'),
+        )
+        # §11.3: the published URI carries breaking findings, so the release must move to V2/.
+        published_manifest(tmp_path, [Machinery_NS])
+        result = CliRunner().invoke(
+            main,
+            ["diff", str(old), str(new), "--release-verdict", "--baseline", str(tmp_path)],
+        )
+        assert result.exit_code == 1, result.output
+        assert "Release verdict" in result.output
+        assert "Not reusable" in result.output
+        assert "Machinery/V2/" in result.output
+
+    def test_release_verdict_passes_a_compatible_extension(self, tmp_path) -> None:
+        old = write(tmp_path, "old.xml", BASE)
+        new = write(
+            tmp_path,
+            "new.xml",
+            BASE.replace("<DisplayName>JobDataType</DisplayName>", "<DisplayName>Job Data Type</DisplayName>"),
+        )
+        published_manifest(tmp_path, [Machinery_NS])
+        result = CliRunner().invoke(
+            main,
+            ["diff", str(old), str(new), "--release-verdict", "--baseline", str(tmp_path)],
+        )
+        assert result.exit_code == 0, result.output
+        assert "Release: Reusable" in result.output
+
+        result = CliRunner().invoke(
+            main,
+            ["diff", str(old), str(new), "--json", "--release-verdict", "--baseline", str(tmp_path)],
+        )
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.output)
+        assert payload["release"]["reusable"] is True
+        assert payload["release"]["baseline"] == str(tmp_path / "manifest.json")
+
+    def test_release_verdict_without_a_baseline_invents_no_judgement(self, tmp_path) -> None:
+        old = write(tmp_path, "old.xml", BASE)
+        new = write(
+            tmp_path,
+            "new.xml",
+            BASE.replace('<Field Name="Done" Value="2" />', '<Field Name="Done" Value="2" />\n      <Field Name="Paused" Value="3" />'),
+        )
+        # Nothing states whether the URI was published: the report says so, and the flag alone
+        # does not gate — --fail-on-breaking is the gate for an unconfirmed release.
+        result = CliRunner().invoke(main, ["diff", str(old), str(new), "--release-verdict"])
+        assert result.exit_code == 0, result.output
+        assert "baseline unknown" in result.output
+        gated = CliRunner().invoke(
+            main, ["diff", str(old), str(new), "--release-verdict", "--fail-on-breaking"]
+        )
+        assert gated.exit_code == 1, gated.output
+
+    def test_release_verdict_reads_a_bundle_manifest(self, tmp_path) -> None:
+        old = write(tmp_path, "old.xml", BASE)
+        new = write(
+            tmp_path,
+            "new.xml",
+            BASE.replace('<Field Name="JobId" DataType="String" />', '<Field Name="JobId" DataType="Int32" />'),
+        )
+        published_manifest(tmp_path, [Machinery_NS])
+        result = CliRunner().invoke(
+            main, ["diff", str(old), str(new), "--release-verdict", "--baseline", str(tmp_path)]
+        )
+        assert result.exit_code == 1, result.output
+        assert "BP-BreakingInReleasedNamespace" in result.output
+
+    def test_missing_baseline_reports_error(self, tmp_path) -> None:
+        old = write(tmp_path, "old.xml", BASE)
+        result = CliRunner().invoke(
+            main, ["diff", str(old), str(old), "--release-verdict", "--baseline", tmp_path / "nope.json"]
+        )
+        assert result.exit_code == 1
+        assert "baseline not found" in result.output
 
     def test_impact_and_output_file(self, tmp_path) -> None:
         old = write(tmp_path, "old.xml", BASE)

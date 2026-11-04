@@ -20,6 +20,7 @@ from nodeset_linker.diff.model import (
     RenumberedNode,
     SemanticDiff,
 )
+from nodeset_linker.diff.release import ReleaseVerdict, release_text
 from nodeset_linker.diff.rules import RuleVerdict, Severity
 
 #: A report entry, so the severity filter keeps its concrete type.
@@ -51,10 +52,15 @@ def console_text(
     impact: bool = False,
     breaking_only: bool = False,
     include_advisory: bool = True,
+    release: ReleaseVerdict | None = None,
 ) -> str:
     """Plain-text report for a terminal."""
     sections = _sections(
-        diff, impact=impact, breaking_only=breaking_only, include_advisory=include_advisory
+        diff,
+        impact=impact,
+        breaking_only=breaking_only,
+        include_advisory=include_advisory,
+        release=release,
     )
     if not sections:
         return "No semantic differences found."
@@ -75,10 +81,15 @@ def markdown_text(
     impact: bool = False,
     breaking_only: bool = False,
     include_advisory: bool = True,
+    release: ReleaseVerdict | None = None,
 ) -> str:
     """Markdown report, usable as a release note or PR comment."""
     sections = _sections(
-        diff, impact=impact, breaking_only=breaking_only, include_advisory=include_advisory
+        diff,
+        impact=impact,
+        breaking_only=breaking_only,
+        include_advisory=include_advisory,
+        release=release,
     )
     if not sections:
         return "No semantic differences found."
@@ -104,10 +115,15 @@ def html_text(
     impact: bool = False,
     breaking_only: bool = False,
     include_advisory: bool = True,
+    release: ReleaseVerdict | None = None,
 ) -> str:
     """Self-contained HTML report."""
     sections = _sections(
-        diff, impact=impact, breaking_only=breaking_only, include_advisory=include_advisory
+        diff,
+        impact=impact,
+        breaking_only=breaking_only,
+        include_advisory=include_advisory,
+        release=release,
     )
     title = "Semantic diff"
     if diff.old_source:
@@ -151,16 +167,24 @@ def html_text(
 
 
 def _sections(
-    diff: SemanticDiff, *, impact: bool, breaking_only: bool, include_advisory: bool
+    diff: SemanticDiff,
+    *,
+    impact: bool,
+    breaking_only: bool,
+    include_advisory: bool,
+    release: ReleaseVerdict | None = None,
 ) -> list[Section]:
     """Build the report structure shared by every format.
 
     ``breaking_only`` keeps the entries whose own severity is breaking — an identifier move
     stays visible even though it is reported apart from the other node sections.
     ``include_advisory`` is off when a caller asked for ``--no-advisory``.
+    ``release`` puts the paper's release question at the top of the report (§3.3, §11.3).
     """
     if diff.is_empty and not diff.namespaces:
-        return []
+        if release is None:
+            return []
+        return [Section(title="Release verdict", plain=_release_lines(release))]
 
     def kept(entries: list[EntryT]) -> list[EntryT]:
         return [
@@ -172,9 +196,13 @@ def _sections(
     sections = [
         Section(
             title="Summary",
-            plain=_summary_lines(diff, impact=impact, include_advisory=include_advisory),
+            plain=_summary_lines(
+                diff, impact=impact, include_advisory=include_advisory, release=release
+            ),
         )
     ]
+    if release is not None:
+        sections.append(Section(title="Release verdict", plain=_release_lines(release)))
 
     if not breaking_only and diff.added:
         sections.append(
@@ -239,7 +267,13 @@ def _sections(
     return sections
 
 
-def _summary_lines(diff: SemanticDiff, *, impact: bool, include_advisory: bool) -> tuple[str, ...]:
+def _summary_lines(
+    diff: SemanticDiff,
+    *,
+    impact: bool,
+    include_advisory: bool,
+    release: ReleaseVerdict | None = None,
+) -> tuple[str, ...]:
     lines = [
         _count_line("Nodes", diff.old_nodes, diff.new_nodes),
         f"Added: {len(diff.added)}   Removed: {len(diff.removed)}   Modified: {len(diff.modified)}",
@@ -252,9 +286,16 @@ def _summary_lines(diff: SemanticDiff, *, impact: bool, include_advisory: bool) 
     ]
     if (diff.advisory or advisory_namespaces) and include_advisory:
         lines.append(f"Advisory: {len(diff.advisory) + len(advisory_namespaces)}")
+    if release is not None:
+        lines.append(f"Release: {release.recommendation}")
     if impact:
         lines.append(_node_count(total_impact(diff)))
     return tuple(lines)
+
+
+def _release_lines(release: ReleaseVerdict) -> tuple[str, ...]:
+    """The release answer and the namespaces behind it, as report lines."""
+    return tuple(release_text(release).splitlines())
 
 
 def _strong_for(section_title: str) -> str:
