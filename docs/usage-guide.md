@@ -298,11 +298,64 @@ is opt-in and repeatable. Subtype inheritance is followed for three generations 
 a base type would otherwise list its entire subtype forest. `--breaking` prints only the changes a
 consumer could fail on. `--markdown` and `--html` render
 the same report for a pull request or a release note, and `-o <file>` writes it.
-`--fail-on-breaking` exits 1 when any breaking change is present, so a pipeline can gate on it:
+
+Every finding carries a severity and a rule id: **BREAKING** means a consumer could fail,
+**ADVISORY** is worth reviewing, **INFO** is a fact with nothing to fix.
+`--fail-on-breaking` exits 1 when any BREAKING finding is present, so a pipeline can gate on it;
+ADVISORY and INFO never gate unless `--fail-on-advisory` is passed explicitly:
 
 ```yaml
 - run: nodeset-linker diff old.xml new.xml --json --fail-on-breaking
 ```
+
+```
+Summary
+Nodes: 18 → 18
+Added: 1   Removed: 1   Modified: 0
+Breaking changes: 1
+Advisory: 2
+Waived: 1
+```
+
+A waiver accepts a finding without deleting it. The report still lists it with its severity, rule
+id and a `[waived]` marker plus a *Waivers* block; only the gate reads the marker:
+
+```bash
+nodeset-linker diff old.xml new.xml --waive BP-Namespace-VersionDrift
+nodeset-linker diff old.xml new.xml --waiver-file waivers.json --fail-on-advisory
+```
+
+`waivers.json` is a JSON array, or `{"waivers": [...]}`, of `{rule, namespace?, node?, reason}`:
+
+```json
+[
+  {"rule": "BP-Namespace-VersionDrift", "namespace": "Machinery",
+   "reason": "the drift is corrected in the next release"}
+]
+```
+
+`namespace` matches the URI or the alias, `node` the BrowseName or the identifier, and the reason
+becomes `waived_by` in JSON. INFO and ADVISORY findings can be waived; a BREAKING finding cannot,
+so a waiver naming one prints `waiver ignored` and the gate still exits 1. `--accept-breaking`
+acknowledges breaking findings instead: the gate passes, the report header states the
+acknowledgement, and each breaking finding carries `"waived": true` with
+`"waived_by": "--accept-breaking"`.
+
+The release verdict answers the question a gate cannot: may consumers keep importing the same
+`NamespaceUri`? Record what is published in a manifest and ask against it:
+
+```json
+{"namespaces": [{"uri": "http://opcfoundation.org/UA/Machinery/", "version": "1.0.1"}]}
+```
+
+```bash
+nodeset-linker diff old.xml new.xml --release-verdict --baseline manifest.json
+```
+
+A namespace that only grew compatibly is reported as **reusable**; one carrying a breaking change
+against its published version is **not reusable — publish `V2/`** (OPC 11030 §11.3), and the
+command exits 1. Acknowledging a break with `--accept-breaking` does not change that answer: the
+remedy is a new namespace, not a waiver.
 
 ## Optional: declare an external dependency
 

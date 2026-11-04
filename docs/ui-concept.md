@@ -10,8 +10,8 @@ step is possible, and nothing dead-ends (a failed import shows a diagnosis, not 
 Status: **concept / design proposal**. Nothing here is implemented in the product. The operable
 reference is [`ui-mockup-browser.html`](ui-mockup-browser.html) — a German wizard with real browser
 file import, live closure, validation, diff and Blob downloads. This document describes that shape
-as the primary design; the static screen mockup [`ui-mockup.html`](ui-mockup.html)
-(phone / tablet / desktop widths, sample data from demos 1–4) remains as the visual design probe.
+as the primary design; the committed screens `UI-Mockup1.png` … `UI-Mockup7.png` (one per wizard
+step, §4.1) remain as the visual design probe.
 
 The mockup parses XML in JavaScript on purpose. That is allowed here as a **preview tier** — see §2
 for the engine boundary that keeps the Python engine authoritative for the exported artifact and for
@@ -160,12 +160,22 @@ says *entfernt (nicht von einem Root erreichbar)*. Each hop is tappable → expl
 ### 3.7 Step 7 — Diff (the release-review flow)
 Drop zone for the new version (single file or bundle) plus *Demo-Diff laden*. Identity is
 `(namespaceUri, identifier)`, so XML order and index renumbering never produce noise.
-* **Headline banner**: `N breaking changes` (red) / `kein semantischer Unterschied` (green).
-* **Breaking list**: rule chip + node + old→new + affected count; **Waive** with a required reason.
+* **Headline banner**: `N brechende Änderungen` (red) / `kein semantischer Unterschied` (green),
+  plus `Hinweis: N` and `Information: N` counts beside it.
+* **Three buckets** — **Brechend** (a consumer could fail; blocks the release), **Hinweis** (should
+  be reviewed), **Information** (a fact, nothing to fix). Each finding shows its rule chip
+  (`BP-NodeId-Immutable` …), the node, old→new and the affected count.
+* **Waive** is offered on Hinweis and Information only, with a required reason that becomes
+  `waived_by`. A brechende finding is never waivable: the reviewer confirms the release instead
+  (`Breaking changes bestätigen`, the UI of `--accept-breaking`), and the confirmation stays visible
+  in the report and the JSON.
 * **Groups** by namespace, collapsible; added/removed shown as counts with a severity label.
 * **Renumbered** as `old id → new id` with a warning badge (identifier moves are breaking —
   `docs/semantic-diff.md` §7.1) — roadmap for both tiers.
-* **Metadata block**: version / publication date / `RequiredModel` deltas once the metadata diff exists.
+* **Metadata block**: version / publication date / `RequiredModel` deltas, marked *Hinweis* or
+  *Information* as the engine reports them.
+* **Release verdict**: `weiterverwendbar` / `nicht weiterverwendbar — V2/ veröffentlichen`
+  against the stored baseline (§11.3); a confirmation never turns a verdict into *weiterverwendbar*.
 * **Release note**: Markdown / HTML from the authority tier, JSON preview from the preview tier.
 
 ### 3.8 Step 8 — Export
@@ -196,6 +206,9 @@ Touch rules:
 * content resizes to 200% zoom without clipping.
 
 ### 4.1 Wireframes
+
+The rendered screens of the mockup are committed as `docs/UI-Mockup1.png` … `docs/UI-Mockup7.png`,
+one per wizard step; the ASCII sketches below are the layout contract they must keep.
 
 Phone (~360 px), step 2 Import:
 
@@ -351,7 +364,9 @@ Two things must survive without the app:
 
 * Preview rules are a subset of the Python engine: no renumbering pairing, no version/`RequiredModel`
   metadata diff, no `<Extensions>`/RolePermissions comparison, impact by label not identifier.
-* Waives are shown but not persisted; no allow-list file.
+* Waives are shown but not persisted. The CLI has the file form (`diff --waiver-file waivers.json`,
+  `{rule, namespace?, node?, reason}`) and `--accept-breaking`; the mockup has neither, so the UI
+  cannot produce a waiver file a reviewer can commit, and a *Brechend* confirmation is display-only.
 * No bundle/manifest import in step 7 — only single files today.
 * Graph capped at 60 nodes, no neighbour expansion; no SHA-256 on artifacts.
 * German only; no report reload; parsing runs on the main thread.
@@ -372,10 +387,10 @@ Two things must survive without the app:
 ## 14. Related documents
 
 * [Browser-driven mockup](ui-mockup-browser.html) — the operable reference for this concept
-* [Static screen mockup](ui-mockup.html) — visual design probe at phone/tablet/desktop widths
+* Mockup screens `UI-Mockup1.png` … `UI-Mockup7.png` — one per wizard step (§4.1)
 * [Semantic Diff — extended documentation & roadmap](semantic-diff.md)
-* [OPC 11030 alignment](best-practices-alignment.md) — which release rules the diff screen must gate,
-  and which stay advisory
+* [OPC 11030 v1.03.03](OPC-11030-v1.03.03.md) — the whitepaper the severities derive from; a finding
+  cites its clause, so the diff screen can gate BREAKING and keep ADVISORY/INFO non-gating
 * [Architecture](architecture.md) — layer boundaries the UI must respect
 * [Usage Guide](usage-guide.md) — the CLI workflows the UI mirrors
 * [README](../README.md) — CLI commands and report formats

@@ -40,6 +40,14 @@ from nodeset_linker.diff.release import (
 )
 from nodeset_linker.diff.render import console_text, html_text, markdown_text
 from nodeset_linker.diff.rules import PAPER, RuleContext, RuleVerdict, Severity, verdict
+from nodeset_linker.diff.waivers import (
+    Waiver,
+    WaiverFileError,
+    WaiverOutcome,
+    WaiverSet,
+    apply_waivers,
+    load_waivers,
+)
 
 __all__ = [
     "DEFAULT_IMPACT_LIMIT",
@@ -59,7 +67,12 @@ __all__ = [
     "RuleVerdict",
     "SemanticDiff",
     "Severity",
+    "Waiver",
+    "WaiverFileError",
+    "WaiverOutcome",
+    "WaiverSet",
     "apply_impact",
+    "apply_waivers",
     "console_text",
     "dependents",
     "diff_models",
@@ -67,6 +80,7 @@ __all__ = [
     "impacted",
     "json_text",
     "load_baseline",
+    "load_waivers",
     "markdown_text",
     "node_label",
     "release_text",

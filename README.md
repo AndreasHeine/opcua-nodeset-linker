@@ -47,6 +47,7 @@ nodeset-linker explain --node JobStateEnum examples/config.yaml
 nodeset-linker stats  out/reduced.xml
 nodeset-linker validate out/reduced.xml                          # semantic checks only
 nodeset-linker validate out/reduced.xml --schema tests/data/schema/UANodeSet.xsd
+nodeset-linker validate out/reduced.xml --best-practices        # OPC 11030 findings, never gating
 nodeset-linker diff old.xml new.xml                              # what changed semantically
 nodeset-linker diff old.xml new.xml --json --fail-on-breaking    # CI gate
 ```
@@ -330,6 +331,15 @@ are errors. It prints `validation passed - no findings` and exits non-zero on an
 which of the two checks ran; a schema violation exits non-zero too. Without `--schema` the command
 is semantic validation only and says nothing about the schema.
 
+`--best-practices` adds the lint pass over OPC 11030 *Best Practices for Companion Models*: naming
+(§2.1 - §2.6), BrowsePath uniqueness once case is ignored (§2.1.4), the file name and
+`NamespaceUri` conventions (§2.4, §2.5), StatusCode definitions outside the base specification
+(§4), the optional-field limit and the AllowSubTypes/optional combination of a Structure (§7.9),
+mandatory self-containing declarations (§7.10), `NamespaceIndex` values written into text (§13.3),
+and extra fields on audit-event subtypes (§15). Findings are advisory or information and carry the
+rule slug the diff report uses as well, so `BP-Naming-PascalCase` names one rule in both places.
+None of them change the exit code: a best-practice violation is not a modelling error.
+
 The written file is checked against the official schema in `tests/data/schema/UANodeSet.xsd`
 (`tests/test_schema_compliance.py`, and `tests/test_compliance.py` compares the semantics of a
 subset before and after export). `scripts/check_official_nodesets.py` runs the real OPC UA, DI,
@@ -349,6 +359,9 @@ nodeset-linker diff old.xml new.xml --json             # machine-readable
 nodeset-linker diff old.xml new.xml --markdown         # PR comment
 nodeset-linker diff old.xml new.xml --html -o diff.html
 nodeset-linker diff old.xml new.xml --fail-on-breaking # exit 1 when a breaking change exists
+nodeset-linker diff old.xml new.xml --fail-on-advisory # gate advisory findings too
+nodeset-linker diff old.xml new.xml --waive BP-Namespace-VersionDrift  # accept one finding
+nodeset-linker diff old.xml new.xml --release-verdict --baseline manifest.json
 ```
 
 The comparison runs on the **semantic models**, never on XML. Node identity is
@@ -385,16 +398,56 @@ Breaking changes
     Affects 1 node
 ```
 
-A change is **breaking** when a consumer that imports the old model could fail: a removed
-DataType/ObjectType/ReferenceType/Interface/encoding, a removed hard reference
-(`HasSubtype`, `HasTypeDefinition`, `HasInterface`, `HasEncoding`, `GeneratesEvent`), a changed
-field datatype, a removed mandatory field, `Optional` → `Mandatory`, a removed enum value or a
-changed enum/OptionSet value, a removed or retyped Union alternative, changed member order,
-`IsOptional` → `false`, a type becoming abstract, a removed `MandatoryPlaceholder` outside the
-OPC UA namespace, and a BrowseName, SymbolicName or InverseName change. A DisplayName,
-Description or Documentation change, a new optional field or component, an added enum value, and
-`Mandatory` → `Optional` are non-breaking. Removing an ordinary optional component, or an
-`Organizes`/`HasDescription` reference, never counts as breaking.
+Every finding carries a **severity** and a **rule id**, so a report says which rule fired and
+whether it blocks a release:
+
+| Severity | What it means | Gate by default |
+| --- | --- | --- |
+| **BREAKING** | a consumer that imports the old model could fail | `--fail-on-breaking` exits 1 |
+| **ADVISORY** | a best-practice rule worth reviewing before shipping | no gate; `--fail-on-advisory` opts in |
+| **INFO** | a fact about the change, nothing to fix | no gate |
+
+**Breaking** — identifier moved (`BP-NodeId-Immutable`), node renamed or retyped
+(`BP-Node-Renamed`, `BP-NodeClass-Immutable`), BrowseName or SymbolicName changed
+(`BP-BrowseName-Immutable`), declaration removed including an optional one
+(`BP-Declaration-Removed`, `BP-Declaration-Removed-Optional`), datatype of a variable changed
+(`BP-DataType-Immutable`), hierarchy moved (`BP-Hierarchy-Move`, `BP-TypeDefinition-Moved`,
+`BP-RT-Hierarchy-Moved`), modelling rule tightened (`BP-ModellingRule-Tightening`), method
+signature changed (`BP-MethodSignature-Immutable`), enum or OptionSet value added, changed or
+removed (`BP-EnumValue-*`, `BP-OptionSetBit-*`), Structure field added, changed or removed
+(`BP-StructureField-*`, `BP-Member-*`), Union alternative changed (`BP-UnionAlternative-*`),
+`ValueRank`/`ArrayDimensions` changed (`BP-ValueRank-Immutable`, `BP-ArrayDimensions-Immutable`),
+`Symmetric` changed (`BP-ReferenceType-Symmetric-Immutable`), contract or mandatory reference
+changed (`BP-Reference-Contract-Removed`, `BP-Reference-MandatoryChild-*`,
+`BP-Reference-OptionalChild-Removed`, `BP-Reference-Removed`), `NamespaceUri` changed
+(`BP-NamespaceUri-Changed`), `IsAbstract` narrowed, `MaxStringLength` reduced, or a namespace
+that is already published carrying breaking findings (`BP-BreakingInReleasedNamespace`).
+
+**Advisory** — an optional declaration made mandatory (`BP-Declaration-Added-Mandatory`), a
+subtype or hierarchy insertion (`BP-Subtype-Inserted`, `BP-Hierarchy-Insertion`), an interface
+added without new mandatory declarations (`BP-Interface-Added`), member order relative to an
+encoding (`BP-FieldOrder-Encoding`, `BP-AlternativeOrder-Encoding`), a replaced type
+(`BP-Type-Replaced`), namespace metadata drift (`BP-Namespace-VersionDrift`,
+`BP-Namespace-MetadataConflict`, `BP-Namespace-ModelPrecedence`), naming and file-name
+conventions (`BP-Naming-PascalCase`, `BP-Filename-Convention`), Conformance Unit and profile
+changes (`BP-CU-*`, `BP-Profile-Removed`), deprecation without a new namespace, a guessed field
+rename (`BP-Field-Rename-Guess`), a duplicate member, `InverseName`, extensions and value
+dependencies.
+
+**INFO** — text a consumer reads but never parses (`BP-DisplayName-Meaning`,
+`BP-Description-Meaning`, `BP-Documentation-Meaning`, `BP-Member-Text`), a SymbolicName that only
+re-identifies the node (`BP-SymbolicName-Identity`), server-specific attributes and instance data
+(`BP-Attributes-ServerSpecific`, `BP-Value-InstanceData`), a modelling rule relaxed
+(`BP-ModellingRule-Relaxing`), navigation and optional references added or removed
+(`BP-Reference-Navigation-*`, `BP-Reference-OptionalChild-Added`), an added declaration, subtype
+or CU (`BP-Declaration-Added`, `BP-Interface-Added` in a compatible extension, `BP-CU-Added`),
+and namespace metadata (`BP-Namespace-Version`, `BP-Namespace-PublicationDate`,
+`BP-Namespace-ModelVersion`, `BP-Namespace-RequiredModel`, `BP-Namespace-XmlSchema`,
+`BP-Namespace-Bump`, `BP-Namespace-Alias`).
+
+Removing an ordinary optional component, or an `Organizes`/`HasDescription` reference, is not
+breaking; neither is a metadata-only version bump. A lint finding is never BREAKING: a
+best-practice violation is advice, not a modelling error.
 
 The JSON form is the CI contract; every entry carries its URI identity and, with `--impact`
 applied, how many nodes depend on it:
@@ -404,11 +457,17 @@ applied, how many nodes depend on it:
   "old": "old.xml", "new": "new.xml",
   "summary": {"old_nodes": 18, "new_nodes": 18, "added_nodes": 1, "removed_nodes": 1,
               "modified_nodes": 0, "renumbered_nodes": 0, "breaking_changes": 1,
-              "namespace_changes": 1, "identical": false},
+              "advisory_changes": 2, "advisory_nodes": 1, "info_nodes": 3,
+              "namespace_changes": 1, "identical": false, "waived_changes": 0},
   "added_nodes": [], "removed_nodes": [], "modified_nodes": [],
-  "renumbered_nodes": [], "namespace_changes": [], "breaking_changes": []
+  "renumbered_nodes": [], "namespace_changes": [], "breaking_changes": [],
+  "advisory_changes": []
 }
 ```
+
+Keys are only ever added, never dropped or renamed. A waived finding gains `"waived": true` and
+`"waived_by"`; a run that used waiver flags adds the top-level `"waivers"` block
+(`accepted_breaking`, `waived_changes`, `ignored`). Without waiver flags nothing extra appears.
 
 CI gate:
 
@@ -416,7 +475,40 @@ CI gate:
 - run: nodeset-linker diff old.xml new.xml --json --fail-on-breaking
 ```
 
+Waivers keep a finding visible and mark it; only the gate consults the marker. INFO and ADVISORY
+findings can be waived, BREAKING cannot:
+
+```bash
+nodeset-linker diff old.xml new.xml --waive BP-Naming-PascalCase        # one rule, no reason
+nodeset-linker diff old.xml new.xml --waiver-file waivers.json          # scoped, with reasons
+nodeset-linker diff old.xml new.xml --accept-breaking --fail-on-breaking  # acknowledged release
+```
+
+`waivers.json` is a JSON array (or `{"waivers": [...]}`) of `{rule, namespace?, node?, reason}`;
+`namespace` matches the URI or alias, `node` the BrowseName or identifier. A waiver naming a
+breaking rule is reported as ignored, and `--accept-breaking` marks every breaking finding and
+prints the acknowledgement in the report header — it opens the gate but never makes a published
+`NamespaceUri` reusable. `--release-verdict --baseline manifest.json` answers whether consumers
+can keep importing the namespace; a breaking change there means publishing a new namespace under
+`V2/` (OPC 11030 §11.3).
+
 Missing files and unparsable nodesets are reported and exit 1, like every other command.
+
+## Behaviour changes
+
+Changes to how the tool reports, compared with earlier releases:
+
+- Severity is a three-bucket model (BREAKING / ADVISORY / INFO) with a rule id and a paper-grounded
+  rationale on every finding; the old flat "breaking" list is gone.
+- `--fail-on-breaking` gates on BREAKING only; ADVISORY and INFO never gate unless
+  `--fail-on-advisory` is passed. Lint findings from `--best-practices` are ADVISORY/INFO and never
+  change an exit code.
+- A moved identifier is reported once as `BP-NodeId-Immutable`, not as remove plus add, and its
+  children stay attached; a renumbered release now fails `--fail-on-breaking`.
+- Namespace metadata findings (`BP-Namespace-Version`, `BP-Namespace-VersionDrift`, …) are reported
+  on the namespace entry; a metadata-only version bump is INFO.
+- JSON keys are additive only: new severity counts, `waived`/`waived_by` and the `waivers` block.
+- `--waive`, `--waiver-file` and `--accept-breaking` mark findings without removing them.
 
 ## Architecture
 
@@ -424,6 +516,16 @@ See `docs/architecture.md`, `docs/dependency-resolution.md` and
 `docs/reduction-example.md` — a complete walkthrough of one reduction across two NodeSets
 with cross-namespace dependencies, node by node.
 For a practical start-to-finish workflow, see the [Usage Guide](docs/usage-guide.md).
+Concept documents that are not implemented yet live in `docs/semantic-diff.md` (diff gaps and
+roadmap) and `docs/ui-concept.md` (proposed browser-driven, guided, mobile-first interface —
+preview tier in JS, exported artifact and CI verdict from the Python engine).
+The diff's breaking-change rules derive from the OPC UA best-practices whitepaper (OPC 11030,
+source text in `docs/OPC-11030-v1.03.03.md`); each finding cites its clause, and
+`docs/best-practices-implementation-plan.md` is the work-plan for closing the gaps it found. A
+clickable mockup of that interface: `docs/ui-mockup-browser.html` (a wizard you can drive entirely
+in the browser: import real `UANodeSet` files, configure roots/mode/external models, analyse,
+explain, diff, download the reduced NodeSet — simplified against the Python engine).
+`docs/UI-Mockup1.png` … `docs/UI-Mockup7.png` are the screens of that wizard, one per step.
 
 ```
 nodeset_linker/          # the package; tests live at the repository root

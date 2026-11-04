@@ -133,6 +133,15 @@ describe a release, not a node, and there is no node id to attribute them to.
 flat `BreakingChange` list with a human reason string; `NodeModification.breaking` and
 `RenumberedNode.breaking` are derived from their changes.
 
+`apply_waivers(diff, waivers, accept_breaking=False)` (`diff/waivers.py`) runs after impact and
+**never removes a finding**: it rebuilds the verdicts with `waived=True` and a `waived_by` string,
+and the report keeps severity, rule id and a `[waived]` marker. Only the gate consults the markers
+(`SemanticDiff.blocking_breaking()`, `blocking_advisory()` and their namespace counterparts). INFO
+and ADVISORY findings can be waived by rule, by namespace (URI or alias) or by node (BrowseName or
+identifier); a BREAKING finding cannot be waived, and `--accept-breaking` marks every breaking
+finding instead. The release verdict keeps reading `breaking`, so acknowledging a break never makes
+a published `NamespaceUri` reusable (§11.3).
+
 ### 2.6 Impact (`diff/impact.py`)
 
 `apply_impact(diff, old_model, new_model, *, context=(), inheritance_depth=3)` builds a
@@ -162,7 +171,9 @@ distinct impacted **identifiers**.
 Console, Markdown and HTML are generated from one shared `Section`/`Entry` structure, and
 `Change.describe()` is the single place the +/- lines are produced — so text, Markdown, HTML
 and JSON can never disagree. JSON (`diff/model.py::json_text`) is the machine contract for
-CI.
+CI. A run that used waiver flags inserts a *Waivers* section right after the summary: the
+`--accept-breaking` acknowledgement, how many findings were waived, and the waivers that were
+ignored because they named a breaking rule.
 
 ## 3. CLI surface
 
@@ -170,7 +181,8 @@ CI.
 nodeset-linker diff old.xml new.xml [--json | --markdown | --html] [--impact]
                     [--impact-limit N] [--context FILE ...]
                     [--breaking] [--advisory/--no-advisory]
-                    [--fail-on-breaking] [--fail-on-advisory]
+                    [--fail-on-breaking] [--fail-on-advisory] [--waive RULE_ID ...]
+                    [--waiver-file FILE] [--accept-breaking]
                     [--release-verdict] [--baseline DIR|manifest.json] [-o FILE]
 ```
 
@@ -186,6 +198,12 @@ nodeset-linker diff old.xml new.xml [--json | --markdown | --html] [--impact]
 * `--fail-on-breaking` exits 1 on a BREAKING finding only; `--fail-on-advisory` is a separate,
   opt-in gate; advisory and info findings never gate by default; missing files and parse errors
   exit 1;
+* `--waive RULE_ID` (repeatable) and `--waiver-file FILE` mark INFO/ADVISORY findings as waived —
+  the file holds `{rule, namespace?, node?, reason}` entries, a JSON array or `{"waivers": [...]}`,
+  and a bad file is a usage error that exits 1. A waiver naming a breaking rule is reported as
+  ignored and changes nothing; `--accept-breaking` marks every breaking finding, prints the
+  acknowledgement in the report header and opens `--fail-on-breaking`. The report and the JSON still
+  list every finding; only the gate reads the markers, and the release verdict is unaffected.
 * `--release-verdict` answers "may each NamespaceUri be reused?" (§3.3, §11.3) and exits 1 when
   a published URI carries breaking findings; `--baseline` is a directory or `manifest.json`
   listing the published URIs — without it the verdict reports "baseline unknown" instead of
@@ -207,9 +225,10 @@ The CI gate documented in README/usage guide:
   "old": "…", "new": "…",
   "summary": {"old_nodes": …, "new_nodes": …, "added_nodes": …, "removed_nodes": …,
               "modified_nodes": …, "renumbered_nodes": …, "breaking_changes": …,
-              "namespace_changes": …, "identical": false},
+              "advisory_changes": …, "advisory_nodes": …, "info_nodes": …,
+              "namespace_changes": …, "identical": false, "waived_changes": …},
   "added_nodes": [ { "label", "node_id", "namespace", "namespace_uri", "node_class", "breaking",
-                     "impacted_nodes", "impacted_labels", "impact_count" } ],
+                     "severity", "rule_id", "impacted_nodes", "impacted_labels", "impact_count" } ],
   "removed_nodes": [ …same… ],
   "modified_nodes": [ { …, "changes": [ {"area","kind","subject","old","new","breaking","text",
                                         "severity","rule_id","rationale","clause"} ] } ],
@@ -221,7 +240,8 @@ The CI gate documented in README/usage guide:
   "breaking_changes": [ { "label","node_id","reason","affected_nodes","breaking":true } ],
   "release": { "reusable", "baseline", "recommendation",
                "namespaces": [ {"uri","reusable","bumped","moved_from","published",
-                                "recommendation","breaking","verdicts","metadata"} ] }
+                                "recommendation","breaking","verdicts","metadata"} ] },
+  "waivers": { "accepted_breaking": …, "waived_changes": …, "ignored": [ … ] }
 }
 ```
 
@@ -230,8 +250,14 @@ while severity comes as `severity`/`rule_id`/`rationale`/`clause` per change plu
 list per entry; `paper` names the whitepaper the severities derive from, and `advisory_changes`
 mirrors `breaking_changes` for findings that never gate. `namespace` is the document-local alias
 while `namespace_uri` is the URI the node lives in (§11.1). `release` appears **only** when the
-caller asked for a verdict (`--release-verdict` or `--baseline`). There is **no schema version
-field**; `impacted_nodes` and `impacted_labels` only appear after impact was applied.
+caller asked for a verdict (`--release-verdict` or `--baseline`). A finding a waiver or
+`--accept-breaking` marked carries `"waived": true` and `"waived_by"` — on the change, the entry
+verdict, the namespace metadata delta and the breaking entry — and `waived_changes` counts them;
+the severity itself never changes, so a waived breaking finding still reads `severity: "breaking"`.
+The top-level `waivers` block appears **only** when `--waive`, `--waiver-file` or
+`--accept-breaking` was used, and `ignored` lists waivers that named a breaking rule, which cannot
+be waived. There is **no schema version field**; `impacted_nodes` and `impacted_labels` only appear
+after impact was applied.
 `impacted_nodes` lists XML identifiers (`nsu=http://opcfoundation.org/UA/Machinery/;i=2200`) and
 `impacted_labels` the human names; both are truncated to `impact_limit`, while `impact_count` is
 always the exact number of distinct impacted identifiers.
@@ -242,7 +268,9 @@ always the exact number of distinct impacted identifiers.
 
 Gaps that the OPC UA best-practices whitepaper (OPC 11030) also asserts — forbidden additions,
 removal of optional nodes, namespace versioning, deprecation — are mapped clause by clause in
-[best-practices-alignment.md](best-practices-alignment.md).
+[`OPC-11030-v1.03.03.md`](OPC-11030-v1.03.03.md) and closed by
+[`best-practices-implementation-plan.md`](best-practices-implementation-plan.md); a finding carries
+the `clause` it comes from, so the mapping lives in the report rather than in a separate document.
 
 ### 5.1 Identity-level gaps
 
@@ -347,14 +375,15 @@ removal of optional nodes, namespace versioning, deprecation — are mapped clau
 
 ### 5.5 Classification gaps
 
-20. **Breaking rules are hardcoded and binary.** There is no severity (info/warning/breaking),
-    no per-change configuration, no allow-list/waiver mechanism, and removal of an enum value
-    or custom reference is always breaking regardless of context. `CHANGE_LABELS` covers only
-    node-kind changes; definition `added/removed/changed` changes fall through `describe()`'s
-    generic branch.
-21. **The breaking verdict is computed but never justified per rule.** `BreakingChange.reason`
-    is a rendered text, not a rule id — CI dashboards cannot group by rule, and a waiver cannot
-    reference a stable identifier.
+20. **Breaking rules were hardcoded and binary** *(closed)*. Findings carry a severity
+    (BREAKING / ADVISORY / INFO) and a rule id; `--waive`, `--waiver-file` and `--accept-breaking`
+    are the waiver mechanism (§2.5). Severity is judged per rule with context, so an enum value
+    addition or a custom reference removal is classified by what the paper says, not by a fixed
+    table. `CHANGE_LABELS` covers node-kind changes; definition `added/removed/changed` changes fall
+    through `describe()`'s generic branch.
+21. **The breaking verdict was computed but never justified per rule** *(closed)*. Every finding
+    reports `rule_id`, `rationale` and `clause`, so a CI dashboard groups by rule and a waiver
+    references a stable identifier. `BreakingChange.reason` is still the rendered text beside it.
 22. **`--breaking` hides additions completely** (added nodes are never breaking), so a report
     with `--breaking` silently omits contract-tightening additions (see gap 5).
 
@@ -499,9 +528,13 @@ release comparison):
     rule identifiers (`BP-NodeId-Immutable`, `BP-EnumValue-Added`, …) in JSON so CI can group,
     gate per rule and write stable waivers. The identifiers are slugs, not clause numbers, so a
     later whitepaper revision does not rename them.
-16. **Waiver/allow-list file** (`diff-allowlist.yaml`) for *approved* breaking changes:
-    `--fail-on-breaking` skips waived rules; waivers appear in the report so reviewers see
-    them.
+16. **Waiver file** *(implemented)*: `--waive RULE_ID` and `--waiver-file FILE` hold
+    `{rule, namespace?, node?, reason}` entries as JSON — a committed file, not YAML, so the same
+    artifact a PR comment quotes can be read by the CLI. INFO and ADVISORY findings are waivable;
+    breaking ones are not, because waiving one would silently let a published `NamespaceUri` carry a
+    break (§11.3). A reviewer who accepts a breaking release says so with `--accept-breaking`, which
+    marks every breaking finding and prints the acknowledgement. A waiver never deletes a finding:
+    the report, the JSON and the release verdict keep showing it, marked `waived`.
 17. **Exit-code semantics**: distinct codes for "no change" (0), "non-breaking change" (0 with
     `--fail-on-change` → 1), "breaking" (1), "could not compare" (2) — so pipelines can tell
     "identical" from "could not load".
@@ -574,9 +607,8 @@ release comparison):
 * [README — Semantic diff](../README.md#semantic-diff-diff) — user-facing summary and breaking rules
 * [Usage Guide §6](usage-guide.md#6-compare-two-model-versions) — practical workflow
 * [Architecture](architecture.md) — layers, identity rule, extensibility seam
-* [Best-practices alignment](best-practices-alignment.md) — every OPC 11030 §3.2 rule vs. the current
-  classification, with verdicts (`aligned` / `stricter` / `looser` / `missing`) and ranked fixes
-* [OPC 11030 v1.03.03](OPC-11030-v1.03.03.md) — the best-practices whitepaper itself
+* [OPC 11030 v1.03.03](OPC-11030-v1.03.03.md) — the best-practices whitepaper itself; every finding
+  cites the clause it derives from (`rule_id` + `clause` in JSON)
 * [Best-practices implementation plan](best-practices-implementation-plan.md) — the work packages,
   rule-id registry, tests and open decisions for closing the alignment gaps
 * [UI Concept](ui-concept.md) — proposed browser-driven wizard over these layers (preview tier in JS,

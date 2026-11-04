@@ -43,6 +43,8 @@ SUMMARY = frozenset(
         "info_nodes",
         "namespace_changes",
         "identical",
+        # WP 15: an additive count; it is 0 when no waiver ran.
+        "waived_changes",
     }
 )
 NODE_ENTRY = frozenset({"node_id", "label", "node_class", "namespace", "severity", "verdicts"})
@@ -117,6 +119,7 @@ def test_report_keeps_every_top_level_key(tmp_path: Path, rich_pair: tuple[str, 
             assert frozenset(verdict) == VERDICT
     assert document["breaking_changes"]
     assert document["summary"]["info_nodes"] > 0
+    assert document["summary"]["waived_changes"] == 0
     for entry in [*document["breaking_changes"], *document["advisory_changes"]]:
         assert frozenset(entry) == CHANGE_ENTRY, entry["label"]
 

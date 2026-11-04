@@ -22,6 +22,7 @@ from nodeset_linker.diff.model import (
 )
 from nodeset_linker.diff.release import ReleaseVerdict, release_text
 from nodeset_linker.diff.rules import RuleVerdict, Severity
+from nodeset_linker.diff.waivers import WaiverOutcome
 
 #: A report entry, so the severity filter keeps its concrete type.
 EntryT = TypeVar("EntryT", NodeEntry, NodeModification, RenumberedNode)
@@ -53,6 +54,7 @@ def console_text(
     breaking_only: bool = False,
     include_advisory: bool = True,
     release: ReleaseVerdict | None = None,
+    waivers: WaiverOutcome | None = None,
 ) -> str:
     """Plain-text report for a terminal."""
     sections = _sections(
@@ -61,6 +63,7 @@ def console_text(
         breaking_only=breaking_only,
         include_advisory=include_advisory,
         release=release,
+        waivers=waivers,
     )
     if not sections:
         return "No semantic differences found."
@@ -82,6 +85,7 @@ def markdown_text(
     breaking_only: bool = False,
     include_advisory: bool = True,
     release: ReleaseVerdict | None = None,
+    waivers: WaiverOutcome | None = None,
 ) -> str:
     """Markdown report, usable as a release note or PR comment."""
     sections = _sections(
@@ -90,6 +94,7 @@ def markdown_text(
         breaking_only=breaking_only,
         include_advisory=include_advisory,
         release=release,
+        waivers=waivers,
     )
     if not sections:
         return "No semantic differences found."
@@ -116,6 +121,7 @@ def html_text(
     breaking_only: bool = False,
     include_advisory: bool = True,
     release: ReleaseVerdict | None = None,
+    waivers: WaiverOutcome | None = None,
 ) -> str:
     """Self-contained HTML report."""
     sections = _sections(
@@ -124,6 +130,7 @@ def html_text(
         breaking_only=breaking_only,
         include_advisory=include_advisory,
         release=release,
+        waivers=waivers,
     )
     title = "Semantic diff"
     if diff.old_source:
@@ -173,6 +180,7 @@ def _sections(
     breaking_only: bool,
     include_advisory: bool,
     release: ReleaseVerdict | None = None,
+    waivers: WaiverOutcome | None = None,
 ) -> list[Section]:
     """Build the report structure shared by every format.
 
@@ -180,11 +188,18 @@ def _sections(
     stays visible even though it is reported apart from the other node sections.
     ``include_advisory`` is off when a caller asked for ``--no-advisory``.
     ``release`` puts the paper's release question at the top of the report (§3.3, §11.3).
+    ``waivers`` adds the header block WP 15 requires: an acknowledgement of breaking changes
+    and any waiver that was refused, so a reviewer sees what was accepted and on what terms.
     """
     if diff.is_empty and not diff.namespaces:
-        if release is None:
+        if release is None and waivers is None:
             return []
-        return [Section(title="Release verdict", plain=_release_lines(release))]
+        sections: list[Section] = []
+        if waivers is not None and waivers.header_lines():
+            sections.append(Section(title="Waivers", plain=waivers.header_lines()))
+        if release is not None:
+            sections.append(Section(title="Release verdict", plain=_release_lines(release)))
+        return sections
 
     def kept(entries: list[EntryT]) -> list[EntryT]:
         return [
@@ -202,6 +217,8 @@ def _sections(
             ),
         )
     ]
+    if waivers is not None and waivers.header_lines():
+        sections.append(Section(title="Waivers", plain=waivers.header_lines()))
     if release is not None:
         sections.append(Section(title="Release verdict", plain=_release_lines(release)))
 
@@ -292,6 +309,9 @@ def _summary_lines(
         lines.append(f"Advisory: {len(diff.advisory) + len(advisory_namespaces)}")
     if release is not None:
         lines.append(f"Release: {release.recommendation}")
+    waived = diff.waived_findings()
+    if waived:
+        lines.append(f"Waived: {waived}")
     if impact:
         lines.append(_node_count(total_impact(diff)))
     return tuple(lines)
@@ -380,7 +400,10 @@ def _namespace_line(entry: NamespaceChange) -> Entry:
     details.extend(delta.describe() for delta in entry.metadata)
     strongest = _strongest(entry.all_verdicts())
     if strongest is not None and strongest.severity is not Severity.INFO:
-        details.append(f"{strongest.rule_id}: {strongest.rationale}")
+        note = f"{strongest.rule_id}: {strongest.rationale}"
+        if strongest.waived:
+            note = f"{note} [waived]"
+        details.append(note)
     return Entry(header=f"{entry.alias} ({entry.uri})", details=tuple(details))
 
 
@@ -400,4 +423,7 @@ def _breaking_line(entry: BreakingChange) -> Entry:
         details.append(f"{entry.rule_id}: {entry.rationale or ''}")
     if entry.affected is not None:
         details.append(_node_count(entry.affected, prefix="Affects "))
+    if entry.waived:
+        # WP 15: a waived or acknowledged finding stays in the report; only the gate skips it.
+        details.append(f"waived: {entry.waived_by or 'by waiver'}")
     return Entry(header=header, details=tuple(details))

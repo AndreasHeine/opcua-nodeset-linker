@@ -43,25 +43,36 @@ class Severity(Enum):
 
 @dataclass(frozen=True, slots=True)
 class RuleVerdict:
-    """The verdict of one rule: severity, reason and stable slug."""
+    """The verdict of one rule: severity, reason and stable slug.
+
+    ``waived`` says a team accepted the finding (WP 15).  It never changes the severity: a
+    waived breaking finding is still breaking in the report, and only the gate reads the
+    marker.  ``waived_by`` keeps who accepted it, so a CI dashboard can group by it.
+    """
 
     severity: Severity
     rationale: str
     rule_id: str
     clause: str | None = None
+    waived: bool = False
+    waived_by: str | None = None
 
     @property
     def breaking(self) -> bool:
         return self.severity.blocks_release
 
     def as_json(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "rule_id": self.rule_id,
             "severity": self.severity.value,
             "rationale": self.rationale,
             "clause": self.clause,
             "paper": PAPER,
         }
+        if self.waived:
+            payload["waived"] = True
+            payload["waived_by"] = self.waived_by
+        return payload
 
 
 @dataclass(frozen=True, slots=True)

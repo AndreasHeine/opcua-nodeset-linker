@@ -8,6 +8,7 @@ nodeset-linker validate output.xml [--schema tests/data/schema/UANodeSet.xsd] [-
 nodeset-linker diff old.xml new.xml [--json | --markdown | --html] [--impact] [--breaking]
     [--advisory/--no-advisory] [--impact-limit N] [--context <file>...] [--breaking]
     [--fail-on-breaking] [--fail-on-advisory]
+    [--waive <rule-id>] [--waiver-file <path>] [--accept-breaking]
     [--release-verdict] [--baseline <dir-or-manifest.json>]
 """
 
@@ -27,7 +28,10 @@ from nodeset_linker.config.schema import load_config
 from nodeset_linker.diff import (
     DEFAULT_IMPACT_LIMIT,
     Severity,
+    WaiverFileError,
+    WaiverSet,
     apply_impact,
+    apply_waivers,
     console_text,
     diff_models,
     html_text,
@@ -238,6 +242,24 @@ def validate(output: Path, schema: Path | None, best_practices: bool) -> None:
     help="Exit with code 1 when the diff contains an advisory finding.",
 )
 @click.option(
+    "--waive",
+    "waive_rules",
+    multiple=True,
+    metavar="RULE_ID",
+    help="Waive findings of this rule id; repeatable, advisory and information only.",
+)
+@click.option(
+    "--waiver-file",
+    type=Path,
+    default=None,
+    help="JSON waiver file: {rule, namespace?, node?, reason}; advisory and information only.",
+)
+@click.option(
+    "--accept-breaking",
+    is_flag=True,
+    help="Acknowledge breaking findings: they stay in the report and the gate does not fail.",
+)
+@click.option(
     "--release-verdict",
     "show_release",
     is_flag=True,
@@ -270,6 +292,9 @@ def diff(
     include_advisory: bool,
     fail_on_breaking: bool,
     fail_on_advisory: bool,
+    waive_rules: tuple[str, ...],
+    waiver_file: Path | None,
+    accept_breaking: bool,
     show_release: bool,
     baseline: Path | None,
     reduced_export: bool,
@@ -289,6 +314,12 @@ def diff(
     needs to know what was published, so ``--baseline`` points at a bundle manifest or a
     registry of published NamespaceUris; without one the verdict says so rather than guessing,
     and a not-reusable verdict exits with code 1.
+
+    ``--waive`` and ``--waiver-file`` accept *advisory* and *information* findings: the finding
+    stays in the report with its severity and rule id, marked ``waived``, and only the gate
+    stops counting it.  A breaking finding cannot be waived; ``--accept-breaking`` acknowledges
+    it, prints that acknowledgement in the report header and leaves the release verdict alone,
+    because accepting a breaking change never makes a published NamespaceUri reusable (§11.3).
     """
     for path in (old, new):
         if not path.exists():
@@ -320,6 +351,14 @@ def diff(
     if impact or breaking_only or fail_on_breaking or context:
         apply_impact(result, old_model, new_model, context=context)
 
+    outcome = None
+    if waive_rules or waiver_file is not None or accept_breaking:
+        try:
+            waiver_set = WaiverSet.from_cli(waive_rules, waiver_file)
+        except WaiverFileError as exc:
+            _fail(str(exc))
+        outcome = apply_waivers(result, waiver_set, accept_breaking=accept_breaking)
+
     release = None
     if show_release or baseline is not None:
         try:
@@ -329,7 +368,11 @@ def diff(
         release = release_verdict(result, registry)
 
     if as_json:
-        text = json_text(result, release=None if release is None else release.as_json())
+        text = json_text(
+            result,
+            release=None if release is None else release.as_json(),
+            waivers=None if outcome is None else outcome.as_json(),
+        )
     elif markdown:
         text = markdown_text(
             result,
@@ -337,6 +380,7 @@ def diff(
             breaking_only=breaking_only,
             include_advisory=include_advisory,
             release=release,
+            waivers=outcome,
         )
     elif html:
         text = html_text(
@@ -345,6 +389,7 @@ def diff(
             breaking_only=breaking_only,
             include_advisory=include_advisory,
             release=release,
+            waivers=outcome,
         )
     else:
         text = console_text(
@@ -353,6 +398,7 @@ def diff(
             breaking_only=breaking_only,
             include_advisory=include_advisory,
             release=release,
+            waivers=outcome,
         )
 
     if output is not None:
@@ -363,12 +409,13 @@ def diff(
     else:
         console.print(text, markup=False, soft_wrap=True)
 
-    if fail_on_breaking and (result.breaking or result.breaking_namespaces):
+    # WP 15: the gate reads unwaived findings only.  A waiver or --accept-breaking marks a
+    # finding rather than deleting it, so the report keeps the fact and the reason.
+    if fail_on_breaking and (result.blocking_breaking() or result.blocking_namespaces()):
         raise SystemExit(1)
-    advisory_namespaces = [
-        entry for entry in result.namespaces if entry.severity is Severity.ADVISORY
-    ]
-    if fail_on_advisory and (result.advisory or advisory_namespaces):
+    if fail_on_advisory and (
+        result.blocking_advisory() or result.blocking_advisory_namespaces()
+    ):
         raise SystemExit(1)
     if release is not None and not release.reusable:
         # The release question itself is the gate (§11.3): a published URI may not be extended

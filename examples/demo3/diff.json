@@ -14,7 +14,8 @@
     "advisory_nodes": 0,
     "info_nodes": 0,
     "namespace_changes": 4,
-    "identical": false
+    "identical": false,
+    "waived_changes": 0
   },
   "added_nodes": [],
   "removed_nodes": [],

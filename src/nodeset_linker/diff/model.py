@@ -91,17 +91,22 @@ class Change:
 
     def describe(self) -> str:
         if self.kind == "added":
-            return f"+ {self.subject}{f' : {self.new}' if self.new else ''}"
-        if self.kind == "removed":
-            return f"- {self.subject}{f' : {self.old}' if self.old else ''}"
-        if self.kind == "changed":
-            return f"{self.subject}: {_spell(self.old)} → {_spell(self.new)}"
-        label = CHANGE_LABELS.get(self.kind, self.kind)
-        if self.old is None:
-            return f"{label}: + {_spell(self.new)}"
-        if self.new is None:
-            return f"{label}: - {_spell(self.old)}"
-        return f"{label}: {_spell(self.old)} → {_spell(self.new)}"
+            text = f"+ {self.subject}{f' : {self.new}' if self.new else ''}"
+        elif self.kind == "removed":
+            text = f"- {self.subject}{f' : {self.old}' if self.old else ''}"
+        elif self.kind == "changed":
+            text = f"{self.subject}: {_spell(self.old)} → {_spell(self.new)}"
+        else:
+            label = CHANGE_LABELS.get(self.kind, self.kind)
+            if self.old is None:
+                text = f"{label}: + {_spell(self.new)}"
+            elif self.new is None:
+                text = f"{label}: - {_spell(self.old)}"
+            else:
+                text = f"{label}: {_spell(self.old)} → {_spell(self.new)}"
+        if self.verdict is not None and self.verdict.waived:
+            text = f"{text} [waived]"
+        return text
 
     def as_json(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -118,6 +123,9 @@ class Change:
             payload["rule_id"] = self.verdict.rule_id
             payload["rationale"] = self.verdict.rationale
             payload["clause"] = self.verdict.clause
+            if self.verdict.waived:
+                payload["waived"] = True
+                payload["waived_by"] = self.verdict.waived_by
         return payload
 
 
@@ -351,13 +359,16 @@ class BreakingChange:
     rule_id: str | None = None
     rationale: str | None = None
     clause: str | None = None
+    #: WP 15: an accepted finding stays listed; only the gate reads these markers.
+    waived: bool = False
+    waived_by: str | None = None
 
     @property
     def breaking(self) -> bool:
         return self.severity is Severity.BREAKING
 
     def as_json(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "label": self.label,
             "node_id": self.node_id.as_xml(),
             "reason": self.reason,
@@ -368,6 +379,10 @@ class BreakingChange:
             "rationale": self.rationale,
             "clause": self.clause,
         }
+        if self.waived:
+            payload["waived"] = True
+            payload["waived_by"] = self.waived_by
+        return payload
 
 
 #: Namespace metadata attribute → the label used in human-readable output.
@@ -397,6 +412,9 @@ class MetadataDelta:
     old: str | None = None
     new: str | None = None
     note: str | None = None
+    #: WP 15: namespace metadata can be waived, but the delta stays in the report.
+    waived: bool = False
+    waived_by: str | None = None
 
     @property
     def label(self) -> str:
@@ -404,17 +422,20 @@ class MetadataDelta:
 
     def describe(self) -> str:
         if self.old is None and self.new is None:
-            return self.note or self.label
+            # A note-only delta (version drift, deprecation) *is* the note; never repeat it.
+            text = self.note or self.label
+            return f"{text} [waived]" if self.waived else text
         if self.old is None:
             text = f"{self.label}: + {self.new}"
         elif self.new is None:
             text = f"{self.label}: - {self.old}"
         else:
             text = f"{self.label}: {self.old} → {self.new}"
-        return f"{text} ({self.note})" if self.note else text
+        text = f"{text} ({self.note})" if self.note else text
+        return f"{text} [waived]" if self.waived else text
 
     def as_json(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "attribute": self.attribute,
             "old": self.old,
             "new": self.new,
@@ -424,6 +445,10 @@ class MetadataDelta:
             "clause": self.verdict.clause,
             "note": self.note,
         }
+        if self.waived:
+            payload["waived"] = True
+            payload["waived_by"] = self.waived_by
+        return payload
 
 
 @dataclass(frozen=True, slots=True)
@@ -441,6 +466,14 @@ class NamespaceChange:
     @property
     def breaking(self) -> bool:
         return any(verdict.breaking for verdict in self.all_verdicts())
+
+    def breaking_unwaived(self) -> bool:
+        """Whether a breaking namespace finding still blocks the gate.
+
+        WP 15: ``--accept-breaking`` marks namespace findings too, so only an unmarked
+        breaking finding keeps a release blocked.
+        """
+        return any(verdict.breaking and not verdict.waived for verdict in self.all_verdicts())
 
     @property
     def severity(self) -> Severity:
@@ -537,6 +570,54 @@ class SemanticDiff:
         ]
         return [entry.node_id for entry in entries]
 
+    def blocking_breaking(self) -> list[BreakingChange]:
+        """Breaking findings nothing accepted - what ``--fail-on-breaking`` fails on.
+
+        WP 15: a waiver or ``--accept-breaking`` marks a finding instead of deleting it, so
+        the report keeps the fact while the gate stops treating it as a failure.
+        """
+        return [entry for entry in self.breaking if not entry.waived]
+
+    def blocking_namespaces(self) -> list[NamespaceChange]:
+        """Namespace findings that still block the release."""
+        return [entry for entry in self.namespaces if entry.breaking_unwaived()]
+
+    def blocking_advisory(self) -> list[BreakingChange]:
+        """Advisory findings ``--fail-on-advisory`` fails on: unwaived ones only."""
+        return [
+            entry
+            for entry in self.advisory
+            if entry.severity is Severity.ADVISORY and not entry.waived
+        ]
+
+    def blocking_advisory_namespaces(self) -> list[NamespaceChange]:
+        """Namespace findings that are advisory and not waived."""
+        return [
+            entry
+            for entry in self.namespaces
+            if any(
+                verdict.severity is Severity.ADVISORY and not verdict.waived
+                for verdict in entry.all_verdicts()
+            )
+        ]
+
+    def waived_findings(self) -> int:
+        """How many findings carry a waiver marker (mirrored lists counted once)."""
+        count = 0
+        for entry in self._all_entries():
+            if isinstance(entry, NodeModification | RenumberedNode):
+                # A modification's verdicts are its change verdicts; count the changes only.
+                count += sum(
+                    change.verdict is not None and change.verdict.waived
+                    for change in entry.changes
+                )
+            else:
+                count += sum(verdict.waived for verdict in entry.verdicts)
+        for namespace in self.namespaces:
+            count += sum(verdict.waived for verdict in namespace.verdicts)
+            count += sum(delta.waived for delta in namespace.metadata)
+        return count
+
     def _all_entries(self) -> list[NodeEntry | NodeModification | RenumberedNode]:
         """Every entry the diff produced, in report order."""
         return [*self.added, *self.removed, *self.modified, *self.renumbered]
@@ -556,6 +637,8 @@ class SemanticDiff:
             "info_nodes": severities.get(Severity.INFO, 0),
             "namespace_changes": len(self.namespaces),
             "identical": self.is_empty,
+            #: WP 15: findings a waiver or --accept-breaking marked; the buckets above stay.
+            "waived_changes": self.waived_findings(),
         }
 
     def as_json(self) -> str:
@@ -577,14 +660,21 @@ class SemanticDiff:
 
 
 def json_text(
-    diff: SemanticDiff, *, release: Mapping[str, object] | None = None
+    diff: SemanticDiff,
+    *,
+    release: Mapping[str, object] | None = None,
+    waivers: Mapping[str, object] | None = None,
 ) -> str:
     """Machine-readable report for CI/CD.
 
-    ``release`` adds the release verdict as an extra key; every existing key keeps its shape.
+    ``release`` adds the release verdict as an extra key; ``waivers`` adds what WP 15
+    accepted.  Every existing key keeps its shape.
     """
-    if release is None:
+    if release is None and waivers is None:
         return diff.as_json()
     payload = json.loads(diff.as_json())
-    payload["release"] = release
+    if release is not None:
+        payload["release"] = release
+    if waivers is not None:
+        payload["waivers"] = waivers
     return json.dumps(payload, indent=2)
