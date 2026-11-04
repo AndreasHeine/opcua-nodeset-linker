@@ -36,7 +36,7 @@
       <RequiredModel ModelUri="http://opcfoundation.org/UA/" XmlSchemaUri="http://opcfoundation.org/UA/2008/02/Types.xsd" Version="1.05.03" PublicationDate="2023-12-15T00:00:00Z" ModelVersion="1.5.3"/>
       <RequiredModel ModelUri="http://opcfoundation.org/UA/ISA95-JOBCONTROL_V2/" Version="2.0.0" PublicationDate="2024-01-31T00:00:00Z"/>
     </Model>
-    <Model ModelUri="http://umati.org/UA/ShowCaseMachineTool/" Version="1.03.0" PublicationDate="2026-01-30T12:22:50Z">
+    <Model ModelUri="http://umati.org/UA/ShowCaseMachineTool/" Version="1.04.0" PublicationDate="2026-02-15T09:00:00Z">
       <RequiredModel ModelUri="http://opcfoundation.org/UA/" XmlSchemaUri="http://opcfoundation.org/UA/2008/02/Types.xsd" Version="1.05.03" PublicationDate="2023-12-15T00:00:00Z" ModelVersion="1.5.3"/>
       <RequiredModel ModelUri="http://opcfoundation.org/UA/DI/" XmlSchemaUri="http://opcfoundation.org/UA/DI/Types.xsd" Version="1.04.0" PublicationDate="2022-11-03T00:00:00Z"/>
       <RequiredModel ModelUri="http://opcfoundation.org/UA/IA/" Version="1.01.2" PublicationDate="2024-02-28T00:00:00Z" ModelVersion="1.1.2"/>
@@ -14564,7 +14564,7 @@
     <References>
       <Reference ReferenceType="HasTypeDefinition">ns=4;i=50</Reference>
       <Reference ReferenceType="HasComponent" IsForward="false">ns=7;i=5014</Reference>
-      <Reference ReferenceType="HasComponent">ns=7;i=6022</Reference>
+      <Reference ReferenceType="HasComponent">ns=7;i=6302</Reference>
       <Reference ReferenceType="HasComponent">ns=7;i=6023</Reference>
       <Reference ReferenceType="HasComponent">ns=7;i=6024</Reference>
       <Reference ReferenceType="HasProperty">ns=7;i=6026</Reference>
@@ -14871,16 +14871,6 @@
     </References>
     <Value xmlns="http://opcfoundation.org/UA/2011/03/UANodeSet.xsd" xmlns:uax="http://opcfoundation.org/UA/2008/02/Types.xsd" xmlns:s4="http://opcfoundation.org/UA/DI/Types.xsd" xmlns:s1="http://umati.org/UA/ShowCaseMachineTool/Types.xsd" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:s3="http://opcfoundation.org/UA/Machinery/Types.xsd" xmlns:s5="http://opcfoundation.org/UA/IA/Types.xsd" xmlns:ua="http://unifiedautomation.com/Configuration/NodeSet.xsd" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:s2="http://opcfoundation.org/UA/MachineTool/Types.xsd">
       <uax:String/>
-    </Value>
-  </UAVariable>
-  <UAVariable NodeId="ns=7;i=6022" BrowseName="4:ControlIdentifier1" DataType="i=7" ParentNodeId="ns=7;i=5017">
-    <DisplayName>ControlIdentifier1</DisplayName>
-    <References>
-      <Reference ReferenceType="HasTypeDefinition">i=63</Reference>
-      <Reference ReferenceType="HasComponent" IsForward="false">ns=7;i=5017</Reference>
-    </References>
-    <Value xmlns="http://opcfoundation.org/UA/2011/03/UANodeSet.xsd" xmlns:uax="http://opcfoundation.org/UA/2008/02/Types.xsd" xmlns:s4="http://opcfoundation.org/UA/DI/Types.xsd" xmlns:s1="http://umati.org/UA/ShowCaseMachineTool/Types.xsd" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:s3="http://opcfoundation.org/UA/Machinery/Types.xsd" xmlns:s5="http://opcfoundation.org/UA/IA/Types.xsd" xmlns:ua="http://unifiedautomation.com/Configuration/NodeSet.xsd" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:s2="http://opcfoundation.org/UA/MachineTool/Types.xsd">
-      <uax:UInt32>12</uax:UInt32>
     </Value>
   </UAVariable>
   <UAVariable NodeId="ns=7;i=6023" BrowseName="4:ControlIdentifierInterpretation" DataType="ns=4;i=69" ParentNodeId="ns=7;i=5017">
@@ -15413,6 +15403,16 @@
     </References>
     <Value xmlns="http://opcfoundation.org/UA/2011/03/UANodeSet.xsd" xmlns:uax="http://opcfoundation.org/UA/2008/02/Types.xsd" xmlns:s4="http://opcfoundation.org/UA/DI/Types.xsd" xmlns:s1="http://umati.org/UA/ShowCaseMachineTool/Types.xsd" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:s3="http://opcfoundation.org/UA/Machinery/Types.xsd" xmlns:s5="http://opcfoundation.org/UA/IA/Types.xsd" xmlns:ua="http://unifiedautomation.com/Configuration/NodeSet.xsd" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:s2="http://opcfoundation.org/UA/MachineTool/Types.xsd">
       <uax:String>v1.03.0</uax:String>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=7;i=6302" BrowseName="4:ControlIdentifier1" DataType="i=7" ParentNodeId="ns=7;i=5017">
+    <DisplayName>ControlIdentifier1</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=63</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=7;i=5017</Reference>
+    </References>
+    <Value xmlns="http://opcfoundation.org/UA/2011/03/UANodeSet.xsd" xmlns:uax="http://opcfoundation.org/UA/2008/02/Types.xsd" xmlns:s4="http://opcfoundation.org/UA/DI/Types.xsd" xmlns:s1="http://umati.org/UA/ShowCaseMachineTool/Types.xsd" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:s3="http://opcfoundation.org/UA/Machinery/Types.xsd" xmlns:s5="http://opcfoundation.org/UA/IA/Types.xsd" xmlns:ua="http://unifiedautomation.com/Configuration/NodeSet.xsd" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:s2="http://opcfoundation.org/UA/MachineTool/Types.xsd">
+      <uax:UInt32>12</uax:UInt32>
     </Value>
   </UAVariable>
 </UANodeSet>

@@ -1,15 +1,19 @@
 {
   "old": "examples\\demo3\\original.xml",
   "new": "examples\\demo3\\modified.xml",
+  "paper": "OPC 11030 v1.03.03 \u2014 Best Practices for Companion Models",
   "summary": {
     "old_nodes": 1110,
     "new_nodes": 1110,
     "added_nodes": 0,
     "removed_nodes": 0,
     "modified_nodes": 1,
-    "renumbered_nodes": 0,
-    "breaking_changes": 1,
-    "namespace_changes": 0,
+    "renumbered_nodes": 1,
+    "breaking_changes": 2,
+    "advisory_changes": 0,
+    "advisory_nodes": 0,
+    "info_nodes": 0,
+    "namespace_changes": 4,
     "identical": false
   },
   "added_nodes": [],
@@ -19,8 +23,19 @@
       "label": "ProductInstanceUri",
       "node_id": "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6002",
       "namespace": "ShowCaseMachineTool",
+      "namespace_uri": "http://umati.org/UA/ShowCaseMachineTool/",
       "node_class": "Variable",
       "breaking": true,
+      "severity": "breaking",
+      "verdicts": [
+        {
+          "rule_id": "BP-DataType-Immutable",
+          "severity": "breaking",
+          "rationale": "The DataType of a published Variable or InstanceDeclaration shall not change (\u00a73.2.12): readers decode the value with the old type.",
+          "clause": "3.2.12",
+          "paper": "OPC 11030 v1.03.03 \u2014 Best Practices for Companion Models"
+        }
+      ],
       "changes": [
         {
           "area": "node",
@@ -29,10 +44,66 @@
           "old": "String (i=12)",
           "new": "Double (i=11)",
           "breaking": true,
-          "text": "DataType: String (i=12) \u2192 Double (i=11)"
+          "text": "DataType: String (i=12) \u2192 Double (i=11)",
+          "severity": "breaking",
+          "rule_id": "BP-DataType-Immutable",
+          "rationale": "The DataType of a published Variable or InstanceDeclaration shall not change (\u00a73.2.12): readers decode the value with the old type.",
+          "clause": "3.2.12"
         }
       ],
       "impacted_nodes": [
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=5003",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=5004",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=5005",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=5006",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=5007",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=5008",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=5009",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=5010",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=5011",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=5012",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=5013",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=5014",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=5015",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=5017",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=5018",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=5019",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=5020",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=5021",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=5022",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=5023",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6001",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6003",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6004",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6005",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6006",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6007",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6008",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6009",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6010",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6011",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6012",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6013",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6014",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6023",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6024",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6025",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6026",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6027",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6028",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6029",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6030",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6031",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6032",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6033",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6034",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6035",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6036",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6037",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6038",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6039"
+      ],
+      "impacted_labels": [
         "ActiveProgram",
         "Channel1",
         "ChannelMode",
@@ -82,22 +153,336 @@
         "Stacklight",
         "StacklightMode",
         "State",
-        "Tool12",
-        "Tools",
-        "YearOfConstruction"
+        "Tool12"
       ],
-      "impact_count": 52
+      "impact_count": 77
     }
   ],
-  "renumbered_nodes": [],
-  "namespace_changes": [],
+  "renumbered_nodes": [
+    {
+      "label": "ControlIdentifier1",
+      "namespace": "ShowCaseMachineTool",
+      "namespace_uri": "http://umati.org/UA/ShowCaseMachineTool/",
+      "node_class": "Variable",
+      "old_node_id": "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6022",
+      "new_node_id": "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6302",
+      "confidence": "exact",
+      "breaking": true,
+      "severity": "breaking",
+      "verdicts": [
+        {
+          "rule_id": "BP-NodeId-Immutable",
+          "severity": "breaking",
+          "rationale": "The NodeId of a published node changed (\u00a73.2.17): identifiers shall not change, and a consumer that resolves the node by identifier now reaches nothing or the wrong node. Add new identifiers instead of renumbering, and publish a new namespace for a breaking change (\u00a711.3).",
+          "clause": "3.2.17",
+          "paper": "OPC 11030 v1.03.03 \u2014 Best Practices for Companion Models"
+        }
+      ],
+      "changes": [],
+      "impacted_nodes": [
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=5003",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=5004",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=5005",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=5006",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=5007",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=5008",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=5009",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=5010",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=5011",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=5012",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=5013",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=5014",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=5015",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=5017",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=5018",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=5019",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=5020",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=5021",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=5022",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=5023",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6001",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6002",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6003",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6004",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6005",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6006",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6007",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6008",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6009",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6010",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6011",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6012",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6013",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6014",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6023",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6024",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6025",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6026",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6027",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6028",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6029",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6030",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6031",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6032",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6033",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6034",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6035",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6036",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6037",
+        "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6038"
+      ],
+      "impacted_labels": [
+        "ActiveProgram",
+        "Channel1",
+        "ChannelMode",
+        "ChannelState",
+        "ControlIdentifierInterpretation",
+        "CurrentState",
+        "DeviceClass",
+        "EURange",
+        "EngineeringUnits",
+        "Equipment",
+        "FeedOverride",
+        "Id",
+        "Identification",
+        "IsPartOfBase",
+        "IsRotating",
+        "IsUsedAsAxis",
+        "Light0",
+        "Light1",
+        "Light2",
+        "Location",
+        "Locked",
+        "MachineTool",
+        "MachineryBuildingBlocks",
+        "MachineryItemState",
+        "MachineryOperationMode",
+        "Manufacturer",
+        "Model",
+        "Monitoring",
+        "Name",
+        "Notification",
+        "Number",
+        "NumberInList",
+        "OperationMode",
+        "Override",
+        "PowerOnDuration",
+        "ProductCode",
+        "ProductInstanceUri",
+        "Production",
+        "ReasonForLocking",
+        "SerialNumber",
+        "ShowCaseMachineTool",
+        "SignalColor",
+        "SignalMode",
+        "SignalOn",
+        "SoftwareRevision",
+        "Spindel",
+        "Stacklight",
+        "StacklightMode",
+        "State",
+        "Tool12"
+      ],
+      "impact_count": 77
+    }
+  ],
+  "namespace_changes": [
+    {
+      "namespace": "IA",
+      "uri": "http://opcfoundation.org/UA/IA/",
+      "severity": "advisory",
+      "rule_id": "BP-Namespace-VersionDrift",
+      "metadata": [
+        {
+          "attribute": "version",
+          "old": null,
+          "new": null,
+          "severity": "advisory",
+          "rule_id": "BP-Namespace-VersionDrift",
+          "rationale": "Version and ModelVersion disagree (\u00a711.3): the release says one base revision, the metadata another.",
+          "clause": "11.3",
+          "note": "Version 1.01.2 and ModelVersion 1.1.2 of http://opcfoundation.org/UA/IA/ describe the same release differently"
+        }
+      ],
+      "nodes": {
+        "old": 49,
+        "new": 49,
+        "delta": 0
+      },
+      "references": {
+        "old": 129,
+        "new": 129,
+        "delta": 0
+      },
+      "datatypes": {
+        "old": 4,
+        "new": 4,
+        "delta": 0
+      }
+    },
+    {
+      "namespace": "MachineTool",
+      "uri": "http://opcfoundation.org/UA/MachineTool/",
+      "severity": "advisory",
+      "rule_id": "BP-Namespace-VersionDrift",
+      "metadata": [
+        {
+          "attribute": "version",
+          "old": null,
+          "new": null,
+          "severity": "advisory",
+          "rule_id": "BP-Namespace-VersionDrift",
+          "rationale": "Version and ModelVersion disagree (\u00a711.3): the release says one base revision, the metadata another.",
+          "clause": "11.3",
+          "note": "Version 1.02.0 and ModelVersion 1.2.0 of http://opcfoundation.org/UA/MachineTool/ describe the same release differently"
+        }
+      ],
+      "nodes": {
+        "old": 523,
+        "new": 523,
+        "delta": 0
+      },
+      "references": {
+        "old": 1827,
+        "new": 1827,
+        "delta": 0
+      },
+      "datatypes": {
+        "old": 8,
+        "new": 8,
+        "delta": 0
+      }
+    },
+    {
+      "namespace": "Machinery",
+      "uri": "http://opcfoundation.org/UA/Machinery/",
+      "severity": "advisory",
+      "rule_id": "BP-Namespace-VersionDrift",
+      "metadata": [
+        {
+          "attribute": "version",
+          "old": null,
+          "new": null,
+          "severity": "advisory",
+          "rule_id": "BP-Namespace-VersionDrift",
+          "rationale": "Version and ModelVersion disagree (\u00a711.3): the release says one base revision, the metadata another.",
+          "clause": "11.3",
+          "note": "Version 1.04.0 and ModelVersion 1.4.0 of http://opcfoundation.org/UA/Machinery/ describe the same release differently"
+        }
+      ],
+      "nodes": {
+        "old": 134,
+        "new": 134,
+        "delta": 0
+      },
+      "references": {
+        "old": 519,
+        "new": 519,
+        "delta": 0
+      },
+      "datatypes": {
+        "old": 0,
+        "new": 0,
+        "delta": 0
+      }
+    },
+    {
+      "namespace": "ShowCaseMachineTool",
+      "uri": "http://umati.org/UA/ShowCaseMachineTool/",
+      "severity": "info",
+      "rule_id": "BP-Namespace-Version",
+      "metadata": [
+        {
+          "attribute": "version",
+          "old": "1.03.0",
+          "new": "1.04.0",
+          "severity": "info",
+          "rule_id": "BP-Namespace-Version",
+          "rationale": "The namespace version changed (\u00a711.3): the release identity moved, not the model.",
+          "clause": "11.3",
+          "note": null
+        },
+        {
+          "attribute": "publication_date",
+          "old": "2026-01-30T12:22:50Z",
+          "new": "2026-02-15T09:00:00Z",
+          "severity": "info",
+          "rule_id": "BP-Namespace-PublicationDate",
+          "rationale": "The publication date changed (\u00a711.3): release metadata only.",
+          "clause": "11.3",
+          "note": null
+        },
+        {
+          "attribute": "required_models",
+          "old": "http://opcfoundation.org/UA/, http://opcfoundation.org/UA/DI/, http://opcfoundation.org/UA/IA/, http://opcfoundation.org/UA/ISA95-JOBCONTROL_V2/, http://opcfoundation.org/UA/MachineTool/, http://opcfoundation.org/UA/Machinery/, http://opcfoundation.org/UA/Machinery/Jobs/",
+          "new": "http://opcfoundation.org/UA/, http://opcfoundation.org/UA/DI/, http://opcfoundation.org/UA/IA/, http://opcfoundation.org/UA/MachineTool/, http://opcfoundation.org/UA/Machinery/",
+          "severity": "info",
+          "rule_id": "BP-Namespace-RequiredModel",
+          "rationale": "A RequiredModel entry changed (\u00a73.2 / OPC 10000-6 ModelTableEntry): the companion declares a different dependency.",
+          "clause": "11.3",
+          "note": null
+        },
+        {
+          "attribute": "required_model_version",
+          "old": "2.0.0",
+          "new": null,
+          "severity": "info",
+          "rule_id": "BP-Namespace-ModelVersion",
+          "rationale": "The ModelVersion of the required base model changed (\u00a711.3): the companion now expects a different OPC UA release.",
+          "clause": "11.3",
+          "note": "http://opcfoundation.org/UA/ISA95-JOBCONTROL_V2/"
+        },
+        {
+          "attribute": "required_model_version",
+          "old": "1.0.1",
+          "new": null,
+          "severity": "info",
+          "rule_id": "BP-Namespace-ModelVersion",
+          "rationale": "The ModelVersion of the required base model changed (\u00a711.3): the companion now expects a different OPC UA release.",
+          "clause": "11.3",
+          "note": "http://opcfoundation.org/UA/Machinery/Jobs/"
+        }
+      ],
+      "nodes": {
+        "old": 86,
+        "new": 86,
+        "delta": 0
+      },
+      "references": {
+        "old": 260,
+        "new": 260,
+        "delta": 0
+      },
+      "datatypes": {
+        "old": 0,
+        "new": 0,
+        "delta": 0
+      }
+    }
+  ],
   "breaking_changes": [
     {
       "label": "ProductInstanceUri",
       "node_id": "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6002",
       "reason": "DataType: String (i=12) \u2192 Double (i=11)",
-      "affected_nodes": 52,
-      "breaking": true
+      "affected_nodes": 77,
+      "breaking": true,
+      "severity": "breaking",
+      "rule_id": "BP-DataType-Immutable",
+      "rationale": "The DataType of a published Variable or InstanceDeclaration shall not change (\u00a73.2.12): readers decode the value with the old type.",
+      "clause": "3.2.12"
+    },
+    {
+      "label": "ControlIdentifier1",
+      "node_id": "nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6302",
+      "reason": "identifier moved: i=6022 \u2192 i=6302",
+      "affected_nodes": 77,
+      "breaking": true,
+      "severity": "breaking",
+      "rule_id": "BP-NodeId-Immutable",
+      "rationale": "The NodeId of a published node changed (\u00a73.2.17): identifiers shall not change, and a consumer that resolves the node by identifier now reaches nothing or the wrong node. Add new identifiers instead of renumbering, and publish a new namespace for a breaking change (\u00a711.3).",
+      "clause": "3.2.17"
     }
-  ]
+  ],
+  "advisory_changes": []
 }

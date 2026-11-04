@@ -1,17 +1,18 @@
-# Demo 4: Breaking datatype and modelling-rule changes in Machinery Identification
+# Demo 4: Breaking datatype, modelling-rule, removal and enum changes
 
-This demo changes a standard Companion Specification declaration, not the showcase
+This demo changes standard Companion Specification declarations, not the showcase
 instance. Both configurations use the original showcase and the same dependency inputs,
-except for Machinery:
+except for Machinery and MachineTool:
 
-| Configuration | Machinery input | Output |
-| --- | --- | --- |
-| [config_original.yaml](config_original.yaml) | [Original NodeSet](../nodesets/Opc.Ua.Machinery.NodeSet2.xml) | [original.xml](original.xml) |
-| [config_modified.yaml](config_modified.yaml) | [Modified NodeSet](../nodesets/Opc.Ua.Machinery.NodeSet2-Modified.xml) | [modified.xml](modified.xml) |
+| Configuration | Machinery input | MachineTool input | Output |
+| --- | --- | --- | --- |
+| [config_original.yaml](config_original.yaml) | [Original NodeSet](../nodesets/Opc.Ua.Machinery.NodeSet2.xml) | [Original NodeSet](../nodesets/Opc.Ua.MachineTool.NodeSet2.xml) | [original.xml](original.xml) |
+| [config_modified.yaml](config_modified.yaml) | [Modified NodeSet](../nodesets/Opc.Ua.Machinery.NodeSet2-Modified.xml) | [Modified NodeSet](../nodesets/Opc.Ua.MachineTool.NodeSet2-Modified.xml) | [modified.xml](modified.xml) |
 
-The modified input is a **deliberately incompatible local test fixture**, not an official
-revision of the Companion Specification. The original source is unchanged. The earlier
-Machinery/Jobs mutation is not loaded by either configuration.
+The modified inputs are **deliberately incompatible local test fixtures**, not official
+revisions of the Companion Specifications. The original sources are unchanged. The earlier
+Machinery/Jobs mutation is not loaded by either configuration: the export reduces those
+enums away, so it would never reach the diff.
 
 ## What changed?
 
@@ -53,6 +54,32 @@ this is a breaking type-contract change even though its datatype remains String.
 The existing diff policy classifies Optional-to-Mandatory tightening as breaking;
 the reverse Mandatory-to-Optional change is not classified as breaking by that policy.
 
+A third edit drops an *optional* declaration entirely. The modified Machinery input has no
+`ManufacturerUri` variable and no `HasProperty` reference to it:
+
+```text
+nsu=http://opcfoundation.org/UA/Machinery/;i=6007
+ManufacturerUri: declaration removed (MachineIdentificationType lost its HasProperty)
+```
+
+Removing an optional declaration is still breaking (`BP-Declaration-Removed-Optional`,
+`BP-Reference-OptionalChild-Removed`): consumers that browsed the optional property now
+find nothing. Being optional removes the promise a server must keep, not the promise a
+reader may already rely on.
+
+A fourth edit adds a value to an enum in the modified MachineTool input:
+
+```text
+nsu=http://opcfoundation.org/UA/MachineTool/;i=62
+ProcessIrregularity: + NotApplicable = 4
+EnumValues: ArrayDimensions 4 -> 5
+```
+
+An added enum value is breaking (`BP-EnumValue-Added`): existing readers that switch on the
+value set now meet a value they do not know, and the `EnumValues` list grows with it
+(`BP-ArrayDimensions-Immutable`). MachineTool is chosen because its enums survive the
+reduction; the Machinery/Jobs enums do not.
+
 ## No extra root is needed
 
 Both configurations select **only** the original showcase root:
@@ -79,9 +106,10 @@ nodeset-linker link examples\demo4\config_original.yaml
 nodeset-linker link examples\demo4\config_modified.yaml
 ```
 
-Both load 6,655 nodes and retain 1,110. Core's 4,956 declarations remain external,
-and 589 non-external declarations are removed (34.7%). The merged outputs are
-included in this folder and can be regenerated in place.
+Both load 6,655 nodes; the original retains 1,110 and the modified retains 1,109, because
+the removed declaration is no longer part of the closure. Core's 4,956 declarations remain
+external, and 589 / 590 non-external declarations are removed (about 35%). The merged
+outputs are included in this folder and can be regenerated in place.
 
 ## 2. Compare the models
 
@@ -93,11 +121,12 @@ Expected results:
 
 | Measure | Result |
 | --- | --- |
-| Original / modified nodes | 1,110 / 1,110 |
-| Added / removed / renumbered nodes | 0 / 0 / 0 |
-| Modified nodes | 2: ProductInstanceUri (i=6015) and Location (i=6029), both Machinery |
-| Breaking changes | 2: datatype change and Optional-to-Mandatory tightening |
-| Impact | 165 dependent labels |
+| Original / modified nodes | 1,110 / 1,109 |
+| Added / removed / renumbered nodes | 0 / 1 / 0 |
+| Modified nodes | 5, including `ProductInstanceUri` (i=6015) and `Location` (i=6029) |
+| Breaking changes | 6: datatype, modelling rule, declaration removal, reference removal, enum value, array dimensions |
+| Advisory | 3 namespace-metadata findings |
+| Impact | 494 dependent nodes |
 
 The changed declarations are displayed as:
 
@@ -106,14 +135,25 @@ ProductInstanceUri [Variable, ns=Machinery, i=6015]
   DataType: String (i=12) -> Double (i=11)
 Location [Variable, ns=Machinery, i=6029]
   Modelling rule: Optional -> Mandatory
+MachineryItemIdentificationType [ObjectType, ns=Machinery]
+  - HasProperty -> ManufacturerUri (ns=Machinery, i=6007)
+ManufacturerUri [Variable, ns=Machinery, i=6007]
+  Variable removed
+ProcessIrregularity [DataType, ns=MachineTool, i=62]
+  + NotApplicable = 4
+EnumValues [Variable, ns=MachineTool, i=190]
+  ArrayDimensions: 4 -> 5
 ```
 
-The existing diff rules classify both edits as breaking. Impact includes
-`MachineIdentificationType` and `ShowCaseMachineTool`, demonstrating how a changed standard
-type contract reaches downstream consumers. The 165 labels are potential graph dependents,
-not 165 edited nodes or a guarantee of application failures. Both edits reach overlapping
-dependents, so their combined impact is 165 unique labels, not 330. The
-[JSON report](diff.json) contains the complete impacted-label list.
+The diff rules classify all six findings as breaking. The updated `EnumValues` variable
+also carries *information* verdicts, because instance data and server-specific attributes
+are edits the paper does not treat as contract breaks.
+
+Impact includes `MachineIdentificationType` and `ShowCaseMachineTool`, demonstrating how a
+changed standard type contract reaches downstream consumers. The removed optional property
+pulls the widest set, so the four edits reach overlapping dependents and total 494 distinct
+dependent nodes rather than the sum of the per-finding counts. The
+[JSON report](diff.json) contains the impacted-label list per finding.
 
 ## 3. Generate analysis reports and test the CI gate
 

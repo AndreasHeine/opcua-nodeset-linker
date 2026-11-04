@@ -6668,7 +6668,7 @@
       <Reference ReferenceType="GeneratesEvent" IsForward="false">ns=4;i=28</Reference>
     </References>
   </UAObjectType>
-  <UAVariable NodeId="ns=4;i=190" BrowseName="EnumValues" DataType="i=7594" ValueRank="1" ArrayDimensions="4" ParentNodeId="ns=4;i=62">
+  <UAVariable NodeId="ns=4;i=190" BrowseName="EnumValues" DataType="i=7594" ValueRank="1" ArrayDimensions="5" ParentNodeId="ns=4;i=62">
     <DisplayName>EnumValues</DisplayName>
     <References>
       <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
@@ -6741,6 +6741,23 @@
               <uax:Description>
                 <uax:Locale>en</uax:Locale>
                 <uax:Text>A statement about the process irregularity is to be expected.</uax:Text>
+              </uax:Description>
+            </uax:EnumValueType>
+          </uax:Body>
+        </uax:ExtensionObject>
+        <uax:ExtensionObject>
+          <uax:TypeId>
+            <uax:Identifier>i=7616</uax:Identifier>
+          </uax:TypeId>
+          <uax:Body>
+            <uax:EnumValueType>
+              <uax:Value>4</uax:Value>
+              <uax:DisplayName>
+                <uax:Text>NotApplicable</uax:Text>
+              </uax:DisplayName>
+              <uax:Description>
+                <uax:Locale>en</uax:Locale>
+                <uax:Text>Process irregularities are not applicable to this job.</uax:Text>
               </uax:Description>
             </uax:EnumValueType>
           </uax:Body>
@@ -11947,6 +11964,9 @@
       <Field Name="NotYetDetermined" Value="3">
         <Description>A statement about the process irregularity is to be expected.</Description>
       </Field>
+      <Field Name="NotApplicable" Value="4">
+        <Description>Process irregularities are not applicable to this job.</Description>
+      </Field>
     </Definition>
   </UADataType>
   <UADataType NodeId="ns=4;i=63" BrowseName="4:PartQuality">
@@ -12545,7 +12565,6 @@
       <Reference ReferenceType="HasProperty">ns=5;i=6010</Reference>
       <Reference ReferenceType="HasProperty">ns=5;i=6006</Reference>
       <Reference ReferenceType="HasProperty">ns=5;i=6002</Reference>
-      <Reference ReferenceType="HasProperty">ns=5;i=6007</Reference>
       <Reference ReferenceType="HasProperty">ns=5;i=6008</Reference>
       <Reference ReferenceType="HasProperty">ns=5;i=6005</Reference>
       <Reference ReferenceType="HasProperty">ns=5;i=6009</Reference>
@@ -13220,15 +13239,6 @@
   <UAVariable NodeId="ns=5;i=6006" BrowseName="5:InitialOperationDate" DataType="i=13" ParentNodeId="ns=5;i=1004">
     <DisplayName>InitialOperationDate</DisplayName>
     <Description>The date, when the MachineryItem was switched on the first time after it has left the manufacturer plant.</Description>
-    <References>
-      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
-      <Reference ReferenceType="HasProperty" IsForward="false">ns=5;i=1004</Reference>
-      <Reference ReferenceType="HasModellingRule">i=80</Reference>
-    </References>
-  </UAVariable>
-  <UAVariable NodeId="ns=5;i=6007" BrowseName="1:ManufacturerUri" DataType="i=12" ParentNodeId="ns=5;i=1004">
-    <DisplayName>ManufacturerUri</DisplayName>
-    <Description>A globally unique identifier of the manufacturer of the MachineryItem.</Description>
     <References>
       <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
       <Reference ReferenceType="HasProperty" IsForward="false">ns=5;i=1004</Reference>

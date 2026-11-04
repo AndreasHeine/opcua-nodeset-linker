@@ -62,10 +62,27 @@ The current result is:
 | Measure | Result |
 | --- | --- |
 | Original / modified node counts | 1,110 / 1,110 |
-| Added / removed / renumbered nodes | 0 / 0 / 0 |
+| Added / removed / renumbered nodes | 0 / 0 / 1 |
 | Modified nodes | 1 |
-| Breaking changes | 1 |
-| Impact | 52 dependent node labels |
+| Breaking changes | 2 |
+| Advisory and information findings | namespace metadata only |
+| Impact | 78 dependent nodes (52 per changed node) |
+
+Two edits sit in the modified input:
+
+```text
+nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6002
+ProductInstanceUri: DataType String (i=12) -> Double (i=11)
+
+nsu=http://umati.org/UA/ShowCaseMachineTool/;i=6022 -> ;i=6302
+ControlIdentifier1: identifier moved
+```
+
+Both are breaking: the datatype of a published variable is part of its contract
+(`BP-DataType-Immutable`), and a published identifier never changes
+(`BP-NodeId-Immutable`). The renumbered node is reported once, on the node itself; the
+reference that points at it is resolved through the move and does not also read as a
+detached child.
 
 The changed variable is:
 
@@ -84,10 +101,18 @@ The standard names match the OPC UA reference:
 [String, i=12](https://reference.opcfoundation.org/specs/OPC-10000-5/12.2.11.md) and
 [Double, i=11](https://reference.opcfoundation.org/specs/OPC-10000-5/12.2.9.2.md).
 
-`--impact` walks reverse semantic dependency edges. It reports 52 dependent labels,
-including `Identification` and `ShowCaseMachineTool`. These are potential graph
-dependents, not a claim that 52 nodes were edited or that every application will fail.
-The [JSON report](diff.json) contains the full impacted-label list.
+The modified input also carries a newer release of its own namespace: `Model` now reads
+`Version="1.04.0"` with a later `PublicationDate`, and its `RequiredModel` list names
+fewer dependencies than the original file. A metadata-only change is *information* on the
+namespace entry (`BP-Namespace-Version`, `BP-Namespace-PublicationDate`,
+`BP-Namespace-ModelVersion`) and never gates CI. The dependency namespaces additionally
+report `BP-Namespace-VersionDrift` as *advisory*, because `Version` and `ModelVersion`
+spell the same release differently; advisory findings do not fail a run either.
+
+`--impact` walks reverse semantic dependency edges. Each changed node pulls 52 dependent
+nodes, and the two changes overlap, so the report totals 78 distinct dependents. These are
+potential graph dependents, not a claim that 78 nodes were edited or that every application
+will fail. The [JSON report](diff.json) contains the impacted-label list per finding.
 
 **Intentional incompatibility:** the modified input still carries a `<String>` value
 for `ProductInstanceUri` although its declared datatype is now Double. This demo keeps
@@ -122,8 +147,10 @@ nodeset-linker diff examples\demo3\original.xml examples\demo3\modified.xml --im
 $LASTEXITCODE
 ```
 
-The expected exit code is **1** because of the detected datatype change. A normal diff
-command without `--fail-on-breaking` succeeds with exit code 0 even when it finds changes.
+The expected exit code is **1** because of the two breaking findings: the datatype change
+and the moved identifier. Advisory and information findings - namespace metadata, version
+drift - do not change the exit code. A normal diff command without `--fail-on-breaking`
+succeeds with exit code 0 even when it finds changes.
 
 To check the exported document structure and the validator's supported semantic checks:
 
