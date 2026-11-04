@@ -56,6 +56,7 @@ from nodeset_linker.models.node import (
 from nodeset_linker.models.node_class import ModellingRule, NodeClass, NodeRole
 from nodeset_linker.models.standard import STANDARD_DATA_TYPE_NAMES
 from nodeset_linker.repository.model import SemanticModel
+from nodeset_linker.validator.semantic import ExternalSet, declared_external_namespaces
 
 #: Diff identity: namespace URI plus local identifier.  An index is a document property.
 Identity = tuple[str, NodeId]
@@ -218,10 +219,20 @@ def diff_models(
     *,
     old_source: str = "",
     new_source: str = "",
+    reduced_export: bool = False,
 ) -> SemanticDiff:
-    """Compare two semantic models and report the changes of the information model."""
+    """Compare two semantic models and report the changes of the information model.
+
+    ``reduced_export`` says the *new* file is a Linker export that deliberately ships less
+    than the source: nodes whose namespace the export declares as a ``RequiredModel`` are
+    reported as externalized (§11.2) instead of as removals (§3.2.16).  It is an explicit
+    option, not a guess — nothing here is silently forgiven.
+    """
     old_index = ModelIndex.of(old)
     new_index = ModelIndex.of(new)
+    externalized: ExternalSet = (
+        declared_external_namespaces(new) if reduced_export else frozenset()
+    )
 
     gone = sorted(set(old_index.nodes) - set(new_index.nodes), key=_sort_key)
     fresh = sorted(set(new_index.nodes) - set(old_index.nodes), key=_sort_key)
@@ -255,7 +266,8 @@ def diff_models(
             for node in added_nodes
         ],
         removed=[
-            _entry(node, old_index, verdicts=_removal_verdicts(node)) for node in removed_nodes
+            _entry(node, old_index, verdicts=_removal_verdicts(node, externalized))
+            for node in removed_nodes
         ],
         modified=_modified_nodes(shared, old_index, new_index),
         renumbered=renumbered,
@@ -577,15 +589,21 @@ def _entry(
     )
 
 
-def _removal_verdicts(node: UANode) -> tuple[RuleVerdict, ...]:
+def _removal_verdicts(
+    node: UANode, externalized: ExternalSet = frozenset()
+) -> tuple[RuleVerdict, ...]:
     """The rule verdicts for a node that vanished from the model.
 
     Types, encodings and placeholders are part of the published contract; so is an
     explicitly ``Mandatory`` declaration.  Nodes of the OPC UA namespace are not this
-    model's declarations, and an optional declaration carries no promise.  A removed
-    ConformanceUnit or Profile additionally loses test scope (§12.1, §12.2), which is
-    worth naming even where the removal itself is not what breaks a consumer.
+    model's declarations, and an optional declaration carries no promise.  A node whose
+    namespace the new document declares as a ``RequiredModel`` was externalized by the
+    export (§11.2), not removed.  A removed ConformanceUnit or Profile additionally loses
+    test scope (§12.1, §12.2), which is worth naming even where the removal itself is not
+    what breaks a consumer.
     """
+    if node.node_id.namespace in externalized:
+        return (verdict("declaration_externalized"),)
     verdicts = [_removal_base_verdict(node)]
     conformance = _conformance_role(node)
     if conformance is not None:

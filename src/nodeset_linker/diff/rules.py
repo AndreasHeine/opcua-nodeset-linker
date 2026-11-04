@@ -278,6 +278,14 @@ _RULES: dict[str, RuleVerdict] = {
         "BP-Declaration-Removed-Standard",
         "3.2.16",
     ),
+    "declaration_externalized": RuleVerdict(
+        Severity.INFO,
+        "The node left this document because its namespace is declared as a RequiredModel "
+        "(§11.2): a reduced export externalizes it, and consumers still reach it through "
+        "that model, so this is a linker operation rather than a removal from the contract.",
+        "BP-Declaration-Externalized",
+        "11.2",
+    ),
     "node_added": RuleVerdict(
         Severity.INFO,
         "A declaration was added (§3.2.2): existing consumers keep working.",

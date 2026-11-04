@@ -101,6 +101,11 @@ an explicitly mandatory node (`_removal_breaking`). `_is_explicitly_mandatory` i
 never treats OPC-UA-namespace nodes as mandatory, because Part 5 declares no modelling rules
 there.
 
+`--reduced-export` carves out a Linker export (§11.2): when the new file declares a namespace
+as a `RequiredModel` but ships no nodes of it, the nodes that left are reported as
+`BP-Declaration-Externalized` information instead of as removals. The option is explicit, not
+a guess — a namespace the export neither ships nor declares is still a real removal (§3.2.16).
+
 ### 2.4 Namespace totals and release metadata
 
 `NamespaceChange` reports per namespace URI: node count, reference count, datatype count,

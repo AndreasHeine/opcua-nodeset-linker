@@ -250,6 +250,12 @@ def validate(output: Path, schema: Path | None, best_practices: bool) -> None:
     help="Directory or manifest.json listing the NamespaceUris already published; without it "
     "the verdict says 'baseline unknown' instead of guessing.",
 )
+@click.option(
+    "--reduced-export",
+    is_flag=True,
+    help="The new file is a Linker export: nodes whose namespace it declares as a RequiredModel "
+    "were externalized (§11.2), not removed (§3.2.16), so they are information.",
+)
 @click.option("--output", "-o", type=Path, default=None, help="Write the report to a file.")
 def diff(
     old: Path,
@@ -266,6 +272,7 @@ def diff(
     fail_on_advisory: bool,
     show_release: bool,
     baseline: Path | None,
+    reduced_export: bool,
     output: Path | None,
 ) -> None:
     """Compare two semantic OPC UA models.
@@ -292,7 +299,13 @@ def diff(
     except LinkerError as exc:
         _fail(str(exc))
 
-    result = diff_models(old_model, new_model, old_source=str(old), new_source=str(new))
+    result = diff_models(
+        old_model,
+        new_model,
+        old_source=str(old),
+        new_source=str(new),
+        reduced_export=reduced_export,
+    )
     result.impact_limit = impact_limit
     if context_paths:
         for path in context_paths:
