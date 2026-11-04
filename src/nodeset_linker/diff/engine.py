@@ -424,6 +424,7 @@ def _node_changes(
     if rule is not None:
         changes.append(rule)
     changes.extend(_variable_changes(old_node, new_node, old, new))
+    changes.extend(_method_changes(old_node, new_node, old, new))
     changes.extend(_definition_changes(old_node, new_node, old, new))
     changes.extend(_hierarchy_changes(old_node, new_node, old, new))
     changes.extend(_reference_changes(old_node, new_node, old, new))
@@ -502,6 +503,103 @@ def _variable_changes(
             )
         )
     return changes
+
+
+def _method_changes(
+    old_node: UANode, new_node: UANode, old: ModelIndex, new: ModelIndex
+) -> list[Change]:
+    """§3.2.11: a method keeps its arguments, their types, ranks and array dimensions."""
+    if old_node.node_class is not NodeClass.METHOD and new_node.node_class is not NodeClass.METHOD:
+        return []
+    changes: list[Change] = []
+    old_args = _method_arguments(old, old_node)
+    new_args = _method_arguments(new, new_node)
+    for name in sorted(set(old_args) - set(new_args)):
+        changes.append(
+            Change(
+                area="method",
+                kind="removed",
+                subject=name,
+                old=old_args[name],
+                verdict=verdict("method_signature"),
+            )
+        )
+    for name in sorted(set(new_args) - set(old_args)):
+        changes.append(
+            Change(
+                area="method",
+                kind="added",
+                subject=name,
+                new=new_args[name],
+                verdict=verdict("method_signature"),
+            )
+        )
+    for name in sorted(set(old_args) & set(new_args)):
+        if old_args[name] != new_args[name]:
+            changes.append(
+                Change(
+                    area="method",
+                    kind="changed",
+                    subject=name,
+                    old=old_args[name],
+                    new=new_args[name],
+                    verdict=verdict("method_signature"),
+                )
+            )
+    if old_node.method_declaration_id != new_node.method_declaration_id:
+        changes.append(
+            Change(
+                area="method",
+                kind="changed",
+                subject="MethodDeclarationId",
+                old=_reference_label(old, old_node.method_declaration_id),
+                new=_reference_label(new, new_node.method_declaration_id),
+                verdict=verdict("method_signature"),
+            )
+        )
+    return changes
+
+
+def _method_arguments(index: ModelIndex, node: UANode) -> dict[str, str]:
+    """The argument variables a method is contracted with, keyed by their BrowseName."""
+    arguments: dict[str, str] = {}
+    for other in index.nodes.values():
+        if not isinstance(other, UAVariable) or other.node_id == node.node_id:
+            continue
+        if not _is_argument_of(other, node.node_id):
+            continue
+        arguments[other.browse_name.name or other.node_id.identifier.as_xml()] = _argument_contract(
+            index, other
+        )
+    return arguments
+
+
+def _is_argument_of(argument: UAVariable, method_id: ExpandedNodeId) -> bool:
+    """An argument hangs on its method as a property, forward or inverse."""
+    parent = argument.parent_node_id
+    if parent is not None and identity(parent) == identity(method_id):
+        return True
+    return any(
+        _reference_key(ref)[0] == "HasProperty"
+        and not ref.is_forward
+        and identity(ref.target) == identity(method_id)
+        for ref in argument.references
+    )
+
+
+def _argument_contract(index: ModelIndex, argument: UAVariable) -> str:
+    """What a caller must pass for one argument."""
+    parts = [
+        f"DataType={index.label(argument.data_type) if argument.data_type else '-'}",
+        f"ValueRank={_text(argument.value_rank) or '-'}",
+        f"ArrayDimensions={_joined(argument.array_dimensions) or '-'}",
+    ]
+    if argument.role is NodeRole.ARGUMENT:
+        # The older style spells the whole argument list inside the property value.
+        listed = _normalized(argument.value_xml)
+        if listed:
+            parts.append(f"Arguments={listed}")
+    return ", ".join(parts)
 
 
 def _definition_changes(

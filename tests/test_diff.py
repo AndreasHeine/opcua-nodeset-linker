@@ -14,6 +14,7 @@ from tests.conftest import (
     Machinery_NS,
     enum_definition,
     make_data_type,
+    make_method,
     make_object_type,
     make_reference_type,
     make_variable,
@@ -44,7 +45,7 @@ from nodeset_linker.models.node import (
     StructureField,
     UnionAlternative,
 )
-from nodeset_linker.models.node_class import ModellingRule
+from nodeset_linker.models.node_class import ModellingRule, NodeRole
 from nodeset_linker.models.standard import STANDARD_DATA_TYPE_IDS
 from nodeset_linker.repository.model import SemanticModel, build_model, load_nodesets
 
@@ -794,6 +795,110 @@ class TestNodeAttributes:
         diff = diff_models(build_model([old]), build_model([old.with_value("<Int32>7</Int32>")]))
         assert labels(diff.modified) == {"Count"}
         assert not diff.breaking
+
+
+class TestMethodSignature:
+    """§3.2.11: the arguments a method was published with are a contract."""
+
+    @staticmethod
+    def signature(diff: SemanticDiff, method: str = "StartJob") -> list[tuple[str, str | None]]:
+        """The method-level findings for one method, in report order."""
+        entries = [item for item in diff.modified if item.label == method]
+        return [
+            (change.kind, change.subject)
+            for entry in entries
+            for change in entry.changes
+            if change.area == "method"
+        ]
+
+    def test_argument_removal_is_breaking(self, tmp_path) -> None:
+        new = BASE.replace(
+            """  <UAVariable NodeId="ns=1;i=2202" BrowseName="InputArguments" ParentNodeId="ns=1;i=2201" DataType="Argument" ValueRank="1" ArrayDimensions="0">
+    <DisplayName>InputArguments</DisplayName>
+    <References>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=2201</Reference>
+    </References>
+  </UAVariable>
+""",
+            "",
+        )
+        _, _, diff = diff_texts(tmp_path, BASE, new)
+        assert diff.breaking
+        # §3.2.11 names the method, §3.2.16 names the declaration that disappeared.
+        assert {"BP-MethodSignature-Immutable", "BP-Declaration-Removed-Optional"} <= {
+            change.rule_id for change in diff.breaking
+        }
+        assert self.signature(diff) == [("removed", "InputArguments")]
+
+    def test_argument_addition_is_breaking(self, tmp_path) -> None:
+        new = BASE.replace(
+            '      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=2201</Reference>\n    </References>\n  </UAVariable>\n  <UAVariable NodeId="ns=1;i=2203"',
+            '      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=2201</Reference>\n    </References>\n  </UAVariable>\n  <UAVariable NodeId="ns=1;i=2204" BrowseName="Timeout" ParentNodeId="ns=1;i=2201" DataType="Int32">\n    <DisplayName>Timeout</DisplayName>\n    <References>\n      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=2201</Reference>\n    </References>\n  </UAVariable>\n  <UAVariable NodeId="ns=1;i=2203"',
+        )
+        _, _, diff = diff_texts(tmp_path, BASE, new)
+        assert self.signature(diff) == [("added", "Timeout")]
+
+    def test_argument_data_type_change_is_breaking(self, tmp_path) -> None:
+        new = BASE.replace(
+            'NodeId="ns=1;i=2202" BrowseName="InputArguments" ParentNodeId="ns=1;i=2201" DataType="Argument"',
+            'NodeId="ns=1;i=2202" BrowseName="InputArguments" ParentNodeId="ns=1;i=2201" DataType="String"',
+        )
+        _, _, diff = diff_texts(tmp_path, BASE, new)
+        assert diff.breaking
+        # §3.2.11 names the method and §3.2.12 names the argument variable that changed.
+        assert {change.rule_id for change in diff.breaking} == {
+            "BP-MethodSignature-Immutable",
+            "BP-DataType-Immutable",
+        }
+        assert self.signature(diff) == [("changed", "InputArguments")]
+
+    def test_argument_rank_and_dimensions_changes_are_breaking(self, tmp_path) -> None:
+        new = BASE.replace(
+            'BrowseName="OutputArguments" ParentNodeId="ns=1;i=2201" DataType="Argument" ValueRank="1" ArrayDimensions="0"',
+            'BrowseName="OutputArguments" ParentNodeId="ns=1;i=2201" DataType="Argument" ValueRank="-1" ArrayDimensions="2"',
+        )
+        _, _, diff = diff_texts(tmp_path, BASE, new)
+        assert diff.breaking
+        assert self.signature(diff) == [("changed", "OutputArguments")]
+
+    def test_argument_list_value_change_is_breaking(self) -> None:
+        old_arg = replace(
+            make_variable("InputArguments", 7960, data_type=node_id(24136)),
+            role=NodeRole.ARGUMENT,
+            parent_node_id=node_id(7961),
+            value_xml="<ArgumentList><Argument><Name>JobId</Name></Argument></ArgumentList>",
+        )
+        new_arg = replace(
+            old_arg,
+            value_xml=(
+                "<ArgumentList><Argument><Name>JobId</Name></Argument>"
+                "<Argument><Name>Timeout</Name></Argument></ArgumentList>"
+            ),
+        )
+        method = make_method("StartJob", 7961)
+        diff = diff_models(build_model([method, old_arg]), build_model([method, new_arg]))
+        assert diff.breaking
+        assert diff.breaking[0].rule_id == "BP-MethodSignature-Immutable"
+        entry = next(item for item in diff.modified if item.label == "StartJob")
+        assert self.signature(diff, "StartJob") == [("changed", "InputArguments")]
+        change = next(change for change in entry.changes if change.area == "method")
+        assert "JobId" in str(change.old) and "Timeout" in str(change.new)
+
+    def test_method_declaration_change_is_breaking(self) -> None:
+        old = replace(make_method("StartJob", 7962), method_declaration_id=node_id(2100))
+        new = replace(old, method_declaration_id=node_id(2101))
+        diff = diff_models(build_model([old]), build_model([new]))
+        # The instance now points at a different declared method.
+        assert diff.breaking
+        assert self.signature(diff, "StartJob") == [("changed", "MethodDeclarationId")]
+
+    def test_argument_display_name_edit_is_not_breaking(self, tmp_path) -> None:
+        new = BASE.replace(
+            "<DisplayName>InputArguments</DisplayName>", "<DisplayName>Input Arguments</DisplayName>"
+        )
+        _, _, diff = diff_texts(tmp_path, BASE, new)
+        assert not diff.breaking
+        assert self.signature(diff) == []
 
 
 class TestBestPracticeRules:
