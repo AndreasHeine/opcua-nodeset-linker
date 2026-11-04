@@ -193,6 +193,7 @@ def _sections(
             if not breaking_only or entry.severity is Severity.BREAKING
         ]
 
+    limit = diff.impact_limit
     sections = [
         Section(
             title="Summary",
@@ -206,19 +207,22 @@ def _sections(
 
     if not breaking_only and diff.added:
         sections.append(
-            Section(title="Added nodes", entries=tuple(_node_line(e) for e in diff.added))
+            Section(title="Added nodes", entries=tuple(_node_line(e, limit) for e in diff.added))
         )
 
     removed = kept(diff.removed)
     if removed:
         sections.append(
-            Section(title="Removed nodes", entries=tuple(_node_line(e) for e in removed))
+            Section(title="Removed nodes", entries=tuple(_node_line(e, limit) for e in removed))
         )
 
     modified = kept(diff.modified)
     if modified:
         sections.append(
-            Section(title="Modified nodes", entries=tuple(_modification_line(e) for e in modified))
+            Section(
+                title="Modified nodes",
+                entries=tuple(_modification_line(e, limit) for e in modified),
+            )
         )
 
     renumbered = kept(diff.renumbered)
@@ -226,7 +230,7 @@ def _sections(
         sections.append(
             Section(
                 title="Renumbered nodes",
-                entries=tuple(_renumbered_line(entry) for entry in renumbered),
+                entries=tuple(_renumbered_line(entry, limit) for entry in renumbered),
             )
         )
 
@@ -326,31 +330,33 @@ def _node_count(count: int, *, prefix: str = "Total Impact: ") -> str:
     return f"{prefix}{count} node" if count == 1 else f"{prefix}{count} nodes"
 
 
-def _impact_details(impact: tuple[str, ...], *, count_only: bool = False) -> tuple[str, ...]:
-    """Dependent nodes of a change; a long list is truncated for the terminal."""
+def _impact_details(
+    impact: tuple[str, ...], *, count_only: bool = False, limit: int | None = None
+) -> tuple[str, ...]:
+    """Dependent nodes of a change; a long list is truncated, while the count stays exact."""
     if not impact:
         return ()
     if count_only:
         return (_node_count(len(impact), prefix="Impact: "),)
-    shown = [f"Impact: {name}" for name in impact[:8]]
-    if len(impact) > 8:
-        shown.append(f"... and {len(impact) - 8} more")
+    shown = [f"Impact: {name}" for name in impact[:limit]]
+    if limit is not None and len(impact) > limit:
+        shown.append(f"... and {len(impact) - limit} more")
     return tuple(shown)
 
 
-def _node_line(entry: NodeEntry) -> Entry:
-    return Entry(header=_node_header(entry), details=_impact_details(entry.impact))
+def _node_line(entry: NodeEntry, limit: int | None) -> Entry:
+    return Entry(header=_node_header(entry), details=_impact_details(entry.impact, limit=limit))
 
 
-def _modification_line(entry: NodeModification) -> Entry:
+def _modification_line(entry: NodeModification, limit: int | None) -> Entry:
     details = tuple(change.describe() for change in entry.changes)
     return Entry(
         header=_node_header(entry),
-        details=details + _impact_details(entry.impact, count_only=True),
+        details=details + _impact_details(entry.impact, count_only=True, limit=limit),
     )
 
 
-def _renumbered_line(entry: RenumberedNode) -> Entry:
+def _renumbered_line(entry: RenumberedNode, limit: int | None) -> Entry:
     old = entry.old_node_id.identifier.as_xml()
     new = entry.new_node_id.identifier.as_xml()
     header = f"{entry.label} [{entry.node_class}, ns={entry.namespace}]: {old} {ARROW} {new}"
@@ -359,7 +365,10 @@ def _renumbered_line(entry: RenumberedNode) -> Entry:
         details += (
             "Pairing inferred from namespace, BrowseName and node class; check it by hand.",
         )
-    return Entry(header=header, details=details + _impact_details(entry.impact, count_only=True))
+    return Entry(
+        header=header,
+        details=details + _impact_details(entry.impact, count_only=True, limit=limit),
+    )
 
 
 def _namespace_line(entry: NamespaceChange) -> Entry:

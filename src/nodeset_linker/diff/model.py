@@ -9,12 +9,21 @@ from __future__ import annotations
 
 import json
 from collections import Counter
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
 from nodeset_linker.diff.rules import PAPER, RuleVerdict, Severity
 from nodeset_linker.models.identifiers import ExpandedNodeId
+
+#: How many impacted nodes a report and the JSON payload list; the count stays exact.
+DEFAULT_IMPACT_LIMIT = 50
+
+
+def _impacted(ids: Sequence[ExpandedNodeId], limit: int | None) -> list[str]:
+    """Impacted identifiers as XML, truncated to what a report shows."""
+    return [identifier.as_xml() for identifier in ids[:limit]]
+
 
 #: Machine kind of a change → the label used in human-readable output.
 CHANGE_LABELS: dict[str, str] = {
@@ -123,7 +132,16 @@ class NodeEntry:
     #: The NamespaceUri the node lives in; ``namespace`` is the document-local alias (§11.1).
     namespace_uri: str = ""
     verdicts: tuple[RuleVerdict, ...] = ()
+    #: Human labels of the impacted nodes, for reports.
     impact: tuple[str, ...] = ()
+    #: Identifiers of the impacted nodes — the authoritative list (§WP 13: a label alone
+    #: cannot be resolved, and the same BrowseName in two namespaces is two nodes).
+    impact_ids: tuple[ExpandedNodeId, ...] = ()
+
+    @property
+    def impact_total(self) -> int:
+        """Exact number of impacted nodes, independent of what a report shows."""
+        return len(self.impact_ids)
 
     @property
     def breaking(self) -> bool:
@@ -145,7 +163,7 @@ class NodeEntry:
                     return entry_verdict.rule_id
         return None
 
-    def as_json(self) -> dict[str, Any]:
+    def as_json(self, *, impact_limit: int | None = DEFAULT_IMPACT_LIMIT) -> dict[str, Any]:
         return {
             "label": self.label,
             "node_id": self.node_id.as_xml(),
@@ -155,8 +173,9 @@ class NodeEntry:
             "breaking": self.breaking,
             "severity": self.severity.value,
             "verdicts": [verdict.as_json() for verdict in self.verdicts],
-            "impacted_nodes": list(self.impact),
-            "impact_count": len(self.impact),
+            "impacted_nodes": _impacted(self.impact_ids, impact_limit),
+            "impacted_labels": list(self.impact[:impact_limit]),
+            "impact_count": self.impact_total,
         }
 
 
@@ -172,7 +191,15 @@ class NodeModification:
     namespace_uri: str = ""
     changes: list[Change] = field(default_factory=list)
     verdicts: tuple[RuleVerdict, ...] = ()
+    #: Human labels of the impacted nodes, for reports.
     impact: tuple[str, ...] = ()
+    #: Identifiers of the impacted nodes — the authoritative list.
+    impact_ids: tuple[ExpandedNodeId, ...] = ()
+
+    @property
+    def impact_total(self) -> int:
+        """Exact number of impacted nodes, independent of what a report shows."""
+        return len(self.impact_ids)
 
     @property
     def breaking(self) -> bool:
@@ -207,7 +234,7 @@ class NodeModification:
         """Every rule that judged this entry, entry-level verdicts first."""
         return [*self.verdicts, *[change.verdict for change in self.changes if change.verdict]]
 
-    def as_json(self) -> dict[str, Any]:
+    def as_json(self, *, impact_limit: int | None = DEFAULT_IMPACT_LIMIT) -> dict[str, Any]:
         return {
             "label": self.label,
             "node_id": self.node_id.as_xml(),
@@ -218,8 +245,9 @@ class NodeModification:
             "severity": self.severity.value,
             "verdicts": [verdict.as_json() for verdict in self.all_verdicts()],
             "changes": [change.as_json() for change in self.changes],
-            "impacted_nodes": list(self.impact),
-            "impact_count": len(self.impact),
+            "impacted_nodes": _impacted(self.impact_ids, impact_limit),
+            "impacted_labels": list(self.impact[:impact_limit]),
+            "impact_count": self.impact_total,
         }
 
 
@@ -244,7 +272,15 @@ class RenumberedNode:
     confidence: str = "exact"
     changes: list[Change] = field(default_factory=list)
     verdicts: tuple[RuleVerdict, ...] = ()
+    #: Human labels of the impacted nodes, for reports.
     impact: tuple[str, ...] = ()
+    #: Identifiers of the impacted nodes — the authoritative list.
+    impact_ids: tuple[ExpandedNodeId, ...] = ()
+
+    @property
+    def impact_total(self) -> int:
+        """Exact number of impacted nodes, independent of what a report shows."""
+        return len(self.impact_ids)
 
     @property
     def node_id(self) -> ExpandedNodeId:
@@ -280,7 +316,7 @@ class RenumberedNode:
     def all_verdicts(self) -> list[RuleVerdict]:
         return [*self.verdicts, *[change.verdict for change in self.changes if change.verdict]]
 
-    def as_json(self) -> dict[str, Any]:
+    def as_json(self, *, impact_limit: int | None = DEFAULT_IMPACT_LIMIT) -> dict[str, Any]:
         return {
             "label": self.label,
             "namespace": self.namespace,
@@ -293,8 +329,9 @@ class RenumberedNode:
             "severity": self.severity.value,
             "verdicts": [verdict.as_json() for verdict in self.all_verdicts()],
             "changes": [change.as_json() for change in self.changes],
-            "impacted_nodes": list(self.impact),
-            "impact_count": len(self.impact),
+            "impacted_nodes": _impacted(self.impact_ids, impact_limit),
+            "impacted_labels": list(self.impact[:impact_limit]),
+            "impact_count": self.impact_total,
         }
 
 
@@ -474,6 +511,8 @@ class SemanticDiff:
     breaking: list[BreakingChange] = field(default_factory=list)
     advisory: list[BreakingChange] = field(default_factory=list)
     """Best-practices findings that never gate a release but should be read before one."""
+    #: How many impacted nodes a report lists per entry; counts stay exact.
+    impact_limit: int | None = DEFAULT_IMPACT_LIMIT
 
     @property
     def is_empty(self) -> bool:
@@ -520,15 +559,16 @@ class SemanticDiff:
         }
 
     def as_json(self) -> str:
+        limit = self.impact_limit
         payload = {
             "old": self.old_source,
             "new": self.new_source,
             "paper": PAPER,
             "summary": self.summary(),
-            "added_nodes": [entry.as_json() for entry in self.added],
-            "removed_nodes": [entry.as_json() for entry in self.removed],
-            "modified_nodes": [entry.as_json() for entry in self.modified],
-            "renumbered_nodes": [entry.as_json() for entry in self.renumbered],
+            "added_nodes": [entry.as_json(impact_limit=limit) for entry in self.added],
+            "removed_nodes": [entry.as_json(impact_limit=limit) for entry in self.removed],
+            "modified_nodes": [entry.as_json(impact_limit=limit) for entry in self.modified],
+            "renumbered_nodes": [entry.as_json(impact_limit=limit) for entry in self.renumbered],
             "namespace_changes": [entry.as_json() for entry in self.namespaces],
             "breaking_changes": [entry.as_json() for entry in self.breaking],
             "advisory_changes": [entry.as_json() for entry in self.advisory],

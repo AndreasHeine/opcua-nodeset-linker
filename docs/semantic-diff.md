@@ -117,18 +117,27 @@ flat `BreakingChange` list with a human reason string; `NodeModification.breakin
 
 ### 2.6 Impact (`diff/impact.py`)
 
-`apply_impact(diff, old_model, new_model)` builds a `SemanticGraph` from **both** models and
-walks the *reverse* transitive closure over dependency edges, excluding `DependencyKind.NAMESPACE`
-edges (`Organizes`, `ParentNodeId`) — folders are browsing structure, not a dependency:
+`apply_impact(diff, old_model, new_model, *, context=(), inheritance_depth=3)` builds a
+`SemanticGraph` from **both** models and walks the *reverse* transitive closure over dependency
+edges, excluding `DependencyKind.NAMESPACE` edges (`Organizes`, `ParentNodeId`) — folders are
+browsing structure, not a dependency:
 
 * removed nodes: measured in the **old** model (their consumers still exist there);
 * modified/renumbered nodes: measured in the **new** model (the contract consumers must live
   with); renumbered additionally unions the old-model dependents;
+* `context` adds consumer models — a sibling companion spec, or the spec whose nodes this release
+  externalized — so consumers living outside the two compared files are counted, not skipped;
+* reverse `DependencyKind.INHERITANCE` edges are followed for at most `inheritance_depth` hops
+  (`INHERITANCE_DEPTH_LIMIT = 3`), so removing a base type reports the near generations instead
+  of the whole subtype forest; other dependency kinds are never depth-limited;
 * each breaking entry gets an `affected` count (graph chosen by node existence).
 
-Impact labels are node *labels* (BrowseName/DisplayName strings), deduplicated and sorted;
-phantom vertices (targets not in the model) are skipped. `total_impact(diff)` counts the
-distinct touched labels.
+Impact is reported as **identifiers**: `entry.impact_ids` holds `ExpandedNodeId`s sorted by their
+XML form, which is what `impacted(model, node_id)` returns. `entry.impact` keeps the node *labels*
+(BrowseName/DisplayName strings, deduplicated and sorted) for human reports; a label alone cannot
+be resolved, because the same BrowseName in two namespaces is two nodes. Phantom vertices (targets
+not in any loaded graph) are still skipped as *sources*, and `total_impact(diff)` counts the
+distinct impacted **identifiers**.
 
 ### 2.7 Rendering (`diff/render.py`)
 
@@ -141,6 +150,7 @@ CI.
 
 ```
 nodeset-linker diff old.xml new.xml [--json | --markdown | --html] [--impact]
+                    [--impact-limit N] [--context FILE ...]
                     [--breaking] [--advisory/--no-advisory]
                     [--fail-on-breaking] [--fail-on-advisory]
                     [--release-verdict] [--baseline DIR|manifest.json] [-o FILE]
@@ -148,7 +158,13 @@ nodeset-linker diff old.xml new.xml [--json | --markdown | --html] [--impact]
 
 * exactly **two files**; each is loaded as a single-node `SemanticModel` via
   `load_nodesets([path])`;
-* impact is computed whenever `--impact`, `--breaking` or `--fail-on-breaking` is given;
+* impact is computed whenever `--impact`, `--breaking`, `--fail-on-breaking` or `--context` is
+  given;
+* `--impact-limit N` (default 50) caps how many impacted nodes an entry *lists*; the reported
+  count stays exact, and a truncated list says how many more there are;
+* `--context FILE` is opt-in and repeatable: each consumer model is loaded and its dependency
+  edges join the impact walk, so externalized specs and sibling companion specs count instead of
+  being silently undercounted. Without it, behaviour is exactly as before.
 * `--fail-on-breaking` exits 1 on a BREAKING finding only; `--fail-on-advisory` is a separate,
   opt-in gate; advisory and info findings never gate by default; missing files and parse errors
   exit 1;
@@ -175,7 +191,7 @@ The CI gate documented in README/usage guide:
               "modified_nodes": …, "renumbered_nodes": …, "breaking_changes": …,
               "namespace_changes": …, "identical": false},
   "added_nodes": [ { "label", "node_id", "namespace", "namespace_uri", "node_class", "breaking",
-                     "impacted_nodes", "impact_count" } ],
+                     "impacted_nodes", "impacted_labels", "impact_count" } ],
   "removed_nodes": [ …same… ],
   "modified_nodes": [ { …, "changes": [ {"area","kind","subject","old","new","breaking","text",
                                         "severity","rule_id","rationale","clause"} ] } ],
@@ -197,7 +213,10 @@ list per entry; `paper` names the whitepaper the severities derive from, and `ad
 mirrors `breaking_changes` for findings that never gate. `namespace` is the document-local alias
 while `namespace_uri` is the URI the node lives in (§11.1). `release` appears **only** when the
 caller asked for a verdict (`--release-verdict` or `--baseline`). There is **no schema version
-field**; `impacted_nodes` only appear after impact was applied.
+field**; `impacted_nodes` and `impacted_labels` only appear after impact was applied.
+`impacted_nodes` lists XML identifiers (`nsu=http://opcfoundation.org/UA/Machinery/;i=2200`) and
+`impacted_labels` the human names; both are truncated to `impact_limit`, while `impact_count` is
+always the exact number of distinct impacted identifiers.
 
 ---
 
@@ -287,19 +306,23 @@ removal of optional nodes, namespace versioning, deprecation — are mapped clau
 
 ### 5.4 Impact-level gaps
 
-16. **Impact reports labels, not identifiers.** `_dependents` returns `node_label()` strings.
-    The same BrowseName in two namespaces collapses into one entry, and JSON consumers get
-    strings they cannot resolve; the impact *count* (`total_impact`) is a count of labels, not
-    of nodes.
-17. **Impact excludes externalized and cross-spec consumers.** Phantom vertices are skipped.
-    If the consumers of a changed datatype live in another companion spec that is not loaded
-    (externalized Core, DI, sibling spec), impact **undercounts** them. The diff never loads a
-    context model, so impact is always scoped to the two loaded files.
-18. **Impact direction is uniform.** All non-`NAMESPACE` reverse edges are followed, so
-    removing a base type (`BaseDataType`-level) reports the entire subtype forest as impact —
-    correct but overwhelming; there is no severity or depth limit.
+16. **Impact reported labels, not identifiers** *(closed)*. `_dependents` now returns
+    `ExpandedNodeId`s, `entry.impact_ids` holds them and `total_impact` counts distinct
+    identifiers; labels remain available as `impact`/`impacted_labels` for reports only, so the
+    same BrowseName in two namespaces is no longer collapsed.
+17. **Impact excluded externalized and cross-spec consumers** *(closed)*. `apply_impact` and
+    `--context` take consumer models — externalized Core, DI, a sibling companion spec — and walk
+    their graphs too, so those consumers are counted instead of undercounted. It stays opt-in:
+    without `--context` the walk is scoped to the two loaded files, as before. Phantom vertices are
+    still not treated as impacted *nodes*, because a reference target nobody declares is not a
+    consumer.
+18. **Impact direction was uniform** *(closed)*. Reverse `DependencyKind.INHERITANCE` edges are
+    now followed for at most `INHERITANCE_DEPTH_LIMIT` (3) hops, so a base-type removal reports the
+    near generations rather than the whole subtype forest. Component and interface chains are still
+    followed fully: they are real consumers, not generations.
 19. **Impact is expensive.** `SemanticGraph.from_model()` is built twice per run, and a BFS is
-    run per changed node/entry; nothing is cached or shared across entries.
+    run per changed node/entry; nothing is cached or shared across entries. `--context` adds one
+    graph per consumer file, so a wide fan-out run pays for every consumer model it loads.
 
 ### 5.5 Classification gaps
 
@@ -332,7 +355,8 @@ removal of optional nodes, namespace versioning, deprecation — are mapped clau
     O(changed nodes × graph). For a registry-scale comparison (UA.xml ~5k nodes plus many
     companion specs, thousands of changed nodes between releases), the repeated graph builds
     and per-node BFS dominate runtime and memory; there is no incremental/cached mode.
-27. **Report output does not scale.** Impact lists truncate at 8 names per entry; the flat
+27. **Report output does not scale.** Impact lists truncate at `--impact-limit` names per entry
+    (default 50) and say how many more there are; the flat
     breaking list grows linearly; there is no grouping by namespace, no paging, no summary
     drill-down. HTML has no anchors/collapsing; Markdown release notes become unreadable for
     large diffs.
@@ -432,9 +456,12 @@ release comparison):
     diff should still run, not abort.
 11. **Scoping filters**: `--namespace <uri-or-glob>`, `--exclude-namespace`, browse-name globs,
     `--node-class`, `--ua-baseline off` (drop namespace-0 noise in registry-wide diffs).
-12. **Impact by identifier + context**: emit `ExpandedNodeId` in JSON impact, keep labels for
-    humans; allow loading *context models* (the providers of externalized specs) so consumers
-    in sibling specs are counted (`--with-context <paths…>`).
+12. **Impact by identifier + context** *(implemented)*: JSON impact emits `ExpandedNodeId`s
+    (`impacted_nodes`) and keeps labels for humans (`impacted_labels`); `--context <paths…>` loads
+    context models — the providers of externalized specs — so consumers in sibling specs are
+    counted, and `--impact-limit N` bounds what a report lists while the count stays exact.
+    Reverse inheritance edges stop after 3 hops. What is still open is the shared multi-source BFS
+    of item 13: each context file adds a graph build.
 13. **Performance**: build the two graphs once, index reverse edges once, compute a shared
     multi-source BFS; cache parsed models and graphs (e.g. content-hash keyed) for repeated
     release comparisons; optionally fingerprint namespaces and skip unchanged ones before
@@ -514,7 +541,7 @@ release comparison):
 | P1 | Version/RequiredModel metadata diff (§7.2.7) | Release notes and compatibility decisions depend on it. |
 | P1 | Rule ids + severity + waivers (§7.4.15–16) | Makes CI gating precise instead of all-or-nothing. |
 | P1 | Release verdict over a published namespace (§7.5.20) *(implemented)* | A release that reuses a published NamespaceUri silently breaks consumers (§11.3). |
-| P1 | Impact by NodeId + context loading (§7.3.12) | Impact numbers become trustworthy across specs. |
+| P1 | Impact by NodeId + context loading (§7.3.12) *(done)* | Impact numbers become trustworthy across specs. |
 | P2 | Scoping filters, grouped reports, performance (§7.3.11/13/14) | Usability at registry scale. |
 | P2 | ServerUri, Extensions/RolePermissions, value-dependency diffs (§7.1.4–5) | Correctness for vendor/server-qualified models. |
 | P3 | CU/Profile *retention* policies, release fingerprints and aggregation, PR action (§7.5) | Longer-term roadmap on the existing seams. |

@@ -11,8 +11,15 @@ whitespace and ``NamespaceIndex`` never reach the comparison — identity is
 from __future__ import annotations
 
 from nodeset_linker.diff.engine import diff_models, node_label
-from nodeset_linker.diff.impact import apply_impact, dependents, total_impact
+from nodeset_linker.diff.impact import (
+    INHERITANCE_DEPTH_LIMIT,
+    apply_impact,
+    dependents,
+    impacted,
+    total_impact,
+)
 from nodeset_linker.diff.model import (
+    DEFAULT_IMPACT_LIMIT,
     BreakingChange,
     Change,
     MetadataDelta,
@@ -35,6 +42,8 @@ from nodeset_linker.diff.render import console_text, html_text, markdown_text
 from nodeset_linker.diff.rules import PAPER, RuleContext, RuleVerdict, Severity, verdict
 
 __all__ = [
+    "DEFAULT_IMPACT_LIMIT",
+    "INHERITANCE_DEPTH_LIMIT",
     "PAPER",
     "Baseline",
     "BreakingChange",
@@ -55,6 +64,7 @@ __all__ = [
     "dependents",
     "diff_models",
     "html_text",
+    "impacted",
     "json_text",
     "load_baseline",
     "markdown_text",

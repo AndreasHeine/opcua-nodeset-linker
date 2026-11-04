@@ -6,7 +6,8 @@ nodeset-linker explain --node JobStateEnum config.yaml
 nodeset-linker stats output.xml
 nodeset-linker validate output.xml [--schema tests/data/schema/UANodeSet.xsd]
 nodeset-linker diff old.xml new.xml [--json | --markdown | --html] [--impact] [--breaking]
-    [--advisory/--no-advisory] [--fail-on-breaking] [--fail-on-advisory]
+    [--advisory/--no-advisory] [--impact-limit N] [--context <file>...] [--breaking]
+    [--fail-on-breaking] [--fail-on-advisory]
     [--release-verdict] [--baseline <dir-or-manifest.json>]
 """
 
@@ -24,6 +25,7 @@ from rich.tree import Tree
 
 from nodeset_linker.config.schema import load_config
 from nodeset_linker.diff import (
+    DEFAULT_IMPACT_LIMIT,
     Severity,
     apply_impact,
     console_text,
@@ -191,6 +193,21 @@ def validate(output: Path, schema: Path | None) -> None:
 @click.option("--markdown", is_flag=True, help="Markdown report for a release note or PR.")
 @click.option("--html", is_flag=True, help="Self-contained HTML report.")
 @click.option("--impact", is_flag=True, help="Show the dependent nodes of every change.")
+@click.option(
+    "--impact-limit",
+    type=int,
+    default=DEFAULT_IMPACT_LIMIT,
+    show_default=True,
+    help="How many impacted nodes an entry lists; the reported count stays exact.",
+)
+@click.option(
+    "--context",
+    "context_paths",
+    multiple=True,
+    type=Path,
+    help="Consumer models whose dependencies are counted as well — a sibling companion spec "
+    "or the spec whose nodes the release externalized.",
+)
 @click.option("--breaking", "breaking_only", is_flag=True, help="Report breaking changes only.")
 @click.option(
     "--advisory/--no-advisory",
@@ -229,6 +246,8 @@ def diff(
     markdown: bool,
     html: bool,
     impact: bool,
+    impact_limit: int,
+    context_paths: tuple[Path, ...],
     breaking_only: bool,
     include_advisory: bool,
     fail_on_breaking: bool,
@@ -262,8 +281,19 @@ def diff(
         _fail(str(exc))
 
     result = diff_models(old_model, new_model, old_source=str(old), new_source=str(new))
-    if impact or breaking_only or fail_on_breaking:
-        apply_impact(result, old_model, new_model)
+    result.impact_limit = impact_limit
+    if context_paths:
+        for path in context_paths:
+            if not path.exists():
+                _fail(f"no nodeset file at {path}")
+        try:
+            context = [load_nodesets([path]) for path in context_paths]
+        except LinkerError as exc:
+            _fail(str(exc))
+    else:
+        context = []
+    if impact or breaking_only or fail_on_breaking or context:
+        apply_impact(result, old_model, new_model, context=context)
 
     release = None
     if show_release or baseline is not None:

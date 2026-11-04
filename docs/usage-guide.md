@@ -272,7 +272,14 @@ Breaking changes
 ```
 
 `--impact` names the nodes that depend on each change by walking the dependency graph backwards;
-`--breaking` prints only the changes a consumer could fail on. `--markdown` and `--html` render
+JSON reports those dependents as identifiers (`impacted_nodes`) and keeps the readable names
+(`impacted_labels`), because the same BrowseName in two namespaces is two different nodes.
+`--impact-limit N` bounds how many names an entry lists (default 50) while the count stays exact.
+`--context <file>` adds a consumer model to that walk — a sibling companion spec, or the spec whose
+nodes this release externalized — so dependents outside the two compared files are counted too; it
+is opt-in and repeatable. Subtype inheritance is followed for three generations only, since removing
+a base type would otherwise list its entire subtype forest. `--breaking` prints only the changes a
+consumer could fail on. `--markdown` and `--html` render
 the same report for a pull request or a release note, and `-o <file>` writes it.
 `--fail-on-breaking` exits 1 when any breaking change is present, so a pipeline can gate on it:
 

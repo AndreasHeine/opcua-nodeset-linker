@@ -31,6 +31,7 @@ from nodeset_linker.diff import (
     dependents,
     diff_models,
     html_text,
+    impacted,
     json_text,
     markdown_text,
     total_impact,
@@ -1479,6 +1480,122 @@ class TestImpactHelper:
         assert labels(diff.renumbered) == {"JobInfo"}
         assert diff.renumbered[0].impact == ("Job",)
         assert total_impact(diff) == 1
+
+
+CONSUMER = """<?xml version="1.0" encoding="utf-8"?>
+<UANodeSet xmlns="http://opcfoundation.org/UA/2011/03/UANodeSet.xsd">
+  <NamespaceUris>
+    <Uri>http://opcfoundation.org/UA/Machinery/</Uri>
+  </NamespaceUris>
+  <UAObjectType NodeId="ns=1;i=3000" BrowseName="1:PumpStatusInstance" SymbolicName="PumpStatusInstance">
+    <DisplayName>PumpStatusInstance</DisplayName>
+    <References>
+      <Reference ReferenceType="HasInterface">ns=1;i=2100</Reference>
+    </References>
+  </UAObjectType>
+</UANodeSet>
+"""
+
+
+class TestImpactIdentifiers:
+    def test_impact_reports_the_identifier_of_every_consumer(self) -> None:
+        model = build_model(
+            [make_data_type("JobInfo", 6001), make_variable("Job", 6002, data_type=node_id(6001))]
+        )
+        # A label cannot be resolved: the same BrowseName in two namespaces is two nodes.
+        assert impacted(model, node_id(6001)) == (node_id(6002),)
+
+    def test_json_separates_identifiers_from_labels(self) -> None:
+        old_model = build_model(
+            [make_data_type("JobInfo", 6001), make_variable("Job", 6002, data_type=node_id(6001))]
+        )
+        new_model = build_model([make_variable("Job", 6002, data_type=node_id(6001))])
+        diff = diff_models(old_model, new_model)
+        apply_impact(diff, old_model, new_model)
+        entry = json.loads(json_text(diff))["removed_nodes"][0]
+        assert entry["label"] == "JobInfo"
+        assert entry["impacted_nodes"] == [node_id(6002).as_xml()]
+        assert entry["impacted_labels"] == ["Job"]
+        assert entry["impact_count"] == 1
+
+    def test_inheritance_is_followed_for_the_near_generations_only(self) -> None:
+        def subtype(name: str, number: int, parent: int):
+            return make_object_type(
+                name, number, refs=(Reference(target=node_id(parent), type_name="HasSubtype"),)
+            )
+
+        model = build_model(
+            [
+                make_object_type("Base", 7000),
+                subtype("Generation1", 7001, 7000),
+                subtype("Generation2", 7002, 7001),
+                subtype("Generation3", 7003, 7002),
+                subtype("Generation4", 7004, 7003),
+            ]
+        )
+        assert dependents(model, node_id(7000)) == ("Generation1", "Generation2", "Generation3")
+        assert dependents(model, node_id(7000), inheritance_depth=10) == (
+            "Generation1",
+            "Generation2",
+            "Generation3",
+            "Generation4",
+        )
+
+    def test_impact_limit_lists_a_bounded_list_but_counts_every_node(self, tmp_path) -> None:
+        old_model, new_model, diff = diff_texts(tmp_path, BASE, remove_node(BASE, "ns=1;i=2100"))
+        apply_impact(diff, old_model, new_model)
+        assert total_impact(diff) == 5
+        diff.impact_limit = 2
+        text = console_text(diff, impact=True)
+        assert "Impact: MSSControllerInstance" in text
+        assert "... and 3 more" in text
+        removed = json.loads(json_text(diff))["removed_nodes"]
+        entry = next(e for e in removed if e["label"] == "IMachineStatus")
+        assert len(entry["impacted_nodes"]) == 2
+        assert len(entry["impacted_labels"]) == 2
+        assert entry["impact_count"] == 5
+
+    def test_context_counts_consumers_outside_the_two_files(self, tmp_path) -> None:
+        old = write(tmp_path, "old.xml", BASE)
+        new = write(tmp_path, "new.xml", remove_node(BASE, "ns=1;i=2100"))
+        consumer = write(tmp_path, "consumer.xml", CONSUMER)
+        runner = CliRunner()
+        plain = runner.invoke(
+            main, ["diff", str(old), str(new), "--impact", "--json", "-o", str(tmp_path / "a.json")]
+        )
+        assert plain.exit_code == 0
+        without = json.loads((tmp_path / "a.json").read_text(encoding="utf-8"))["removed_nodes"]
+        baseline = next(e for e in without if e["label"] == "IMachineStatus")
+        assert baseline["impact_count"] == 5
+
+        widened = runner.invoke(
+            main,
+            [
+                "diff",
+                str(old),
+                str(new),
+                "--impact",
+                "--context",
+                str(consumer),
+                "--json",
+                "-o",
+                str(tmp_path / "b.json"),
+            ],
+        )
+        assert widened.exit_code == 0
+        with_context = json.loads((tmp_path / "b.json").read_text(encoding="utf-8"))["removed_nodes"]
+        widened_entry = next(e for e in with_context if e["label"] == "IMachineStatus")
+        assert widened_entry["impact_count"] == 6
+        assert "PumpStatusInstance" in widened_entry["impacted_labels"]
+
+    def test_context_file_must_exist(self, tmp_path) -> None:
+        old = write(tmp_path, "old.xml", BASE)
+        new = write(tmp_path, "new.xml", BASE)
+        missing = tmp_path / "gone.xml"
+        runner = CliRunner()
+        result = runner.invoke(main, ["diff", str(old), str(new), "--context", str(missing)])
+        assert result.exit_code != 0
+        assert "no nodeset file at" in result.output
 
 
 class TestRenumberedRendering:
