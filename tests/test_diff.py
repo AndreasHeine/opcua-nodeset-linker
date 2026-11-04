@@ -23,6 +23,7 @@ from tests.conftest import (
 
 from nodeset_linker.cli.main import main
 from nodeset_linker.diff import (
+    PAPER,
     apply_impact,
     console_text,
     dependents,
@@ -294,7 +295,7 @@ class TestOutputFormats:
     def test_json_shape(self, tmp_path) -> None:
         _, _, diff = diff_texts(tmp_path, BASE.replace("</UANodeSet>", REMOVED_TYPE + "</UANodeSet>"), BASE)
         payload = json.loads(json_text(diff))
-        assert set(payload) == {
+        legacy_keys = {
             "old",
             "new",
             "summary",
@@ -305,8 +306,31 @@ class TestOutputFormats:
             "namespace_changes",
             "breaking_changes",
         }
+        assert legacy_keys <= set(payload)
         assert payload["removed_nodes"][0]["label"] == "LegacyMachineType"
         assert payload["breaking_changes"][0]["reason"] == "ObjectType removed"
+        # The severity model only adds keys; nothing a previous consumer read is gone.
+        assert set(payload) - legacy_keys == {"paper", "advisory_changes"}
+        assert payload["paper"] == PAPER
+        breaking = payload["breaking_changes"][0]
+        assert breaking["severity"] == "breaking"
+        assert breaking["rule_id"] == "BP-Declaration-Removed"
+        assert breaking["rationale"]
+        assert breaking["clause"] == "3.2.16"
+        assert payload["removed_nodes"][0]["severity"] == "breaking"
+        assert payload["removed_nodes"][0]["verdicts"][0]["rule_id"] == "BP-Declaration-Removed"
+        assert payload["summary"]["advisory_nodes"] == 0
+        assert payload["summary"]["info_nodes"] == 0
+
+    def test_json_verdicts_on_every_entry(self, tmp_path) -> None:
+        _, _, diff = diff_texts(
+            tmp_path, BASE, BASE.replace("</UANodeSet>", ADDED_TYPE + "</UANodeSet>")
+        )
+        payload = json.loads(json_text(diff))
+        added = payload["added_nodes"][0]
+        assert added["severity"] == "info"
+        assert added["verdicts"][0]["rule_id"] == "BP-Declaration-Added"
+        assert added["verdicts"][0]["paper"] == PAPER
 
     def test_markdown(self, tmp_path) -> None:
         _, _, diff = diff_texts(tmp_path, BASE, BASE.replace("</UANodeSet>", ADDED_TYPE + "</UANodeSet>"))

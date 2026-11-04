@@ -8,9 +8,11 @@ read are produced, so console, Markdown and HTML stay consistent with the JSON.
 from __future__ import annotations
 
 import json
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any
 
+from nodeset_linker.diff.rules import PAPER, RuleVerdict, Severity
 from nodeset_linker.models.identifiers import ExpandedNodeId
 
 #: Machine kind of a change → the label used in human-readable output.
@@ -46,8 +48,9 @@ class Change:
     """One semantic difference of one node.
 
     ``area`` groups it (node attribute, definition member, reference); ``kind`` says what
-    happened (``attribute``, ``added``, ``removed``, ``changed``) and ``breaking`` carries
-    the verdict of the breaking-change rules, so a report never re-derives it.
+    happened (``attribute``, ``added``, ``removed``, ``changed``) and ``verdict`` carries the
+    severity, rule id and rationale of the best-practices rule, so a report never re-derives
+    it.  ``breaking`` is the verdict's severity read as a boolean.
     """
 
     area: str
@@ -55,7 +58,19 @@ class Change:
     subject: str | None = None
     old: str | None = None
     new: str | None = None
-    breaking: bool = False
+    verdict: RuleVerdict | None = None
+
+    @property
+    def severity(self) -> Severity:
+        return self.verdict.severity if self.verdict is not None else Severity.INFO
+
+    @property
+    def rule_id(self) -> str | None:
+        return self.verdict.rule_id if self.verdict is not None else None
+
+    @property
+    def breaking(self) -> bool:
+        return self.severity is Severity.BREAKING
 
     def describe(self) -> str:
         if self.kind == "added":
@@ -72,7 +87,7 @@ class Change:
         return f"{label}: {_spell(self.old)} → {_spell(self.new)}"
 
     def as_json(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "area": self.area,
             "kind": self.kind,
             "subject": self.subject,
@@ -81,6 +96,12 @@ class Change:
             "breaking": self.breaking,
             "text": self.describe(),
         }
+        if self.verdict is not None:
+            payload["severity"] = self.verdict.severity.value
+            payload["rule_id"] = self.verdict.rule_id
+            payload["rationale"] = self.verdict.rationale
+            payload["clause"] = self.verdict.clause
+        return payload
 
 
 @dataclass(slots=True)
@@ -91,8 +112,19 @@ class NodeEntry:
     node_id: ExpandedNodeId
     node_class: str
     namespace: str
-    breaking: bool = False
+    verdicts: tuple[RuleVerdict, ...] = ()
     impact: tuple[str, ...] = ()
+
+    @property
+    def breaking(self) -> bool:
+        return any(verdict.breaking for verdict in self.verdicts)
+
+    @property
+    def severity(self) -> Severity:
+        """The strongest severity this entry carries."""
+        order = (Severity.BREAKING, Severity.ADVISORY, Severity.INFO)
+        severities = {verdict.severity for verdict in self.verdicts}
+        return next((severity for severity in order if severity in severities), Severity.INFO)
 
     def as_json(self) -> dict[str, Any]:
         return {
@@ -101,6 +133,8 @@ class NodeEntry:
             "namespace": self.namespace,
             "node_class": self.node_class,
             "breaking": self.breaking,
+            "severity": self.severity.value,
+            "verdicts": [verdict.as_json() for verdict in self.verdicts],
             "impacted_nodes": list(self.impact),
             "impact_count": len(self.impact),
         }
@@ -115,14 +149,32 @@ class NodeModification:
     node_class: str
     namespace: str
     changes: list[Change] = field(default_factory=list)
+    verdicts: tuple[RuleVerdict, ...] = ()
     impact: tuple[str, ...] = ()
 
     @property
     def breaking(self) -> bool:
-        return any(change.breaking for change in self.changes)
+        return any(change.breaking for change in self.changes) or any(
+            verdict.breaking for verdict in self.verdicts
+        )
+
+    @property
+    def severity(self) -> Severity:
+        """The strongest severity this entry carries."""
+        severities = {change.severity for change in self.changes} | {
+            verdict.severity for verdict in self.verdicts
+        }
+        for severity in (Severity.BREAKING, Severity.ADVISORY):
+            if severity in severities:
+                return severity
+        return Severity.INFO
 
     def breaking_changes(self) -> list[Change]:
         return [change for change in self.changes if change.breaking]
+
+    def all_verdicts(self) -> list[RuleVerdict]:
+        """Every rule that judged this entry, entry-level verdicts first."""
+        return [*self.verdicts, *[change.verdict for change in self.changes if change.verdict]]
 
     def as_json(self) -> dict[str, Any]:
         return {
@@ -131,6 +183,8 @@ class NodeModification:
             "namespace": self.namespace,
             "node_class": self.node_class,
             "breaking": self.breaking,
+            "severity": self.severity.value,
+            "verdicts": [verdict.as_json() for verdict in self.all_verdicts()],
             "changes": [change.as_json() for change in self.changes],
             "impacted_nodes": list(self.impact),
             "impact_count": len(self.impact),
@@ -151,6 +205,7 @@ class RenumberedNode:
     node_class: str
     namespace: str
     changes: list[Change] = field(default_factory=list)
+    verdicts: tuple[RuleVerdict, ...] = ()
     impact: tuple[str, ...] = ()
 
     @property
@@ -160,7 +215,23 @@ class RenumberedNode:
 
     @property
     def breaking(self) -> bool:
-        return any(change.breaking for change in self.changes)
+        return any(change.breaking for change in self.changes) or any(
+            verdict.breaking for verdict in self.verdicts
+        )
+
+    @property
+    def severity(self) -> Severity:
+        """The strongest severity this entry carries."""
+        severities = {change.severity for change in self.changes} | {
+            verdict.severity for verdict in self.verdicts
+        }
+        for severity in (Severity.BREAKING, Severity.ADVISORY):
+            if severity in severities:
+                return severity
+        return Severity.INFO
+
+    def all_verdicts(self) -> list[RuleVerdict]:
+        return [*self.verdicts, *[change.verdict for change in self.changes if change.verdict]]
 
     def as_json(self) -> dict[str, Any]:
         return {
@@ -170,6 +241,8 @@ class RenumberedNode:
             "old_node_id": self.old_node_id.as_xml(),
             "new_node_id": self.new_node_id.as_xml(),
             "breaking": self.breaking,
+            "severity": self.severity.value,
+            "verdicts": [verdict.as_json() for verdict in self.all_verdicts()],
             "changes": [change.as_json() for change in self.changes],
             "impacted_nodes": list(self.impact),
             "impact_count": len(self.impact),
@@ -178,12 +251,24 @@ class RenumberedNode:
 
 @dataclass(slots=True)
 class BreakingChange:
-    """One change that may break consumers of the model."""
+    """One change a consumer can break on, or an advisory that should be read before release.
+
+    ``reason`` is the human line; ``severity``, ``rule_id`` and ``rationale`` are the
+    machine-readable verdict of the best-practices rule.
+    """
 
     label: str
     node_id: ExpandedNodeId
     reason: str
     affected: int | None = None
+    severity: Severity = Severity.BREAKING
+    rule_id: str | None = None
+    rationale: str | None = None
+    clause: str | None = None
+
+    @property
+    def breaking(self) -> bool:
+        return self.severity is Severity.BREAKING
 
     def as_json(self) -> dict[str, Any]:
         return {
@@ -191,7 +276,11 @@ class BreakingChange:
             "node_id": self.node_id.as_xml(),
             "reason": self.reason,
             "affected_nodes": self.affected,
-            "breaking": True,
+            "breaking": self.breaking,
+            "severity": self.severity.value,
+            "rule_id": self.rule_id,
+            "rationale": self.rationale,
+            "clause": self.clause,
         }
 
 
@@ -248,6 +337,8 @@ class SemanticDiff:
     renumbered: list[RenumberedNode] = field(default_factory=list)
     namespaces: list[NamespaceChange] = field(default_factory=list)
     breaking: list[BreakingChange] = field(default_factory=list)
+    advisory: list[BreakingChange] = field(default_factory=list)
+    """Best-practices findings that never gate a release but should be read before one."""
 
     @property
     def is_empty(self) -> bool:
@@ -263,7 +354,12 @@ class SemanticDiff:
         ]
         return [entry.node_id for entry in entries]
 
+    def _all_entries(self) -> list[NodeEntry | NodeModification | RenumberedNode]:
+        """Every entry the diff produced, in report order."""
+        return [*self.added, *self.removed, *self.modified, *self.renumbered]
+
     def summary(self) -> dict[str, Any]:
+        severities = Counter(entry.severity for entry in self._all_entries())
         return {
             "old_nodes": self.old_nodes,
             "new_nodes": self.new_nodes,
@@ -272,6 +368,9 @@ class SemanticDiff:
             "modified_nodes": len(self.modified),
             "renumbered_nodes": len(self.renumbered),
             "breaking_changes": len(self.breaking),
+            "advisory_changes": len(self.advisory),
+            "advisory_nodes": severities.get(Severity.ADVISORY, 0),
+            "info_nodes": severities.get(Severity.INFO, 0),
             "namespace_changes": len(self.namespaces),
             "identical": self.is_empty,
         }
@@ -280,6 +379,7 @@ class SemanticDiff:
         payload = {
             "old": self.old_source,
             "new": self.new_source,
+            "paper": PAPER,
             "summary": self.summary(),
             "added_nodes": [entry.as_json() for entry in self.added],
             "removed_nodes": [entry.as_json() for entry in self.removed],
@@ -287,6 +387,7 @@ class SemanticDiff:
             "renumbered_nodes": [entry.as_json() for entry in self.renumbered],
             "namespace_changes": [entry.as_json() for entry in self.namespaces],
             "breaking_changes": [entry.as_json() for entry in self.breaking],
+            "advisory_changes": [entry.as_json() for entry in self.advisory],
         }
         return json.dumps(payload, indent=2)
 

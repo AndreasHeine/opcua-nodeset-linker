@@ -22,15 +22,20 @@ from nodeset_linker.diff.model import (
     json_text,
 )
 from nodeset_linker.diff.render import console_text, html_text, markdown_text
+from nodeset_linker.diff.rules import PAPER, RuleContext, RuleVerdict, Severity, verdict
 
 __all__ = [
+    "PAPER",
     "BreakingChange",
     "Change",
     "NamespaceChange",
     "NodeEntry",
     "NodeModification",
     "RenumberedNode",
+    "RuleContext",
+    "RuleVerdict",
     "SemanticDiff",
+    "Severity",
     "apply_impact",
     "console_text",
     "dependents",
@@ -40,4 +45,5 @@ __all__ = [
     "markdown_text",
     "node_label",
     "total_impact",
+    "verdict",
 ]

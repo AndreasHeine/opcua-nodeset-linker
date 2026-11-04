@@ -90,7 +90,7 @@ def html_text(diff: SemanticDiff, *, impact: bool = False, breaking_only: bool =
         "<style>body{font-family:system-ui,sans-serif;max-width:60rem;margin:2rem auto}"
         "h2{margin:1.5rem 0 .5rem}ul{margin:.25rem 0}li{margin:.15rem 0}"
         ".detail{color:#555;font-family:ui-monospace,monospace;font-size:.9em}"
-        ".breaking{color:#b3261e}</style></head><body>",
+        ".breaking{color:#b3261e}.advisory{color:#8a6d3b}</style></head><body>",
         "<h1>Semantic diff</h1>",
     ]
     if not sections:
@@ -107,11 +107,7 @@ def html_text(diff: SemanticDiff, *, impact: bool = False, breaking_only: bool =
             parts.extend(f"<li>{html.escape(line)}</li>" for line in section.plain)
             parts.append("</ul>")
         if section.entries:
-            strong = (
-                '<strong class="breaking">'
-                if section.title == "Breaking changes"
-                else "<strong>"
-            )
+            strong = _strong_for(section.title)
             parts.append("<ul>")
             for entry in section.entries:
                 parts.append(f"<li>{strong}>{html.escape(entry.header)}</strong>")
@@ -179,6 +175,15 @@ def _sections(diff: SemanticDiff, *, impact: bool, breaking_only: bool) -> list[
         )
     elif breaking_only:
         sections.append(Section(title="Breaking changes", plain=("None",)))
+
+    if diff.advisory and not breaking_only:
+        sections.append(
+            Section(
+                title="Advisory",
+                plain=("Best practices to review; they do not block a release.",),
+                entries=tuple(_breaking_line(entry) for entry in diff.advisory),
+            )
+        )
     return sections
 
 
@@ -190,9 +195,20 @@ def _summary_lines(diff: SemanticDiff, *, impact: bool) -> tuple[str, ...]:
     if diff.renumbered:
         lines.append(f"Renumbered: {len(diff.renumbered)}")
     lines.append(f"Breaking changes: {len(diff.breaking)}")
+    if diff.advisory:
+        lines.append(f"Advisory: {len(diff.advisory)}")
     if impact:
         lines.append(_node_count(total_impact(diff)))
     return tuple(lines)
+
+
+def _strong_for(section_title: str) -> str:
+    """The emphasis a section deserves: red for breaking, amber for advisory."""
+    if section_title == "Breaking changes":
+        return '<strong class="breaking">'
+    if section_title == "Advisory":
+        return '<strong class="advisory">'
+    return "<strong>"
 
 
 def _count_line(label: str, old: int, new: int) -> str:
@@ -259,5 +275,9 @@ def _namespace_line(entry: NamespaceChange) -> Entry:
 
 def _breaking_line(entry: BreakingChange) -> Entry:
     header = f"{entry.label} [{entry.node_id.identifier.as_xml()}]: {entry.reason}"
-    details = () if entry.affected is None else (_node_count(entry.affected, prefix="Affects "),)
-    return Entry(header=header, details=details)
+    details: list[str] = []
+    if entry.rule_id is not None:
+        details.append(f"{entry.rule_id}: {entry.rationale or ''}")
+    if entry.affected is not None:
+        details.append(_node_count(entry.affected, prefix="Affects "))
+    return Entry(header=header, details=tuple(details))
