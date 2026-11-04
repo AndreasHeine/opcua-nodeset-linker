@@ -37,6 +37,11 @@ CHANGE_LABELS: dict[str, str] = {
     "alternative_order": "Alternative order",
     "renamed": "Renamed",
     "duplicate_member": "Duplicate members",
+    "moved": "Moved",
+    "inserted": "Inserted",
+    "supertype_incomplete": "Supertype gap",
+    "enum_conflict": "Enumeration conflict",
+    "interface_gap": "Interface declarations",
 }
 
 

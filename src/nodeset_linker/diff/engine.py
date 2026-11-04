@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Self
 
 from nodeset_linker.diff.model import (
@@ -70,6 +70,11 @@ HIERARCHY_REFERENCES = frozenset({"HasSubtype", "HasTypeDefinition", "HasInterfa
 #: The deprecation marker of the paper (§14.2): adding it informs consumers, removing it
 #: leaves them reading a node that was announced as deprecated.
 DEPRECATION_REFERENCES = frozenset({"IsDeprecated"})
+#: The two OPC UA types that decide whether a hierarchy change sits inside a filtering
+#: hierarchy (§3.2.9, §3.2.15).  Both are found by BrowseName, never by identifier, so the
+#: engine works without the OPC UA base nodeset loaded.
+UA_EVENT_BASE_NAME = "BaseEventType"
+UA_HIERARCHICAL_REFERENCE_NAME = "HierarchicalReference"
 
 #: Definition members whose optional attributes still carry semantic meaning.
 FIELD_METADATA_LABELS: tuple[tuple[str, str], ...] = (
@@ -120,10 +125,31 @@ class ModelIndex:
 
     model: SemanticModel
     nodes: dict[Identity, UANode]
+    #: Supertypes per node and subtype children per type, read from the HasSubtype edges.
+    #: The hierarchy rules need these (§3.2.9, §3.2.10, §3.2.15).
+    supertypes: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    subtypes: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
     @classmethod
     def of(cls, model: SemanticModel) -> Self:
-        return cls(model=model, nodes={identity(n.node_id): n for n in model.iter_nodes()})
+        nodes = {identity(n.node_id): n for n in model.iter_nodes()}
+        parents: dict[str, tuple[str, ...]] = {}
+        children: dict[str, list[str]] = {}
+        for node in nodes.values():
+            own = _identity_text(node.node_id)
+            for reference in node.references:
+                if _reference_name(reference) != "HasSubtype":
+                    continue
+                target = _identity_text(reference.target)
+                parent, child = (own, target) if reference.is_forward else (target, own)
+                parents[child] = tuple(sorted({*parents.get(child, ()), parent}))
+                children.setdefault(parent, []).append(child)
+        return cls(
+            model=model,
+            nodes=nodes,
+            supertypes=parents,
+            subtypes={key: tuple(sorted(values)) for key, values in children.items()},
+        )
 
     def node(self, node_id: ExpandedNodeId) -> UANode | None:
         return self.nodes.get(identity(node_id))
@@ -186,7 +212,7 @@ def diff_models(
         old_nodes=len(old_index.nodes),
         new_nodes=len(new_index.nodes),
         added=[
-            _entry(node, new_index, verdicts=(_entry_verdict(node, new_index),))
+            _entry(node, new_index, verdicts=(_entry_verdict(node, new_index, old_index),))
             for node in added_nodes
         ],
         removed=[
@@ -201,13 +227,32 @@ def diff_models(
     return diff
 
 
-def _entry_verdict(node: UANode, index: ModelIndex) -> RuleVerdict:
-    """The rule verdict for a node that appeared in the new model (§3.2.1, §3.2.2, §3.2.9)."""
+def _entry_verdict(node: UANode, index: ModelIndex, previous: ModelIndex) -> RuleVerdict:
+    """The rule verdict for a node that appeared in the new model (§3.2.1, §3.2.2, §3.2.9,
+    §3.2.15)."""
     if _is_added_mandatory_declaration(node):
         return verdict("node_added_mandatory", RuleContext(mandatory_target=True))
+    if node.node_class is NodeClass.REFERENCE_TYPE and _reference_type_inside_hierarchy(
+        node, index, previous
+    ):
+        return verdict("rt_new_in_hierarchy")
     if node.node_class.is_type and _base_is_extension(node, index):
         return verdict("subtype_inserted")
     return verdict("node_added", RuleContext(modelling_rule=node.modelling_rule))
+
+
+def _reference_type_inside_hierarchy(
+    node: UANode, index: ModelIndex, previous: ModelIndex
+) -> bool:
+    """Whether a new ReferenceType sits between two types that already existed (§3.2.15).
+
+    Adding a ReferenceType at the bottom of the hierarchy is allowed; adding one whose
+    supertype already has other subtypes puts it inside the hierarchy, where filtering breaks.
+    """
+    for parent in _supertypes(index, _identity_text(node.node_id)):
+        if previous.subtypes.get(parent):
+            return True
+    return False
 
 
 def _is_added_mandatory_declaration(node: UANode) -> bool:
@@ -1154,17 +1199,12 @@ def _hierarchy_changes(
     changes: list[Change] = []
     old_base = _base_type(old_node)
     new_base = _base_type(new_node)
+    inserted = _inserted_supertype(new_node, old, new)
     if old_base != new_base:
         changes.append(
-            Change(
-                area="hierarchy",
-                kind="moved",
-                subject="HasSubtype",
-                old=_target_label(old, old_base, False) if old_base else None,
-                new=_target_label(new, new_base, False) if new_base else None,
-                verdict=verdict("hierarchy_move"),
-            )
+            _supertype_change(old_node, new_node, old, new, old_base, new_base, inserted)
         )
+        changes.extend(_supertype_gap_changes(new_node, inserted, new))
     for attribute, subject in (
         ("type_definition", "HasTypeDefinition"),
         ("parent_node_id", "ParentNodeId"),
@@ -1173,6 +1213,11 @@ def _hierarchy_changes(
         new_value = getattr(new_node, attribute, None)
         if old_value == new_value:
             continue
+        rule = (
+            _type_definition_verdict(old_node, new_node, old_value, new_value, new)
+            if attribute == "type_definition"
+            else verdict("hierarchy_move")
+        )
         changes.append(
             Change(
                 area="hierarchy",
@@ -1180,7 +1225,7 @@ def _hierarchy_changes(
                 subject=subject,
                 old=_reference_label(old, old_value),
                 new=_reference_label(new, new_value),
-                verdict=verdict("hierarchy_move"),
+                verdict=rule,
             )
         )
     old_interfaces = _interface_targets(old_node)
@@ -1205,6 +1250,7 @@ def _hierarchy_changes(
                 verdict=verdict("interface_added"),
             )
         )
+        changes.extend(_interface_gap_changes(new_node, target, new))
     old_children = _subtype_children(old_node)
     new_children = _subtype_children(new_node)
     for target in sorted(old_children - new_children):
@@ -1228,6 +1274,308 @@ def _hierarchy_changes(
             )
         )
     return changes
+
+
+def _inserted_supertype(new_node: UANode, old: ModelIndex, new: ModelIndex) -> UANode | None:
+    """The supertype a node now inherits from, when that type did not exist before (§3.2.9)."""
+    new_base = _base_type(new_node)
+    if new_base is None or _lookup(old, new_base) is not None:
+        return None
+    return _lookup(new, new_base)
+
+
+def _supertype_change(
+    old_node: UANode,
+    new_node: UANode,
+    old: ModelIndex,
+    new: ModelIndex,
+    old_base: str | None,
+    new_base: str | None,
+    inserted: UANode | None,
+) -> Change:
+    """A changed HasSubtype: a move inside the hierarchy, or a new type inserted above it."""
+    if old_node.node_class is NodeClass.REFERENCE_TYPE:
+        if _is_hierarchical(old_node, old) != _is_hierarchical(new_node, new):
+            rule, kind = verdict("rt_hierarchy_moved"), "moved"
+        elif inserted is not None:
+            rule, kind = verdict("rt_new_in_hierarchy"), "inserted"
+        else:
+            rule, kind = verdict("hierarchy_move"), "moved"
+    elif inserted is None:
+        rule, kind = verdict("hierarchy_move"), "moved"
+    elif new_base is not None and _reaches(new, new_base, UA_EVENT_BASE_NAME):
+        rule, kind = verdict("event_hierarchy_inserted"), "inserted"
+    else:
+        rule, kind = verdict("hierarchy_inserted"), "inserted"
+    return Change(
+        area="hierarchy",
+        kind=kind,
+        subject="HasSubtype",
+        old=_target_label(old, old_base, False) if old_base else None,
+        new=_target_label(new, new_base, False) if new_base else None,
+        verdict=rule,
+    )
+
+
+def _supertype_gap_changes(
+    subtype: UANode, supertype: UANode | None, new: ModelIndex
+) -> list[Change]:
+    """What a new supertype fails to carry for an existing subtype (§3.2.10, §3.2.9)."""
+    if supertype is None:
+        return []
+    if not isinstance(subtype, UADataType) or not isinstance(supertype, UADataType):
+        return []
+    label = new.label(supertype.node_id)
+    changes = [
+        Change(
+            area="hierarchy",
+            kind="supertype_incomplete",
+            new=f"{label} does not define {gap}",
+            verdict=verdict("supertype_incomplete"),
+        )
+        for gap in _missing_members(supertype, subtype, new)
+    ]
+    missing = _mandatory_declaration_names(subtype, new) - _mandatory_declaration_names(
+        supertype, new
+    )
+    changes.extend(
+        Change(
+            area="hierarchy",
+            kind="supertype_incomplete",
+            new=f"{label} does not make {gap} mandatory",
+            verdict=verdict("supertype_incomplete"),
+        )
+        for gap in sorted(missing)
+    )
+    changes.extend(
+        Change(
+            area="hierarchy",
+            kind="enum_conflict",
+            new=f"{label}: {clash}",
+            verdict=verdict("supertype_enum_conflict"),
+        )
+        for clash in _enum_clashes(supertype, subtype)
+    )
+    return changes
+
+
+#: One member of a definition, whatever kind of definition carries it.
+DefinitionMember = StructureField | EnumValue | OptionSetValue | UnionAlternative
+
+
+def _members(definition: Definition) -> tuple[DefinitionMember, ...]:
+    """The members of a definition, whatever kind it carries."""
+    if definition.kind == "Enum":
+        return tuple(definition.enum_values)
+    if definition.kind == "OptionSet":
+        return tuple(definition.option_set_values)
+    if definition.kind == "Union":
+        return tuple(definition.union_alternatives)
+    return tuple(definition.fields)
+
+
+#: How a member of each definition kind is named in a report (§3.2.4, §3.2.5, §3.2.6, §3.2.7).
+_MEMBER_KIND_LABELS = {
+    "Enum": "enumeration value",
+    "OptionSet": "OptionSet bit",
+    "Union": "Union alternative",
+    "Structure": "field",
+}
+
+
+def _missing_members(supertype: UADataType, subtype: UADataType, index: ModelIndex) -> list[str]:
+    """Members the subtype already had that the new supertype does not define (§3.2.10)."""
+    supertype_definition = supertype.definition
+    subtype_definition = subtype.definition
+    if supertype_definition is None or subtype_definition is None:
+        return []
+    if supertype_definition.kind != subtype_definition.kind:
+        return []
+    if subtype_definition.kind == "Structure":
+        fields = {item.name: item for item in supertype_definition.fields}
+        return [
+            (
+                f"field {item.name}"
+                if item.name not in fields
+                else f"field {item.name} as {_spell_field(item, index)}"
+            )
+            for item in subtype_definition.fields
+            if item.name not in fields
+            or _field_contract(fields[item.name]) != _field_contract(item)
+        ]
+    carried = {member.name for member in _members(supertype_definition)}
+    label = _MEMBER_KIND_LABELS[subtype_definition.kind]
+    return [
+        f"{label} {member.name}"
+        for member in _members(subtype_definition)
+        if member.name not in carried
+    ]
+
+
+def _field_contract(
+    structure_field: StructureField,
+) -> tuple[ExpandedNodeId | None, int | None, tuple[str, ...]]:
+    """What a field promises: its DataType plus the array contract (§3.2.10)."""
+    metadata = structure_field.metadata
+    return (structure_field.data_type, metadata.value_rank, metadata.array_dimensions)
+
+
+def _spell_field(structure_field: StructureField, index: ModelIndex) -> str:
+    """A field contract spelled out, so a report says what the subtype expected."""
+    parts = [index.label(structure_field.data_type)]
+    if structure_field.metadata.value_rank is not None:
+        parts.append(f"ValueRank {structure_field.metadata.value_rank}")
+    if structure_field.metadata.array_dimensions:
+        parts.append(f"ArrayDimensions {_joined(structure_field.metadata.array_dimensions)}")
+    return ", ".join(parts)
+
+
+def _enum_clashes(supertype: UADataType, subtype: UADataType) -> list[str]:
+    """Numeric values that make a supertype impossible to create over its subtypes (§3.2.10)."""
+    supertype_definition = supertype.definition
+    subtype_definition = subtype.definition
+    if supertype_definition is None or subtype_definition is None:
+        return []
+    if supertype_definition.kind != "Enum" or subtype_definition.kind != "Enum":
+        return []
+    numbers = {value.name: value.value for value in supertype_definition.enum_values}
+    return [
+        f"{value.name}: supertype {numbers[value.name]}, subtype {value.value}"
+        for value in subtype_definition.enum_values
+        if value.name in numbers and numbers[value.name] != value.value
+    ]
+
+
+def _type_definition_verdict(
+    old_node: UANode,
+    new_node: UANode,
+    old_value: ExpandedNodeId | None,
+    new_value: ExpandedNodeId | None,
+    new: ModelIndex,
+) -> RuleVerdict:
+    """§3.2.13: an InstanceDeclaration may move to a subtype only when that adds nothing."""
+    if old_value is None or new_value is None:
+        return verdict("typedefinition_moved")
+    old_text = _identity_text(old_value)
+    new_text = _identity_text(new_value)
+    old_type = _lookup(new, old_text)
+    new_type = _lookup(new, new_text)
+    if old_type is None or new_type is None:
+        return verdict("typedefinition_moved")
+    if old_text not in _ancestors(new, new_text):
+        return verdict("typedefinition_moved")
+    if _mandatory_declaration_names(new_type, new) - _mandatory_declaration_names(old_type, new):
+        return verdict("typedefinition_moved")
+    if _refines_data_type(old_node, new_node, new):
+        return verdict("typedefinition_moved")
+    return verdict("typedefinition_refined")
+
+
+def _refines_data_type(old_node: UANode, new_node: UANode, new: ModelIndex) -> bool:
+    """Whether a Variable moved onto a subtype of its DataType (§3.2.13, §3.2.12)."""
+    if not isinstance(old_node, UAVariable | UAVariableType):
+        return False
+    if not isinstance(new_node, UAVariable | UAVariableType):
+        return False
+    if old_node.data_type is None or new_node.data_type is None:
+        return False
+    if new_node.data_type == old_node.data_type:
+        return False
+    return _identity_text(old_node.data_type) in _ancestors(new, _identity_text(new_node.data_type))
+
+
+def _interface_gap_changes(node: UANode, interface_target: str, new: ModelIndex) -> list[Change]:
+    """Mandatory declarations an added Interface brings that the type did not have (§3.2.3)."""
+    interface = _lookup(new, interface_target)
+    if interface is None:
+        return []
+    gaps = _mandatory_declaration_names(interface, new) - _mandatory_declaration_names(node, new)
+    if not gaps:
+        return []
+    label = new.label(interface.node_id)
+    return [
+        Change(
+            area="hierarchy",
+            kind="interface_gap",
+            new=f"{label} makes {gap} mandatory",
+            verdict=verdict("interface_mandatory_added"),
+        )
+        for gap in sorted(gaps)
+    ]
+
+
+def _mandatory_declaration_names(node: UANode, index: ModelIndex) -> set[str]:
+    """The declarations a type requires, so a rule can tell whether one was added (§3.2.1)."""
+    return _declaration_names(node, index, mandatory_only=True)
+
+
+def _declaration_names(node: UANode, index: ModelIndex, *, mandatory_only: bool) -> set[str]:
+    """BrowseNames of the declarations a type carries, inherited ones included (§3.2.3).
+
+    Walks the ownership edges the semantic graph follows and climbs the HasSubtype edges, so
+    a type is judged against everything its instances actually see.  Nodes of the OPC UA
+    namespace declare no modelling rules and are left out.
+    """
+    names: set[str] = set()
+    seen: set[str] = set()
+    pending = [node]
+    while pending:
+        current = pending.pop()
+        own = _identity_text(current.node_id)
+        if own in seen:
+            continue
+        seen.add(own)
+        for reference in current.references:
+            name = _reference_name(reference)
+            target = _identity_text(reference.target)
+            if name in OWNERSHIP_REFERENCES and reference.is_forward:
+                child = _lookup(index, target)
+                if child is None or child.node_id.namespace == UA_NAMESPACE_URI:
+                    continue
+                if not mandatory_only or _is_explicitly_mandatory(child):
+                    names.add(child.browse_name.name)
+                pending.append(child)
+            elif name == "HasSubtype" and not reference.is_forward:
+                parent = _lookup(index, target)
+                if parent is not None:
+                    pending.append(parent)
+    return names
+
+
+def _supertypes(index: ModelIndex, identity_text: str) -> tuple[str, ...]:
+    """Identity texts of the types a node inherits from (§3.2.9, §3.2.15)."""
+    return index.supertypes.get(identity_text, ())
+
+
+def _ancestors(index: ModelIndex, identity_text: str) -> set[str]:
+    """Every type above a node, transitively; a cycle in the model stops at the first repeat."""
+    seen: set[str] = set()
+    pending = list(_supertypes(index, identity_text))
+    while pending:
+        current = pending.pop()
+        if current in seen:
+            continue
+        seen.add(current)
+        pending.extend(_supertypes(index, current))
+    return seen
+
+
+def _reaches(index: ModelIndex, identity_text: str, browse_name: str) -> bool:
+    """Whether the supertype chain of a node reaches a named OPC UA type (§3.2.9, §3.2.15)."""
+    for ancestor in _ancestors(index, identity_text):
+        node = _lookup(index, ancestor)
+        if (
+            node is not None
+            and node.node_id.namespace == UA_NAMESPACE_URI
+            and node.browse_name.name == browse_name
+        ):
+            return True
+    return False
+
+
+def _is_hierarchical(node: UANode, index: ModelIndex) -> bool:
+    """Whether a ReferenceType inherits HierarchicalReference (§3.2.15), which decides filtering."""
+    return _reaches(index, _identity_text(node.node_id), UA_HIERARCHICAL_REFERENCE_NAME)
 
 
 def _base_type(node: UANode) -> str | None:

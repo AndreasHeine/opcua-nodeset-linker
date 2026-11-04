@@ -331,6 +331,80 @@ _RULES: dict[str, RuleVerdict] = {
         "BP-Subtype-Inserted",
         "3.2.9",
     ),
+    "hierarchy_inserted": RuleVerdict(
+        Severity.ADVISORY,
+        "A new type was placed above existing types (§3.2.9): subtypes may be added, but "
+        "inserting a supertype inside the hierarchy is not recommended, because browse paths "
+        "gain a level and the new supertype must not add anything its subtypes were not "
+        "already allowed to add.",
+        "BP-Hierarchy-Insertion",
+        "3.2.9",
+    ),
+    "event_hierarchy_inserted": RuleVerdict(
+        Severity.BREAKING,
+        "A new type was inserted inside the EventType hierarchy (§3.2.9): events are used for "
+        "filtering, so a client that filters on the new EventType reaches nothing on an old "
+        "server. Add a subtype at the bottom of an event type instead of a level above it.",
+        "BP-EventHierarchy-Insertion",
+        "3.2.9",
+    ),
+    "rt_new_in_hierarchy": RuleVerdict(
+        Severity.BREAKING,
+        "A new ReferenceType was placed inside the existing ReferenceType hierarchy (§3.2.15): "
+        "a new client filters with a ReferenceType an old server does not have, while adding a "
+        "subtype at the bottom of the hierarchy is allowed.",
+        "BP-RT-NewInHierarchy",
+        "3.2.15",
+    ),
+    "rt_hierarchy_moved": RuleVerdict(
+        Severity.BREAKING,
+        "A ReferenceType moved inside its hierarchy (§3.2.15): a hierarchical ReferenceType "
+        "becoming non-hierarchical, or the other way round, changes how filtering behaves.",
+        "BP-RT-Hierarchy-Moved",
+        "3.2.15",
+    ),
+    "supertype_incomplete": RuleVerdict(
+        Severity.BREAKING,
+        "The new supertype does not carry what its subtypes already promised (§3.2.10, §3.2.9): "
+        "it has to define the fields, enumeration values and mandatory declarations every "
+        "subtype had, or the existing subtypes cannot be created anymore.",
+        "BP-Supertype-Inconsistent",
+        "3.2.10",
+    ),
+    "supertype_enum_conflict": RuleVerdict(
+        Severity.BREAKING,
+        "The numeric values of the new supertype clash with those of its subtypes (§3.2.10): "
+        "the supertype must carry at least the union of the subtype enumeration values with the "
+        "same numbers, so a conflicting supertype cannot be created.",
+        "BP-Supertype-EnumConflict",
+        "3.2.10",
+    ),
+    "interface_mandatory_added": RuleVerdict(
+        Severity.BREAKING,
+        "The added Interface brings mandatory declarations the type did not already have (§3.2.3): "
+        "a type may implement an Interface only when that adds no new Mandatory "
+        "InstanceDeclaration. Keep the declaration optional and require it through a Conformance "
+        "Unit or Profile, or create a subtype (§3.2.1).",
+        "BP-Interface-Mandatory-Added",
+        "3.2.3",
+    ),
+    "typedefinition_refined": RuleVerdict(
+        Severity.INFO,
+        "The TypeDefinition moved to a subtype that adds no mandatory declaration and does not "
+        "refine the DataType (§3.2.13): that is allowed, and a client written against the old "
+        "type still reads the value.",
+        "BP-TypeDefinition-Refined",
+        "3.2.13",
+    ),
+    "typedefinition_moved": RuleVerdict(
+        Severity.BREAKING,
+        "The TypeDefinition of an InstanceDeclaration changed to a type that is not an allowed "
+        "subtype (§3.2.13, §3.2.12): a subtype may only be used when it adds no mandatory "
+        "declaration and no refined DataType, and a new client expects the new type while an old "
+        "server may still provide the old one.",
+        "BP-TypeDefinition-Moved",
+        "3.2.13",
+    ),
     "method_signature": RuleVerdict(
         Severity.BREAKING,
         "The signature of a method changed (§3.2.11): arguments or their types are part of "
