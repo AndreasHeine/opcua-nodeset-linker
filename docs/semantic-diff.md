@@ -49,6 +49,13 @@ Three sets are computed: `gone` (old minus new), `fresh` (new minus old), `share
 (`zip`, sorted by identifier). A paired node becomes a `RenumberedNode` carrying both
 identifiers plus its own content changes; unpaired members stay as plain removals/additions.
 
+The pairing also yields a moved-identifier map (`old identifier -> new identifier`) that every
+later comparison resolves through (`_resolve`, `_resolved_key`, `_same_target`): a reference, a
+base type, an interface set or a method declaration that points at a renumbered target is the
+same target. A move is therefore reported once, on the node itself, and does not also read as a
+detached child, a hierarchy move, a datatype change or a method signature change. Removed-side
+labels are mapped back to the old identifier so the report still names what the consumer knew.
+
 ### 2.3 Per-node comparison (`_node_changes`)
 
 For every shared (or paired renumbered) node the engine compares, in order:
@@ -97,7 +104,7 @@ Reference severity (`_reference_category`, judged by `verdict`):
   Profile by the conformance rules (§12.1, §12.2).
 * any other/unknown reference name → breaking by default.
 Removal of a whole node is breaking when the node is a type, an encoding, a placeholder, or
-an explicitly mandatory node (`_removal_breaking`). `_is_explicitly_mandatory` intentionally
+an explicitly mandatory node (`_removal_base_verdict`). `_is_explicitly_mandatory` intentionally
 never treats OPC-UA-namespace nodes as mandatory, because Part 5 declares no modelling rules
 there.
 
@@ -414,8 +421,9 @@ release comparison):
 * **Impact becomes both over- and under-counting**: over-counting through deep subtype forests
   inside the loaded tree, under-counting across unloaded sibling specs — the numbers lose
   meaning at scale.
-* **Renumbered releases pass the CI gate silently** (gap 4) — the riskiest release change is
-  the one the gate does not catch.
+* **Renumbered releases now fail the CI gate** (gap 4 closed) — the move is reported once as
+  `BP-NodeId-Immutable`, and references, hierarchy and datatype resolve through it, so the
+  riskiest release change reads as one finding rather than as detached-child noise.
 * **Version metadata moves now reach the report** (gap 12 closed), and `--release-verdict` says
   whether a NamespaceUri may be reused (gap 28 partly closed) — but only when a baseline states
   what was published; without one the report names the fact rather than judging the release.
@@ -427,11 +435,11 @@ release comparison):
 
 ### 7.1 Correctness (highest value first)
 
-1. **Make identifier moves breaking by default.** Give `RenumberedNode` an explicit
-   `breaking=True` for the identity move (rule `IDENTIFIER_MOVE`), optionally gated by a flag
-   (`--renumbering-breaking`, default true). Also detect rename-with-same-id separately as
-   `BROWSE_NAME_MOVE` so a rename + renumber reports one coherent finding instead of
-   add/remove noise.
+1. **Make identifier moves breaking by default** *(implemented)*: a paired move is breaking
+   through `BP-NodeId-Immutable`, so a renumbered release fails the gate with no extra flag and
+   no opt-in. Rename-with-same-id is reported as a BrowseName change; a rename *plus* renumber
+   still reads as unrelated removal and addition, because pairing requires the identifier to be
+   the only difference.
 2. **Classify contract-tightening additions.** Adding a mandatory component, a
    `HasTypeDefinition`, `HasInterface` or `GeneratesEvent` should be breaking; keep purely
    optional/navigation additions non-breaking.

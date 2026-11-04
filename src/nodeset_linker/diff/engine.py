@@ -91,6 +91,9 @@ PROFILE_NAME = "Profile"
 UA_EVENT_BASE_NAME = "BaseEventType"
 UA_HIERARCHICAL_REFERENCE_NAME = "HierarchicalReference"
 
+#: Default for comparison helpers that run without a paired-move map.
+_NO_MOVES: Mapping[str, str] = {}
+
 #: Namespace metadata attribute → the rule that judges a change of it (§11.1, §11.2, §11.3).
 _METADATA_RULES: Mapping[str, str] = {
     "alias": "namespace_alias_changed",
@@ -244,6 +247,13 @@ def diff_models(
     )
     renumbered.extend(renamed)
     renumbered.sort(key=lambda entry: entry.label)
+    #: A paired move is one finding (§3.2.17).  References, hierarchies and data types that
+    #: point at a renumbered node therefore compare through the move, not as detached children
+    #: or datatype changes.
+    moved: Mapping[str, str] = {
+        _identity_text(entry.old_node_id): _identity_text(entry.new_node_id)
+        for entry in renumbered
+    }
     removed_ids = [identity for identity in removed_ids if identity not in rename_removed]
     added_ids = [identity for identity in added_ids if identity not in rename_added]
     removed_nodes = [old_index.nodes[node_id] for node_id in removed_ids]
@@ -269,7 +279,7 @@ def diff_models(
             _entry(node, old_index, verdicts=_removal_verdicts(node, externalized))
             for node in removed_nodes
         ],
-        modified=_modified_nodes(shared, old_index, new_index),
+        modified=_modified_nodes(shared, old_index, new_index, moved),
         renumbered=renumbered,
         namespaces=_namespace_changes(old_index, new_index),
     )
@@ -554,12 +564,15 @@ def _move_key(node: UANode) -> tuple[str, str, NodeClass]:
 
 
 def _modified_nodes(
-    shared: list[Identity], old_index: ModelIndex, new_index: ModelIndex
+    shared: list[Identity],
+    old_index: ModelIndex,
+    new_index: ModelIndex,
+    moved: Mapping[str, str] = _NO_MOVES,
 ) -> list[NodeModification]:
     modifications: list[NodeModification] = []
     for node_identity in shared:
         node = new_index.nodes[node_identity]
-        changes = _node_changes(old_index.nodes[node_identity], node, old_index, new_index)
+        changes = _node_changes(old_index.nodes[node_identity], node, old_index, new_index, moved)
         if not changes:
             continue
         modifications.append(
@@ -637,7 +650,11 @@ def _is_explicitly_mandatory(node: UANode) -> bool:
 
 
 def _node_changes(
-    old_node: UANode, new_node: UANode, old: ModelIndex, new: ModelIndex
+    old_node: UANode,
+    new_node: UANode,
+    old: ModelIndex,
+    new: ModelIndex,
+    moved: Mapping[str, str] = _NO_MOVES,
 ) -> list[Change]:
     """Every semantic difference between two versions of one node."""
     changes: list[Change] = []
@@ -752,11 +769,11 @@ def _node_changes(
     rule = _modelling_rule_change(old_node, new_node)
     if rule is not None:
         changes.append(rule)
-    changes.extend(_variable_changes(old_node, new_node, old, new))
-    changes.extend(_method_changes(old_node, new_node, old, new))
-    changes.extend(_definition_changes(old_node, new_node, old, new))
-    changes.extend(_hierarchy_changes(old_node, new_node, old, new))
-    changes.extend(_reference_changes(old_node, new_node, old, new))
+    changes.extend(_variable_changes(old_node, new_node, old, new, moved))
+    changes.extend(_method_changes(old_node, new_node, old, new, moved))
+    changes.extend(_definition_changes(old_node, new_node, old, new, moved))
+    changes.extend(_hierarchy_changes(old_node, new_node, old, new, moved))
+    changes.extend(_reference_changes(old_node, new_node, old, new, moved))
     return changes
 
 
@@ -784,7 +801,11 @@ def _modelling_rule_change(old_node: UANode, new_node: UANode) -> Change | None:
 
 
 def _variable_changes(
-    old_node: UANode, new_node: UANode, old: ModelIndex, new: ModelIndex
+    old_node: UANode,
+    new_node: UANode,
+    old: ModelIndex,
+    new: ModelIndex,
+    moved: Mapping[str, str] = _NO_MOVES,
 ) -> list[Change]:
     if not isinstance(old_node, UAVariable | UAVariableType) or not isinstance(
         new_node, UAVariable | UAVariableType
@@ -794,7 +815,7 @@ def _variable_changes(
         # The method entry carries this break; the argument adds no new information (§3.2.11).
         return []
     changes: list[Change] = []
-    if old_node.data_type != new_node.data_type:
+    if not _same_target(old_node.data_type, new_node.data_type, moved):
         changes.append(
             Change(
                 area="node",
@@ -871,7 +892,11 @@ def _argument_contract_changed(
 
 
 def _method_changes(
-    old_node: UANode, new_node: UANode, old: ModelIndex, new: ModelIndex
+    old_node: UANode,
+    new_node: UANode,
+    old: ModelIndex,
+    new: ModelIndex,
+    moved: Mapping[str, str] = _NO_MOVES,
 ) -> list[Change]:
     """§3.2.11: a method keeps its arguments, their types, ranks and array dimensions."""
     if old_node.node_class is not NodeClass.METHOD and new_node.node_class is not NodeClass.METHOD:
@@ -911,7 +936,9 @@ def _method_changes(
                     verdict=verdict("method_signature"),
                 )
             )
-    if old_node.method_declaration_id != new_node.method_declaration_id:
+    if not _same_target(
+        old_node.method_declaration_id, new_node.method_declaration_id, moved
+    ):
         changes.append(
             Change(
                 area="method",
@@ -968,7 +995,11 @@ def _argument_contract(index: ModelIndex, argument: UAVariable) -> str:
 
 
 def _definition_changes(
-    old_node: UANode, new_node: UANode, old: ModelIndex, new: ModelIndex
+    old_node: UANode,
+    new_node: UANode,
+    old: ModelIndex,
+    new: ModelIndex,
+    moved: Mapping[str, str] = _NO_MOVES,
 ) -> list[Change]:
     """Diff the structured definition of a data type: Structure, Enum, Union, OptionSet."""
     if not isinstance(old_node, UADataType) or not isinstance(new_node, UADataType):
@@ -998,10 +1029,14 @@ def _definition_changes(
             )
         ]
     if new_definition.kind == "Structure":
-        changes = _structure_changes(old_definition.fields, new_definition.fields, old, new)
+        changes = _structure_changes(old_definition.fields, new_definition.fields, old, new, moved)
     elif new_definition.kind == "Union":
         changes = _union_changes(
-            old_definition.union_alternatives, new_definition.union_alternatives, old, new
+            old_definition.union_alternatives,
+            new_definition.union_alternatives,
+            old,
+            new,
+            moved,
         )
     elif new_definition.kind == "Enum":
         changes = _value_member_changes(
@@ -1055,6 +1090,7 @@ def _structure_changes(
     new_fields: Sequence[StructureField],
     old: ModelIndex,
     new: ModelIndex,
+    moved: Mapping[str, str] = _NO_MOVES,
 ) -> list[Change]:
     old_by_name = {field.name: field for field in old_fields}
     new_by_name = {field.name: field for field in new_fields}
@@ -1107,7 +1143,7 @@ def _structure_changes(
             continue
         if old_field is None or new_field is None:
             continue
-        if old_field.data_type != new_field.data_type:
+        if not _same_target(old_field.data_type, new_field.data_type, moved):
             changes.append(
                 Change(
                     area="definition",
@@ -1170,6 +1206,7 @@ def _union_changes(
     new_alternatives: Sequence[UnionAlternative],
     old: ModelIndex,
     new: ModelIndex,
+    moved: Mapping[str, str] = _NO_MOVES,
 ) -> list[Change]:
     old_by_name = {alternative.name: alternative for alternative in old_alternatives}
     new_by_name = {alternative.name: alternative for alternative in new_alternatives}
@@ -1202,7 +1239,7 @@ def _union_changes(
             continue
         if old_alternative is None or new_alternative is None:
             continue
-        if old_alternative.data_type != new_alternative.data_type:
+        if not _same_target(old_alternative.data_type, new_alternative.data_type, moved):
             changes.append(
                 Change(
                     area="definition",
@@ -1359,14 +1396,23 @@ def _order_change(
 
 
 def _hierarchy_changes(
-    old_node: UANode, new_node: UANode, old: ModelIndex, new: ModelIndex
+    old_node: UANode,
+    new_node: UANode,
+    old: ModelIndex,
+    new: ModelIndex,
+    moved: Mapping[str, str] = _NO_MOVES,
 ) -> list[Change]:
-    """Where a node sits in its hierarchy: base type, type definition, parent, interfaces."""
+    """Where a node sits in its hierarchy: base type, type definition, parent, interfaces.
+
+    A target that only moved identifier is resolved through the paired move, so a renumbered
+    base type or interface is not reported as a hierarchy move (§3.2.9, §3.2.17).
+    """
+    back = {new_text: old_text for old_text, new_text in moved.items()}
     changes: list[Change] = []
     old_base = _base_type(old_node)
     new_base = _base_type(new_node)
     inserted = _inserted_supertype(new_node, old, new)
-    if old_base != new_base:
+    if _resolve(old_base or "", moved) != _resolve(new_base or "", moved):
         changes.append(
             _supertype_change(old_node, new_node, old, new, old_base, new_base, inserted)
         )
@@ -1378,6 +1424,10 @@ def _hierarchy_changes(
         old_value = getattr(old_node, attribute, None)
         new_value = getattr(new_node, attribute, None)
         if old_value == new_value:
+            continue
+        if old_value is not None and new_value is not None and _resolve(
+            _identity_text(old_value), moved
+        ) == _resolve(_identity_text(new_value), moved):
             continue
         rule = (
             _type_definition_verdict(old_node, new_node, old_value, new_value, new)
@@ -1394,14 +1444,15 @@ def _hierarchy_changes(
                 verdict=rule,
             )
         )
-    old_interfaces = _interface_targets(old_node)
-    new_interfaces = _interface_targets(new_node)
+    old_interfaces = {_resolve(target, moved) for target in _interface_targets(old_node)}
+    new_interfaces = {_resolve(target, moved) for target in _interface_targets(new_node)}
     for target in sorted(old_interfaces - new_interfaces):
+        original = back.get(target, target)
         changes.append(
             Change(
                 area="hierarchy",
                 kind="removed",
-                subject=f"HasInterface -> {_target_label(old, target, True)}",
+                subject=f"HasInterface -> {_target_label(old, original, True)}",
                 old="HasInterface",
                 verdict=verdict("interface_removed"),
             )
@@ -1417,14 +1468,15 @@ def _hierarchy_changes(
             )
         )
         changes.extend(_interface_gap_changes(new_node, target, new))
-    old_children = _subtype_children(old_node)
-    new_children = _subtype_children(new_node)
+    old_children = {_resolve(target, moved) for target in _subtype_children(old_node)}
+    new_children = {_resolve(target, moved) for target in _subtype_children(new_node)}
     for target in sorted(old_children - new_children):
+        original = back.get(target, target)
         changes.append(
             Change(
                 area="hierarchy",
                 kind="removed",
-                subject=f"HasSubtype -> {_target_label(old, target, True)}",
+                subject=f"HasSubtype -> {_target_label(old, original, True)}",
                 old="HasSubtype",
                 verdict=verdict("hierarchy_move"),
             )
@@ -1782,24 +1834,34 @@ def _reference_label(index: ModelIndex, node_id: ExpandedNodeId | None) -> str |
 
 
 def _reference_changes(
-    old_node: UANode, new_node: UANode, old: ModelIndex, new: ModelIndex
+    old_node: UANode,
+    new_node: UANode,
+    old: ModelIndex,
+    new: ModelIndex,
+    moved: Mapping[str, str] = _NO_MOVES,
 ) -> list[Change]:
-    """Added and removed references, keyed by reference type, target identity and direction."""
-    old_refs = {_reference_key(ref) for ref in old_node.references}
-    new_refs = {_reference_key(ref) for ref in new_node.references}
+    """Added and removed references, keyed by reference type, target identity and direction.
+
+    A target that only moved identifier is resolved through the paired move: the move is a
+    finding on the node itself, and must not read here as a detached child (§3.2.16, §3.2.17).
+    """
+    back = {new_text: old_text for old_text, new_text in moved.items()}
+    old_refs = {_resolved_key(ref, moved) for ref in old_node.references}
+    new_refs = {_resolved_key(ref, moved) for ref in new_node.references}
     changes: list[Change] = []
     for name, target, is_forward in sorted(old_refs - new_refs):
         if name in HIERARCHY_REFERENCES:
             continue
+        original = back.get(target, target)
         changes.append(
             Change(
                 area="reference",
                 kind="removed",
-                subject=f"{name or 'Reference'} -> {_target_label(old, target, is_forward)}",
+                subject=f"{name or 'Reference'} -> {_target_label(old, original, is_forward)}",
                 old=name,
                 verdict=verdict(
                     "removed",
-                    RuleContext(reference=_reference_category(name, target, old, old_node)),
+                    RuleContext(reference=_reference_category(name, original, old, old_node)),
                 ),
             )
         )
@@ -1843,6 +1905,32 @@ def _deprecation_target_name(index: ModelIndex, target: str) -> str | None:
 def _reference_key(ref: Reference) -> tuple[str, str, bool]:
     name = ref.type_name or (str(ref.reference_type) if ref.reference_type is not None else "")
     return (name, _identity_text(ref.target), ref.is_forward)
+
+
+def _resolved_key(ref: Reference, moved: Mapping[str, str]) -> tuple[str, str, bool]:
+    name, target, is_forward = _reference_key(ref)
+    return (name, _resolve(target, moved), is_forward)
+
+
+def _resolve(identity_text: str, moved: Mapping[str, str]) -> str:
+    """The identifier a paired move carries now.
+
+    A renumbered node is the same node (§3.2.17), so anything pointing at it — a reference, a
+    base type, a type definition, a datatype — describes the same contract and is not a second
+    change; the move is reported once, on the node.
+    """
+    return moved.get(identity_text, identity_text)
+
+
+def _same_target(
+    old_value: ExpandedNodeId | None, new_value: ExpandedNodeId | None, moved: Mapping[str, str]
+) -> bool:
+    """Whether two spelled identifiers name the same node once paired moves are resolved."""
+    if old_value == new_value:
+        return True
+    if old_value is None or new_value is None:
+        return False
+    return _resolve(_identity_text(old_value), moved) == _resolve(_identity_text(new_value), moved)
 
 
 def _identity_text(node_id: ExpandedNodeId) -> str:
