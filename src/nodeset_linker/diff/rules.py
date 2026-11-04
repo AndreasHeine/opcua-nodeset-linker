@@ -583,6 +583,20 @@ _RULES: dict[str, RuleVerdict] = {
         "BP-Reference-Navigation-Added",
         "3.2.2",
     ),
+    "reference_argument_metadata_added": RuleVerdict(
+        Severity.INFO,
+        "An argument description was attached (§5): it documents an argument the method already "
+        "has, so nobody that calls the method breaks.",
+        "BP-MethodArg-Metadata",
+        "5",
+    ),
+    "reference_argument_metadata_removed": RuleVerdict(
+        Severity.INFO,
+        "An argument description was detached (§5): the argument and its type stay, only the "
+        "documentation a browser could follow disappeared.",
+        "BP-MethodArg-Metadata",
+        "5",
+    ),
     "member_added": RuleVerdict(
         Severity.INFO,
         "A definition member was added; nothing existing changed.",

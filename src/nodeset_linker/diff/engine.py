@@ -72,6 +72,10 @@ HIERARCHY_REFERENCES = frozenset({"HasSubtype", "HasTypeDefinition", "HasInterfa
 #: The deprecation marker of the paper (§14.2): adding it informs consumers, removing it
 #: leaves them reading a node that was announced as deprecated.
 DEPRECATION_REFERENCES = frozenset({"IsDeprecated"})
+# Description references on method arguments (§5): they carry documentation, not a contract.
+ARGUMENT_DESCRIPTION_REFERENCES = frozenset(
+    {"HasArgumentDescription", "HasOptionalInputArgumentDescription"}
+)
 #: A deprecation object names the version that deprecated the node (§14.3.2), for example
 #: ``<SpecName>Version1_02``; a replacement type names itself with a version suffix (§11.2.6).
 DEPRECATION_OBJECT_NAME = re.compile(r"Version\d+(?:_\d+)?$")
@@ -1847,15 +1851,18 @@ def _reference_category(
 
     Contract references (subtype, type definition, interface, encoding, event) break a
     consumer; navigation references only change browsing; an ownership reference breaks
-    when its target is an explicitly mandatory declaration; an IsDeprecated reference is
-    judged by the deprecation rules (§14.2).  Members of a ConformanceUnit or Profile are
-    judged by the conformance rules (§12.1, §12.2), because they declare a test scope
-    rather than a model contract.
+    when its target is an explicitly mandatory declaration; an argument description
+    reference (§5) is documentation; an IsDeprecated reference is judged by the deprecation
+    rules (§14.2).  Members of a ConformanceUnit or Profile are judged by the conformance
+    rules (§12.1, §12.2), because they declare a test scope rather than a model contract.
     """
     if owner is not None and _conformance_role(owner) is not None:
         return "cu_dependency"
     if name in DEPRECATION_REFERENCES:
         return "deprecation"
+    if name in ARGUMENT_DESCRIPTION_REFERENCES:
+        # Documentation about an argument (§5), never a declaration the caller depends on.
+        return "argument_metadata"
     if name in SOFT_REFERENCES:
         return "soft"
     if name in HARD_REFERENCES:

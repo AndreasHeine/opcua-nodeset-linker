@@ -66,30 +66,36 @@ For every shared (or paired renumbered) node the engine compares, in order:
 | node | Variable/VariableType `DataType`, `ValueRank`, `ArrayDimensions` | always |
 | node | serialized `<Value>` (whitespace-normalized) | never |
 | definition | Structure fields, Enum values, Union alternatives, OptionSet values | see §2.4 |
-| reference | added/removed `<Reference>` keyed by `(type name, target identity, direction)` | removal: see below; **addition: never** |
+| reference | added/removed `<Reference>` keyed by `(type name, target identity, direction)` | by category, see `_reference_category` below |
 
 Definition diffs (`_definition_changes`):
 
-* **Structure**: fields keyed by name — added field (not breaking), removed field (breaking
-  unless the field was `IsOptional`), changed field datatype (breaking), `IsOptional` →
-  `false` (breaking), field metadata (`SymbolicName`, `ValueRank`, `ArrayDimensions`,
-  `MaxStringLength`, `AllowSubTypes`) changes (breaking), member **order** of the common
-  fields changed (breaking — it changes the encoding).
-* **Union**: alternatives keyed by name — added (not breaking), removed or retyped (breaking),
-  alternative order changed (breaking).
-* **Enum / OptionSet**: values keyed by name — added value (not breaking), removed value
-  (breaking), changed value number (breaking).
+* **Structure**: fields keyed by name — added field, removed field (an `IsOptional` one too)
+  and retyped field are all breaking (§3.2.16, §3.2.5); `IsOptional` → `false` tightens the
+  contract and is breaking; field metadata (`SymbolicName`, `ValueRank`, `ArrayDimensions`,
+  `MaxStringLength`, `AllowSubTypes`) is breaking except where a `MaxStringLength` limit only
+  grows (§3.2.5); member **order** of the common fields changed is breaking — it changes the
+  encoding.
+* **Union**: alternatives keyed by name — added, removed or retyped are breaking; alternative
+  order changed is breaking.
+* **Enum / OptionSet**: values keyed by name — added value, removed value and changed value
+  number are all breaking (§3.2.16: a consumer holding the old set cannot decode the new one).
 * Definition kind changed (e.g. Structure → Enum) or definition dropped: breaking.
 
-Reference breaking classification (`_reference_removal_breaking`):
+Reference severity (`_reference_category`, judged by `verdict`):
 
-* `Organizes`, `HasDescription` → never breaking (navigation only);
-* `HasSubtype`, `HasTypeDefinition`, `HasInterface`, `HasEncoding`, `GeneratesEvent` → always
-  breaking;
-* ownership references (`HasComponent`, `HasProperty`, …) → breaking only if the *target* is
-  explicitly declared `Mandatory`/`MandatoryPlaceholder` (and not in the OPC UA namespace);
+* `Organizes`, `HasDescription` → navigation only: information in either direction.
+* `HasSubtype`, `HasTypeDefinition`, `HasInterface`, `HasEncoding`, `GeneratesEvent` →
+  contract references: removing one breaks (§3.2.16, §3.2.14), adding one is information.
+* ownership references (`HasComponent`, `HasProperty`, …) → breaking when the *target* is an
+  explicitly declared `Mandatory`/`MandatoryPlaceholder` declaration, in either direction
+  (§3.2.1, §11.2.1, §3.2.16); an Optional target is information when added and breaking when
+  removed (§3.2.16). OPC UA namespace targets are never read as mandatory here.
+* `HasArgumentDescription`, `HasOptionalInputArgumentDescription` → documentation about an
+  argument (§5): information in both directions, because the call contract stays as it was.
+* `IsDeprecated` → judged by the deprecation rules (§14.2); members of a ConformanceUnit or
+  Profile by the conformance rules (§12.1, §12.2).
 * any other/unknown reference name → breaking by default.
-
 Removal of a whole node is breaking when the node is a type, an encoding, a placeholder, or
 an explicitly mandatory node (`_removal_breaking`). `_is_explicitly_mandatory` intentionally
 never treats OPC-UA-namespace nodes as mandatory, because Part 5 declares no modelling rules
@@ -271,10 +277,13 @@ removal of optional nodes, namespace versioning, deprecation — are mapped clau
    text noise, and `value_dependencies` (the *resolved* identifiers the parser extracted) are
    not diffed semantically. Conversely a numeric enum default or encoding-relevant value edit
    is reported as *non-breaking*, although clients may depend on it.
-10. **Method signatures have no dedicated diff.** `InputArguments`/`OutputArguments` changes
-    appear as attribute/reference changes on the argument variables, never as one "signature
-    changed" finding on the method node; `MethodDeclarationId` moves only show up as reference
-    changes.
+10. **Method signatures had no dedicated diff** *(closed)*. `_method_changes` states one
+    `BP-MethodSignature-Immutable` break per method when argument count, order, `DataType`,
+    `ValueRank`, `ArrayDimensions`, the spelled argument list or `MethodDeclarationId` move
+    (§3.2.11); the argument variable stays silent for those, so the same break is not stated
+    twice. Text on an argument and a `HasArgumentDescription` reference that appears or
+    disappears are information (§5): they document an argument, they do not change what a
+    caller passes.
 11. **No value-vs-datatype consistency check.** A variable whose declared `DataType` changes
     while its `<Value>` still carries the old type (demo3's intentional incompatibility) is
     reported as a datatype change, but nothing flags the value/type mismatch itself.
@@ -429,8 +438,9 @@ release comparison):
 5. **Diff `<Extensions>`, RolePermissions and `value_dependencies` semantically**, and add a
    value-vs-datatype consistency finding (demo3's mismatch would surface as
    `VALUE_TYPE_MISMATCH`).
-6. **Add a method-signature diff area**: one change per method when argument count/order/
-   datatype changes, attributed to the method node.
+6. **Add a method-signature diff area** *(implemented)*: one change per method when argument
+   count, order, datatype, rank, array dimensions or `MethodDeclarationId` change, attributed
+   to the method node (§3.2.11).
 
 ### 7.2 Release metadata
 

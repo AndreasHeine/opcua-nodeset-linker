@@ -15,6 +15,7 @@ from tests.conftest import (
     enum_definition,
     make_data_type,
     make_method,
+    make_object,
     make_object_type,
     make_reference_type,
     make_variable,
@@ -45,6 +46,9 @@ from nodeset_linker.models.node import (
     OptionSetValue,
     Reference,
     StructureField,
+    UAMethod,
+    UANode,
+    UAVariable,
     UnionAlternative,
 )
 from nodeset_linker.models.node_class import ModellingRule, NodeRole
@@ -1319,6 +1323,51 @@ class TestMethodSignature:
         # The instance now points at a different declared method.
         assert diff.breaking
         assert self.signature(diff, "StartJob") == [("changed", "MethodDeclarationId")]
+
+    @staticmethod
+    def _argument(number: int, refs: tuple[Reference, ...] = ()) -> UAVariable:
+        return replace(
+            make_variable("InputArguments", number, data_type=node_id(24136), refs=refs),
+            role=NodeRole.ARGUMENT,
+            parent_node_id=node_id(number - 1),
+        )
+
+    @staticmethod
+    def _described(method_number: int) -> tuple[UAMethod, UAVariable, UANode]:
+        """A method, its argument and the description node hanging off that argument (§5)."""
+        method = make_method("StartJob", method_number)
+        description = make_object("InputArgumentsDescription", method_number + 2)
+        described = TestMethodSignature._argument(
+            method_number + 1,
+            (Reference(target=node_id(method_number + 2), type_name="HasArgumentDescription"),),
+        )
+        return method, described, description
+
+    def test_argument_description_addition_is_information(self) -> None:
+        method, described, description = self._described(7963)
+        diff = diff_models(
+            build_model([method, self._argument(7964)]),
+            build_model([method, described, description]),
+        )
+        # §5: a HasArgumentDescription documents an argument the method already has, so the
+        # call contract is untouched and the release stays green.
+        assert not diff.breaking
+        entry = next(item for item in diff.modified if item.label == "InputArguments")
+        assert [(change.kind, change.area) for change in entry.changes] == [("added", "reference")]
+        assert [verdict.rule_id for verdict in entry.all_verdicts()] == ["BP-MethodArg-Metadata"]
+        assert [verdict.severity for verdict in entry.all_verdicts()] == [Severity.INFO]
+
+    def test_argument_description_removal_is_information(self) -> None:
+        method, described, description = self._described(7963)
+        diff = diff_models(
+            build_model([method, described, description]),
+            build_model([method, self._argument(7964)]),
+        )
+        # Only the documentation a browser could follow disappeared (§5); the argument stays.
+        assert not diff.breaking
+        entry = next(item for item in diff.modified if item.label == "InputArguments")
+        assert [verdict.rule_id for verdict in entry.all_verdicts()] == ["BP-MethodArg-Metadata"]
+        assert [verdict.severity for verdict in entry.all_verdicts()] == [Severity.INFO]
 
     def test_argument_display_name_edit_is_not_breaking(self, tmp_path) -> None:
         new = BASE.replace(
