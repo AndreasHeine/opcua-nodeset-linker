@@ -222,6 +222,10 @@ class RenumberedNode:
     new_node_id: ExpandedNodeId
     node_class: str
     namespace: str
+    #: ``exact`` when namespace, BrowseName and node class paired one removed node with
+    #: one added node; ``heuristic`` when a group had more than one candidate and the
+    #: engine guessed, which a reader may want to check by hand (§3.2.17).
+    confidence: str = "exact"
     changes: list[Change] = field(default_factory=list)
     verdicts: tuple[RuleVerdict, ...] = ()
     impact: tuple[str, ...] = ()
@@ -267,6 +271,7 @@ class RenumberedNode:
             "node_class": self.node_class,
             "old_node_id": self.old_node_id.as_xml(),
             "new_node_id": self.new_node_id.as_xml(),
+            "confidence": self.confidence,
             "breaking": self.breaking,
             "severity": self.severity.value,
             "verdicts": [verdict.as_json() for verdict in self.all_verdicts()],

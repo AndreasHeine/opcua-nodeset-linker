@@ -6,6 +6,7 @@ nodeset-linker explain --node JobStateEnum config.yaml
 nodeset-linker stats output.xml
 nodeset-linker validate output.xml [--schema tests/data/schema/UANodeSet.xsd]
 nodeset-linker diff old.xml new.xml [--json | --markdown | --html] [--impact] [--breaking]
+    [--advisory/--no-advisory] [--fail-on-breaking] [--fail-on-advisory]
 """
 
 from __future__ import annotations
@@ -188,9 +189,20 @@ def validate(output: Path, schema: Path | None) -> None:
 @click.option("--impact", is_flag=True, help="Show the dependent nodes of every change.")
 @click.option("--breaking", "breaking_only", is_flag=True, help="Report breaking changes only.")
 @click.option(
+    "--advisory/--no-advisory",
+    "include_advisory",
+    default=True,
+    help="Show or hide the advisory findings that do not block a release.",
+)
+@click.option(
     "--fail-on-breaking",
     is_flag=True,
     help="Exit with code 1 when the diff contains a breaking change.",
+)
+@click.option(
+    "--fail-on-advisory",
+    is_flag=True,
+    help="Exit with code 1 when the diff contains an advisory finding.",
 )
 @click.option("--output", "-o", type=Path, default=None, help="Write the report to a file.")
 def diff(
@@ -201,7 +213,9 @@ def diff(
     html: bool,
     impact: bool,
     breaking_only: bool,
+    include_advisory: bool,
     fail_on_breaking: bool,
+    fail_on_advisory: bool,
     output: Path | None,
 ) -> None:
     """Compare two semantic OPC UA models.
@@ -229,11 +243,17 @@ def diff(
     if as_json:
         text = json_text(result)
     elif markdown:
-        text = markdown_text(result, impact=impact, breaking_only=breaking_only)
+        text = markdown_text(
+            result, impact=impact, breaking_only=breaking_only, include_advisory=include_advisory
+        )
     elif html:
-        text = html_text(result, impact=impact, breaking_only=breaking_only)
+        text = html_text(
+            result, impact=impact, breaking_only=breaking_only, include_advisory=include_advisory
+        )
     else:
-        text = console_text(result, impact=impact, breaking_only=breaking_only)
+        text = console_text(
+            result, impact=impact, breaking_only=breaking_only, include_advisory=include_advisory
+        )
 
     if output is not None:
         output.write_text(f"{text}\n", encoding="utf-8")
@@ -244,6 +264,8 @@ def diff(
         console.print(text, markup=False, soft_wrap=True)
 
     if fail_on_breaking and result.breaking:
+        raise SystemExit(1)
+    if fail_on_advisory and result.advisory:
         raise SystemExit(1)
 
 

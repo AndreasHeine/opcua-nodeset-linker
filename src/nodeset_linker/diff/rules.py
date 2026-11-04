@@ -155,6 +155,27 @@ _RULES: dict[str, RuleVerdict] = {
         "BP-Attributes-ServerSpecific",
         "3.2.17",
     ),
+    "role_permissions": RuleVerdict(
+        Severity.INFO,
+        "RolePermissions changed (§3.2.17): which role may access the node changes, the node "
+        "itself stays — review the access model.",
+        "BP-RolePermissions-Changed",
+        "3.2.17",
+    ),
+    "extensions": RuleVerdict(
+        Severity.ADVISORY,
+        "Extension content changed (§3.2.17): the payload travels with the node, so consumers "
+        "that read it have to be told.",
+        "BP-Extensions-Changed",
+        "3.2.17",
+    ),
+    "value_dependency": RuleVerdict(
+        Severity.ADVISORY,
+        "A value dependency now resolves to another node (§3.2.17, §3.2.12): the value of the "
+        "Variable means something else.",
+        "BP-ValueDependency-Changed",
+        "3.2.17",
+    ),
     "modelling_rule": RuleVerdict(
         Severity.BREAKING,
         "A declaration that was Optional became Mandatory (§3.2.1): consumers must now "
@@ -321,6 +342,20 @@ _RULES: dict[str, RuleVerdict] = {
         "BP-Node-Renamed",
         "3.2.17",
     ),
+    "deprecation_added": RuleVerdict(
+        Severity.INFO,
+        "A node was marked deprecated (§14.2, §14.3.2): consumers keep working and learn which "
+        "release deprecated it.",
+        "BP-Deprecation-Added",
+        "14.2",
+    ),
+    "deprecation_removed": RuleVerdict(
+        Severity.ADVISORY,
+        "The IsDeprecated reference was removed (§14.2): the node reads as current again while "
+        "consumers may still treat it as deprecated.",
+        "BP-Deprecation-Removed",
+        "14.2",
+    ),
     "reference_hard_removed": RuleVerdict(
         Severity.BREAKING,
         "A contract reference was removed (§3.2.16, §3.2.14): subtype, type-definition, "
@@ -360,6 +395,32 @@ _RULES: dict[str, RuleVerdict] = {
         Severity.INFO,
         "A reference was added (§3.2.2): navigation widens, nothing that existed disappeared.",
         "BP-Reference-Added",
+        "3.2.2",
+    ),
+    "reference_mandatory_child_added": RuleVerdict(
+        Severity.BREAKING,
+        "A Mandatory component was attached (§3.2.1, §11.2.1): every instance of the parent must "
+        "now carry it, so consumers built on the old instance shape break.",
+        "BP-Reference-MandatoryChild-Added",
+        "3.2.1",
+    ),
+    "reference_optional_child_added": RuleVerdict(
+        Severity.INFO,
+        "An Optional component was attached (§3.2.2): consumers may browse it, none has to.",
+        "BP-Reference-OptionalChild-Added",
+        "3.2.2",
+    ),
+    "reference_hard_added": RuleVerdict(
+        Severity.INFO,
+        "A contract reference was added (§3.2.2): consumers see more than before, and nothing "
+        "that existed disappeared. Check the hierarchy it inserts (§3.2.9).",
+        "BP-Reference-Contract-Added",
+        "3.2.2",
+    ),
+    "reference_soft_added": RuleVerdict(
+        Severity.INFO,
+        "A navigation-only reference was added (§3.2.2): browsing changes, reading does not.",
+        "BP-Reference-Navigation-Added",
         "3.2.2",
     ),
     "member_added": RuleVerdict(
@@ -589,6 +650,10 @@ _MEMBER_VERDICTS: dict[str, RuleVerdict] = {
     ),
 }
 _RULES.update(_MEMBER_VERDICTS)
+# An IsDeprecated reference is judged by the deprecation rules, not by the generic reference
+# rules (§14.2): adding it informs, removing it leaves consumers reading a stale marker.
+_RULES["reference_deprecation_removed"] = _RULES["deprecation_removed"]
+_RULES["reference_deprecation_added"] = _RULES["deprecation_added"]
 
 #: Member rules keyed by (member, kind).  Every member change is a contract change (§3.2.4,
 #: §3.2.5, §3.2.6, §3.2.7); only member text is documentation.
@@ -627,7 +692,7 @@ def verdict(kind: str, context: RuleContext | None = None) -> RuleVerdict:
         if kind == "removed":
             return _RULES[f"reference_{ctx.reference}_removed"]
         if kind == "added":
-            return _RULES["reference_added"]
+            return _RULES.get(f"reference_{ctx.reference}_added", _RULES["reference_added"])
     if kind == "attributes" and ctx.symmetric_flip:
         return _RULES["symmetric_changed"]
     return _RULES.get(kind, _NEUTRAL)

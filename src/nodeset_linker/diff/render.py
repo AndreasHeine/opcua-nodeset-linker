@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import html
 from dataclasses import dataclass
+from typing import TypeVar
 
 from nodeset_linker.diff.impact import total_impact
 from nodeset_linker.diff.model import (
@@ -19,6 +20,10 @@ from nodeset_linker.diff.model import (
     RenumberedNode,
     SemanticDiff,
 )
+from nodeset_linker.diff.rules import Severity
+
+#: A report entry, so the severity filter keeps its concrete type.
+EntryT = TypeVar("EntryT", NodeEntry, NodeModification, RenumberedNode)
 
 ARROW = "→"
 
@@ -40,9 +45,17 @@ class Section:
     plain: tuple[str, ...] = ()
 
 
-def console_text(diff: SemanticDiff, *, impact: bool = False, breaking_only: bool = False) -> str:
+def console_text(
+    diff: SemanticDiff,
+    *,
+    impact: bool = False,
+    breaking_only: bool = False,
+    include_advisory: bool = True,
+) -> str:
     """Plain-text report for a terminal."""
-    sections = _sections(diff, impact=impact, breaking_only=breaking_only)
+    sections = _sections(
+        diff, impact=impact, breaking_only=breaking_only, include_advisory=include_advisory
+    )
     if not sections:
         return "No semantic differences found."
     lines: list[str] = []
@@ -56,9 +69,17 @@ def console_text(diff: SemanticDiff, *, impact: bool = False, breaking_only: boo
     return "\n".join(lines).rstrip("\n")
 
 
-def markdown_text(diff: SemanticDiff, *, impact: bool = False, breaking_only: bool = False) -> str:
+def markdown_text(
+    diff: SemanticDiff,
+    *,
+    impact: bool = False,
+    breaking_only: bool = False,
+    include_advisory: bool = True,
+) -> str:
     """Markdown report, usable as a release note or PR comment."""
-    sections = _sections(diff, impact=impact, breaking_only=breaking_only)
+    sections = _sections(
+        diff, impact=impact, breaking_only=breaking_only, include_advisory=include_advisory
+    )
     if not sections:
         return "No semantic differences found."
     lines = ["# Semantic diff", ""]
@@ -77,9 +98,17 @@ def markdown_text(diff: SemanticDiff, *, impact: bool = False, breaking_only: bo
     return "\n".join(lines).rstrip("\n")
 
 
-def html_text(diff: SemanticDiff, *, impact: bool = False, breaking_only: bool = False) -> str:
+def html_text(
+    diff: SemanticDiff,
+    *,
+    impact: bool = False,
+    breaking_only: bool = False,
+    include_advisory: bool = True,
+) -> str:
     """Self-contained HTML report."""
-    sections = _sections(diff, impact=impact, breaking_only=breaking_only)
+    sections = _sections(
+        diff, impact=impact, breaking_only=breaking_only, include_advisory=include_advisory
+    )
     title = "Semantic diff"
     if diff.old_source:
         title += f" of {html.escape(diff.old_source)}"
@@ -121,35 +150,55 @@ def html_text(diff: SemanticDiff, *, impact: bool = False, breaking_only: bool =
     return "\n".join(parts)
 
 
-def _sections(diff: SemanticDiff, *, impact: bool, breaking_only: bool) -> list[Section]:
-    """Build the report structure shared by every format."""
+def _sections(
+    diff: SemanticDiff, *, impact: bool, breaking_only: bool, include_advisory: bool
+) -> list[Section]:
+    """Build the report structure shared by every format.
+
+    ``breaking_only`` keeps the entries whose own severity is breaking — an identifier move
+    stays visible even though it is reported apart from the other node sections.
+    ``include_advisory`` is off when a caller asked for ``--no-advisory``.
+    """
     if diff.is_empty and not diff.namespaces:
         return []
 
-    sections = [Section(title="Summary", plain=_summary_lines(diff, impact=impact))]
+    def kept(entries: list[EntryT]) -> list[EntryT]:
+        return [
+            entry
+            for entry in entries
+            if not breaking_only or entry.severity is Severity.BREAKING
+        ]
+
+    sections = [
+        Section(
+            title="Summary",
+            plain=_summary_lines(diff, impact=impact, include_advisory=include_advisory),
+        )
+    ]
 
     if not breaking_only and diff.added:
         sections.append(
             Section(title="Added nodes", entries=tuple(_node_line(e) for e in diff.added))
         )
 
-    removed = [e for e in diff.removed if not breaking_only or e.breaking]
+    removed = kept(diff.removed)
     if removed:
         sections.append(
             Section(title="Removed nodes", entries=tuple(_node_line(e) for e in removed))
         )
 
-    modified = [e for e in diff.modified if not breaking_only or e.breaking]
+    modified = kept(diff.modified)
     if modified:
         sections.append(
             Section(title="Modified nodes", entries=tuple(_modification_line(e) for e in modified))
         )
 
-    if diff.renumbered and not breaking_only:
+    renumbered = kept(diff.renumbered)
+    if renumbered:
         sections.append(
             Section(
                 title="Renumbered nodes",
-                entries=tuple(_renumbered_line(entry) for entry in diff.renumbered),
+                entries=tuple(_renumbered_line(entry) for entry in renumbered),
             )
         )
 
@@ -176,7 +225,7 @@ def _sections(diff: SemanticDiff, *, impact: bool, breaking_only: bool) -> list[
     elif breaking_only:
         sections.append(Section(title="Breaking changes", plain=("None",)))
 
-    if diff.advisory and not breaking_only:
+    if diff.advisory and include_advisory and not breaking_only:
         sections.append(
             Section(
                 title="Advisory",
@@ -187,7 +236,7 @@ def _sections(diff: SemanticDiff, *, impact: bool, breaking_only: bool) -> list[
     return sections
 
 
-def _summary_lines(diff: SemanticDiff, *, impact: bool) -> tuple[str, ...]:
+def _summary_lines(diff: SemanticDiff, *, impact: bool, include_advisory: bool) -> tuple[str, ...]:
     lines = [
         _count_line("Nodes", diff.old_nodes, diff.new_nodes),
         f"Added: {len(diff.added)}   Removed: {len(diff.removed)}   Modified: {len(diff.modified)}",
@@ -195,7 +244,7 @@ def _summary_lines(diff: SemanticDiff, *, impact: bool) -> tuple[str, ...]:
     if diff.renumbered:
         lines.append(f"Renumbered: {len(diff.renumbered)}")
     lines.append(f"Breaking changes: {len(diff.breaking)}")
-    if diff.advisory:
+    if diff.advisory and include_advisory:
         lines.append(f"Advisory: {len(diff.advisory)}")
     if impact:
         lines.append(_node_count(total_impact(diff)))
@@ -259,6 +308,10 @@ def _renumbered_line(entry: RenumberedNode) -> Entry:
     new = entry.new_node_id.identifier.as_xml()
     header = f"{entry.label} [{entry.node_class}, ns={entry.namespace}]: {old} {ARROW} {new}"
     details = tuple(change.describe() for change in entry.changes)
+    if entry.confidence != "exact":
+        details += (
+            "Pairing inferred from namespace, BrowseName and node class; check it by hand.",
+        )
     return Entry(header=header, details=details + _impact_details(entry.impact, count_only=True))
 
 

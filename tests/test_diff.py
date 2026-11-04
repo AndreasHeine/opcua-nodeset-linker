@@ -220,6 +220,59 @@ class TestReferenceChanges:
         assert labels(diff.modified) == {"MachineryView"}
         assert not diff.breaking
 
+    def test_attaching_a_mandatory_declaration_is_breaking(self) -> None:
+        holder = in_namespace(make_object_type("MachineType", 7904), Machinery_NS)
+        level = in_namespace(
+            make_variable("Level", 7905, data_type=node_id(6), rule=ModellingRule.MANDATORY),
+            Machinery_NS,
+        )
+        attached = replace(
+            holder, references=(Reference(target=level.node_id, type_name="HasComponent"),)
+        )
+        diff = diff_models(build_model([holder, level]), build_model([attached, level]))
+        # §3.2.1: every instance now has to carry the component, so consumers break.
+        assert labels(diff.breaking) == {"MachineType"}
+        assert diff.breaking[0].rule_id == "BP-Reference-MandatoryChild-Added"
+
+    def test_attaching_an_optional_declaration_is_information(self) -> None:
+        holder = in_namespace(make_object_type("MachineType", 7906), Machinery_NS)
+        diagnostics = in_namespace(
+            make_variable("Diagnostics", 7907, data_type=node_id(6), rule=ModellingRule.OPTIONAL),
+            Machinery_NS,
+        )
+        attached = replace(
+            holder, references=(Reference(target=diagnostics.node_id, type_name="HasComponent"),)
+        )
+        diff = diff_models(build_model([holder, diagnostics]), build_model([attached, diagnostics]))
+        assert not diff.breaking
+        assert not diff.advisory
+        assert [change.rule_id for change in diff.modified[0].changes] == [
+            "BP-Reference-OptionalChild-Added"
+        ]
+
+    def test_deprecation_reference_added_is_information(self) -> None:
+        holder = in_namespace(make_object_type("MachineType", 7908), Machinery_NS)
+        marker = in_namespace(make_object_type("MachineryVersion1_02", 7909), Machinery_NS)
+        marked = replace(
+            holder, references=(Reference(target=marker.node_id, type_name="IsDeprecated"),)
+        )
+        diff = diff_models(build_model([holder, marker]), build_model([marked, marker]))
+        # §14.2: the marker tells consumers which release deprecated the node; nothing breaks.
+        assert not diff.breaking
+        assert not diff.advisory
+        assert [change.rule_id for change in diff.modified[0].changes] == ["BP-Deprecation-Added"]
+
+    def test_deprecation_reference_removed_is_advisory(self) -> None:
+        holder = in_namespace(make_object_type("MachineType", 7910), Machinery_NS)
+        marker = in_namespace(make_object_type("MachineryVersion1_02", 7911), Machinery_NS)
+        marked = replace(
+            holder, references=(Reference(target=marker.node_id, type_name="IsDeprecated"),)
+        )
+        diff = diff_models(build_model([marked, marker]), build_model([holder, marker]))
+        assert not diff.breaking
+        assert diff.modified[0].severity == Severity.ADVISORY
+        assert diff.modified[0].rule_id == "BP-Deprecation-Removed"
+
 
 class TestModellingRules:
     def test_optional_to_mandatory_is_breaking(self) -> None:
@@ -289,6 +342,29 @@ class TestIdentityNotXml:
             (change.area, change.kind) == ("hierarchy", "added")
             for change in diff.renumbered[0].changes
         )
+
+    def test_unambiguous_renumbering_is_reported_as_exact(self) -> None:
+        old = build_model([make_object_type("MachineType", 4200)])
+        new = build_model([make_object_type("MachineType", 4201)])
+        diff = diff_models(old, new)
+        assert diff.renumbered[0].confidence == "exact"
+        assert json.loads(json_text(diff))["renumbered_nodes"][0]["confidence"] == "exact"
+        assert "check it by hand" not in console_text(diff)
+
+    def test_ambiguous_renumbering_group_is_reported_as_a_guess(self) -> None:
+        old = build_model(
+            [make_object_type("MachineType", 4200), make_object_type("MachineType", 4201)]
+        )
+        new = build_model(
+            [make_object_type("MachineType", 4202), make_object_type("MachineType", 4203)]
+        )
+        diff = diff_models(old, new)
+        # More than one candidate per BrowseName: the pairing is a guess the reader checks.
+        assert len(diff.renumbered) == 2
+        assert {entry.confidence for entry in diff.renumbered} == {"heuristic"}
+        assert "check it by hand" in console_text(diff)
+        payload = json.loads(json_text(diff))
+        assert {entry["confidence"] for entry in payload["renumbered_nodes"]} == {"heuristic"}
 
 
 class TestImpact:
@@ -447,6 +523,53 @@ class TestCli:
         result = CliRunner().invoke(main, ["diff", str(old), str(new), "--fail-on-breaking"])
         assert result.exit_code == 1, result.output
         assert "BP-EnumValue-Added" in result.output
+
+    def test_advisory_findings_never_gate_by_default(self, tmp_path) -> None:
+        old = write(tmp_path, "old.xml", BASE)
+        new = write(
+            tmp_path,
+            "new.xml",
+            BASE.replace(
+                "    <DisplayName>UnrelatedType</DisplayName>\n    <References>",
+                "    <DisplayName>UnrelatedType</DisplayName>\n    <References>\n"
+                '      <Reference ReferenceType="HasInterface">ns=1;i=2100</Reference>',
+            ),
+        )
+        # §3.2.3: an added Interface is an advisory, so a release gate stays green on it.
+        result = CliRunner().invoke(main, ["diff", str(old), str(new), "--fail-on-breaking"])
+        assert result.exit_code == 0, result.output
+        assert "BP-Interface-Added" in result.output
+
+        result = CliRunner().invoke(main, ["diff", str(old), str(new), "--fail-on-advisory"])
+        assert result.exit_code == 1, result.output
+        assert "BP-Interface-Added" in result.output
+
+    def test_no_advisory_hides_the_advisory_findings(self, tmp_path) -> None:
+        old = write(tmp_path, "old.xml", BASE)
+        new = write(
+            tmp_path,
+            "new.xml",
+            BASE.replace(
+                "    <DisplayName>UnrelatedType</DisplayName>\n    <References>",
+                "    <DisplayName>UnrelatedType</DisplayName>\n    <References>\n"
+                '      <Reference ReferenceType="HasInterface">ns=1;i=2100</Reference>',
+            ),
+        )
+        result = CliRunner().invoke(main, ["diff", str(old), str(new), "--no-advisory"])
+        assert result.exit_code == 0, result.output
+        assert "BP-Interface-Added" not in result.output
+        assert "Advisory:" not in result.output
+
+    def test_breaking_report_still_shows_an_identifier_move(self, tmp_path) -> None:
+        old = write(tmp_path, "old.xml", BASE)
+        new = write(tmp_path, "new.xml", BASE.replace('NodeId="ns=1;i=2500"', 'NodeId="ns=1;i=2510"'))
+        # §3.2.17: renumbering is breaking, so --breaking must not hide it (gap 22).
+        result = CliRunner().invoke(
+            main, ["diff", str(old), str(new), "--breaking", "--fail-on-breaking"]
+        )
+        assert result.exit_code == 1, result.output
+        assert "Renumbered nodes" in result.output
+        assert "BP-NodeId-Immutable" in result.output
 
     def test_impact_and_output_file(self, tmp_path) -> None:
         old = write(tmp_path, "old.xml", BASE)
@@ -764,6 +887,66 @@ class TestNodeAttributes:
         assert not diff.breaking
         assert "InverseName" in diff.advisory[0].reason
         assert diff.modified[0].severity == Severity.ADVISORY
+
+    def test_attribute_changes_name_the_attribute_they_touched(self) -> None:
+        old = make_variable("Count", 7950, data_type=node_id(6))
+        new = replace(old, attributes={"AccessLevel": "None|Input|Output", "Historizing": "true"})
+        diff = diff_models(build_model([old]), build_model([new]))
+        # §3.2.17 splits allowed attributes into one finding each, named by the attribute.
+        assert [change.subject for change in diff.modified[0].changes] == [
+            "AccessLevel",
+            "Historizing",
+        ]
+        assert {change.rule_id for change in diff.modified[0].changes} == {
+            "BP-Attributes-ServerSpecific"
+        }
+        assert not diff.breaking
+        assert not diff.advisory
+
+    def test_extension_change_is_advisory(self) -> None:
+        old = replace(make_object_type("MachineType", 7951), extensions_xml=("<Extension>a</Extension>",))
+        new = replace(old, extensions_xml=("<Extension>b</Extension>",))
+        diff = diff_models(build_model([old]), build_model([new]))
+        assert not diff.breaking
+        assert diff.modified[0].severity == Severity.ADVISORY
+        assert diff.modified[0].rule_id == "BP-Extensions-Changed"
+        assert [change.subject for change in diff.modified[0].changes] == ["Extensions"]
+
+    def test_extension_whitespace_is_not_a_change(self) -> None:
+        old = replace(make_object_type("MachineType", 7952), extensions_xml=("<Extension>a</Extension>",))
+        new = replace(old, extensions_xml=("<Extension>   a   </Extension>",))
+        diff = diff_models(build_model([old]), build_model([new]))
+        assert diff.is_empty
+
+    def test_role_permission_change_is_information(self) -> None:
+        old = replace(make_object_type("MachineType", 7953), role_permissions_xml=("<RolePermissions/>",))
+        new = replace(old, role_permissions_xml=("<RolePermissions><Role/></RolePermissions>",))
+        diff = diff_models(build_model([old]), build_model([new]))
+        assert not diff.breaking
+        assert not diff.advisory
+        assert diff.modified[0].rule_id == "BP-RolePermissions-Changed"
+
+    def test_value_dependency_that_resolves_elsewhere_is_advisory(self) -> None:
+        range_node = make_variable("EURange", 7954, data_type=node_id(6))
+        other = make_variable("OtherRange", 7955, data_type=node_id(6))
+        old = replace(
+            make_variable("Level", 7956, data_type=node_id(6)),
+            value_dependencies=(("EURange", range_node.node_id),),
+        )
+        new = replace(old, value_dependencies=(("EURange", other.node_id),))
+        diff = diff_models(build_model([range_node, other, old]), build_model([range_node, other, new]))
+        modified = {entry.label: entry for entry in diff.modified}
+        assert modified["Level"].severity == Severity.ADVISORY
+        assert [change.subject for change in modified["Level"].changes] == ["ValueDependencies"]
+        assert not diff.breaking
+
+    def test_unresolved_value_dependency_is_not_a_change(self) -> None:
+        external = ExpandedNodeId.parse("nsu=urn:external;i=9")
+        old = replace(make_variable("Level", 7957, data_type=node_id(6)),
+                      value_dependencies=(("EURange", external),))
+        new = replace(old, value_dependencies=(("EURange", external),))
+        diff = diff_models(build_model([old]), build_model([new]))
+        assert diff.is_empty
 
     def test_abstract_change_is_breaking(self) -> None:
         old = make_object_type("MachineType", 7400)

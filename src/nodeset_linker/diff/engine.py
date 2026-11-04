@@ -66,6 +66,9 @@ SOFT_REFERENCES = frozenset({"Organizes", "HasDescription"})
 #: Where a node sits in its hierarchy is judged as a hierarchy change (§3.2.9, §3.2.10,
 #: §3.2.13, §3.2.15), not as a reference change, so it is reported once.
 HIERARCHY_REFERENCES = frozenset({"HasSubtype", "HasTypeDefinition", "HasInterface"})
+#: The deprecation marker of the paper (§14.2): adding it informs consumers, removing it
+#: leaves them reading a node that was announced as deprecated.
+DEPRECATION_REFERENCES = frozenset({"IsDeprecated"})
 
 #: Definition members whose optional attributes still carry semantic meaning.
 FIELD_METADATA_LABELS: tuple[tuple[str, str], ...] = (
@@ -248,6 +251,9 @@ def _pair_renumbering(
     paired_added: set[Identity] = set()
     for key, removed_group in sorted(removed_groups.items()):
         added_group = added_groups.get(key, [])
+        # One removed and one added node under the same key is the only unambiguous move;
+        # a larger group is paired by position and has to be labelled as a guess.
+        confidence = "exact" if len(removed_group) == len(added_group) == 1 else "heuristic"
         pairs = zip(
             sorted(removed_group, key=_sort_key),
             sorted(added_group, key=_sort_key),
@@ -265,6 +271,7 @@ def _pair_renumbering(
                     new_node_id=new_node.node_id,
                     node_class=key[2].value,
                     namespace=new_index.alias(key[0]),
+                    confidence=confidence,
                     changes=_node_changes(old_node, new_node, old_index, new_index),
                     verdicts=(verdict("identifier_move"),),
                 )
@@ -397,14 +404,52 @@ def _node_changes(
         )
     old_attributes = _semantic_attributes(old_node)
     new_attributes = _semantic_attributes(new_node)
-    if old_attributes != new_attributes:
+    for key in sorted({*old_attributes, *new_attributes}):
+        if old_attributes.get(key) == new_attributes.get(key):
+            continue
         changes.append(
             Change(
                 area="node",
                 kind="attributes",
-                old=_spell_attributes(old_attributes) or None,
-                new=_spell_attributes(new_attributes) or None,
+                subject=key,
+                old=old_attributes.get(key),
+                new=new_attributes.get(key),
                 verdict=verdict("attributes"),
+            )
+        )
+    if old_node.role_permissions_xml != new_node.role_permissions_xml:
+        changes.append(
+            Change(
+                area="node",
+                kind="attributes",
+                subject="RolePermissions",
+                old=_joined(old_node.role_permissions_xml) or None,
+                new=_joined(new_node.role_permissions_xml) or None,
+                verdict=verdict("role_permissions"),
+            )
+        )
+    if _normalized_extension(old_node.extensions_xml) != _normalized_extension(
+        new_node.extensions_xml
+    ):
+        changes.append(
+            Change(
+                area="node",
+                kind="attributes",
+                subject="Extensions",
+                old=_joined(old_node.extensions_xml) or None,
+                new=_joined(new_node.extensions_xml) or None,
+                verdict=verdict("extensions"),
+            )
+        )
+    if _value_dependencies(old_node, old) != _value_dependencies(new_node, new):
+        changes.append(
+            Change(
+                area="node",
+                kind="attributes",
+                subject="ValueDependencies",
+                old=_spell_dependencies(_value_dependencies(old_node, old)) or None,
+                new=_spell_dependencies(_value_dependencies(new_node, new)) or None,
+                verdict=verdict("value_dependency"),
             )
         )
     symmetric = _symmetric_change(old_node, new_node)
@@ -1082,8 +1127,11 @@ def _reference_category(name: str, target: str, index: ModelIndex) -> str:
 
     Contract references (subtype, type definition, interface, encoding, event) break a
     consumer; navigation references only change browsing; an ownership reference breaks
-    when its target is an explicitly mandatory declaration.
+    when its target is an explicitly mandatory declaration; an IsDeprecated reference is
+    judged by the deprecation rules (§14.2).
     """
+    if name in DEPRECATION_REFERENCES:
+        return "deprecation"
     if name in SOFT_REFERENCES:
         return "soft"
     if name in HARD_REFERENCES:
@@ -1246,8 +1294,32 @@ def _symmetric_change(old_node: UANode, new_node: UANode) -> Change | None:
     )
 
 
-def _spell_attributes(attributes: Mapping[str, str]) -> str:
-    return ", ".join(f"{key}={value}" for key, value in sorted(attributes.items()))
+def _normalized_extension(values: Sequence[str]) -> tuple[str, ...]:
+    """Extension content with XML formatting removed (§3.2.17).
+
+    Indentation and padding around tags is spelling, not payload: only the content of an
+    extension is compared.
+    """
+    return tuple("".join(value.split()) for value in values)
+
+
+def _value_dependencies(node: UANode, index: ModelIndex) -> tuple[tuple[str, str], ...]:
+    """Where a value points: dependency name and the identifier it resolves to (§3.2.17).
+
+    An identifier that does not resolve in this model keeps its spelling, so a dependency the
+    linker externalized is not read as a changed dependency.
+    """
+    return tuple(
+        (
+            name,
+            _identity_text(identifier) if index.node(identifier) else identifier.as_xml(),
+        )
+        for name, identifier in node.value_dependencies
+    )
+
+
+def _spell_dependencies(dependencies: tuple[tuple[str, str], ...]) -> str:
+    return ", ".join(f"{name} -> {target}" for name, target in sorted(dependencies))
 
 
 def _spell_value(value: object) -> str | None:
