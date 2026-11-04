@@ -1,0 +1,974 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>NodeSet Linker — Browser-Workspace (Mockup)</title>
+<style>
+:root{
+  --bg:#f6f7f9; --elev:#fff; --elev2:#f0f2f5; --fg:#14171c; --muted:#5c6572;
+  --border:#e2e6ec; --accent:#2257c8; --accent-soft:#e8eff9;
+  --ok:#1f7a4c; --ok-soft:#e6f3ec; --warn:#9a6a17; --warn-soft:#f7efe2;
+  --breaking:#b3261e; --breaking-soft:#f8e6e3;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; --radius:12px;
+}
+@media (prefers-color-scheme:dark){
+  :root{--bg:#11141a;--elev:#191d25;--elev2:#222732;--fg:#e9ebf1;--muted:#98a3b2;--border:#2b3340;
+    --accent:#7fb0ff;--accent-soft:#1c2941;--ok:#69bb8f;--ok-soft:#182920;--warn:#d99f5c;--warn-soft:#2b2116;
+    --breaking:#e6756c;--breaking-soft:#331b18;}
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  font-size:15px;line-height:1.45}
+.wrap{max-width:1100px;margin:0 auto;padding:20px 14px 60px}
+h1{font-size:1.15rem;margin:0 0 2px}
+.sub{color:var(--muted);font-size:.85rem;margin:0 0 16px}
+.card{background:var(--elev);border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:12px}
+.card h2{margin:0 0 10px;font-size:.82rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+.card h3{margin:12px 0 6px;font-size:.9rem}
+.row{display:flex;gap:8px;align-items:center;min-height:44px;padding:6px 0;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.row:last-child{border-bottom:0}
+.grow{flex:1;min-width:0}
+.muted{color:var(--muted);font-size:.82rem}
+.mono{font-family:var(--mono);font-size:.8rem;overflow-wrap:anywhere}
+.badge{display:inline-flex;gap:5px;align-items:center;font-size:.72rem;padding:4px 8px;border-radius:999px;
+  border:1px solid var(--border);background:var(--elev2)}
+.badge.ok{color:var(--ok);border-color:var(--ok);background:var(--ok-soft)}
+.badge.warn{color:var(--warn);border-color:var(--warn);background:var(--warn-soft)}
+.badge.bad{color:var(--breaking);border-color:var(--breaking);background:var(--breaking-soft)}
+.badge.ext{color:var(--muted);border-style:dashed}
+.btn{border:1px solid var(--border);background:var(--elev2);color:var(--fg);border-radius:10px;padding:9px 14px;
+  min-height:44px;font-size:.86rem;cursor:pointer}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.ghost{background:none}
+.btn[disabled]{opacity:.5;cursor:not-allowed}
+.field{display:flex;gap:8px;margin-bottom:10px}
+.field input,.field select{flex:1;min-height:44px;border:1px solid var(--border);border-radius:10px;background:var(--elev);
+  color:var(--fg);padding:8px 12px;font-size:.9rem}
+.field input.mono{font-family:var(--mono)}
+.seg{display:inline-flex;background:var(--elev2);border:1px solid var(--border);border-radius:10px;padding:4px;gap:4px}
+.seg button{border:0;background:none;color:var(--muted);padding:8px 12px;border-radius:8px;min-width:44px;font-size:.82rem;cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--accent-soft);color:var(--fg);font-weight:650}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-family:var(--mono);font-size:.78rem;padding:6px 10px;border-radius:999px;border:1px solid var(--border);
+  background:var(--elev2);display:inline-flex;gap:6px;align-items:center}
+.chip.ok{border-color:var(--ok);background:var(--ok-soft)}
+.chip.bad{border-color:var(--breaking);background:var(--breaking-soft)}
+.chip.ext{border-style:dashed;color:var(--muted)}
+.tiles{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
+@media (min-width:900px){.tiles{grid-template-columns:repeat(4,1fr)}}
+.tile{background:var(--elev2);border:1px solid var(--border);border-radius:10px;padding:10px}
+.tile b{display:block;font-size:1.15rem;font-variant-numeric:tabular-nums}
+.tile span{color:var(--muted);font-size:.74rem}
+.tile.ext{background:repeating-linear-gradient(135deg,var(--elev2),var(--elev2) 6px,var(--border) 6px,var(--border) 7px)}
+.bar{display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border)}
+.bar:last-child{border-bottom:0}
+.track{flex:1;height:8px;background:var(--elev2);border:1px solid var(--border);border-radius:6px;overflow:hidden}
+.fill{height:100%;background:var(--accent)}
+.fill.hatch{background:repeating-linear-gradient(135deg,var(--muted),var(--muted) 4px,transparent 4px,transparent 8px)}
+.count{font-family:var(--mono);font-size:.78rem;color:var(--muted)}
+.drop{border:1px dashed var(--border);border-radius:var(--radius);padding:14px;background:var(--elev2);text-align:center}
+.drop.hot{border-color:var(--accent);background:var(--accent-soft)}
+.rail{display:flex;gap:4px;overflow-x:auto;padding-bottom:8px}
+.hop{white-space:nowrap;font-size:.8rem;padding:6px 10px;border-radius:999px;border:1px solid var(--border);background:var(--elev2)}
+.hop:last-child{border-color:var(--accent);background:var(--accent-soft);font-weight:650}
+.arrow{color:var(--muted)}
+/* stepper */
+.steps{display:flex;gap:6px;overflow-x:auto;padding-bottom:10px}
+.step{min-width:44px;min-height:44px;border:1px solid var(--border);background:var(--elev);border-radius:10px;
+  padding:8px 12px;font-size:.8rem;color:var(--muted);cursor:pointer;display:flex;gap:6px;align-items:center}
+.step[aria-current="step"]{border-color:var(--accent);background:var(--accent-soft);color:var(--fg);font-weight:650}
+.step.done{border-color:var(--ok);color:var(--ok)}
+.gate{border-radius:var(--radius);padding:12px;border:1px solid var(--border);background:var(--elev2);margin-bottom:12px}
+.gate.bad{border-color:var(--breaking);background:var(--breaking-soft);color:var(--breaking)}
+.gate.ok{border-color:var(--ok);background:var(--ok-soft);color:var(--ok)}
+details{border:1px solid var(--border);border-radius:10px;background:var(--elev2);margin-bottom:8px}
+details>summary{padding:10px 12px;font-weight:600;font-size:.86rem;cursor:pointer;list-style:none}
+details>summary::-webkit-details-marker{display:none}
+details>summary::before{content:"▸ ";color:var(--muted)}
+details[open]>summary::before{content:"▾ "}
+details .body{padding:0 12px 12px}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px}
+svg{width:100%;height:220px}
+@media (prefers-reduced-motion:no-preference){.btn,.step,.chip{transition:background .15s,color .15s}}
+@media (max-width:640px){.wrap{padding:14px 10px 40px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>NodeSet Linker — Browser-Workspace</h1>
+  <p class="sub">Bedienbar ohne Kommandozeile: Dateien per Drag&nbsp;&amp;&nbsp;Drop oder Dateiauswahl importieren, Workspace konfigurieren, Analyse/Erklärung/Diff, Export als Datei.
+    <strong>Prototype-Mockup</strong> — Parsing, Closure und Export laufen im Browser; das ist eine vereinfachte Version des Python-Linkers, kein ersatzweise geprüfter Ersatz.</p>
+
+  <nav class="steps" aria-label="Schritte">
+    <button class="step" data-step="workspace" aria-current="step">1 Workspace</button>
+    <button class="step" data-step="import">2 Import</button>
+    <button class="step" data-step="roots">3 Roots</button>
+    <button class="step" data-step="policy">4 Modus</button>
+    <button class="step" data-step="analyze">5 Analyse</button>
+    <button class="step" data-step="explain">6 Erklären</button>
+    <button class="step" data-step="diff">7 Diff</button>
+    <button class="step" data-step="export">8 Export</button>
+  </nav>
+
+  <div class="gate" id="gate" aria-live="polite"></div>
+
+  <!-- 1 -->
+  <section class="card" data-step="workspace">
+    <h2>Schritt 1 — Workspace anlegen</h2>
+    <div class="field"><input id="wsName" placeholder="Workspace-Name, z. B. Machinery v1.5" aria-label="Name"></div>
+    <div class="field"><input id="wsRelease" placeholder="Release, z. B. 1.5.0" aria-label="Release"></div>
+    <p class="muted">Der Workspace lebt nur in dieser Browser-Seite (kein Upload, keine Server-Abhängigkeit).</p>
+    <div class="row">
+      <button class="btn primary" id="createWs">Workspace anlegen</button>
+      <button class="btn ghost" id="loadDemo">Demo-Nodesets laden</button>
+      <button class="btn ghost" id="resetWs">Zurücksetzen</button>
+    </div>
+  </section>
+
+  <!-- 2 -->
+  <section class="card" data-step="import" hidden>
+    <h2>Schritt 2 — Nodesets importieren</h2>
+    <div class="drop" id="drop">Dateien hier ablegen oder <button class="btn" id="pick">Dateien wählen</button>
+      <input type="file" id="files" multiple accept=".xml,application/xml,text/xml" hidden>
+    </div>
+    <p class="muted">Unterstützt <span class="mono">UANodeSet</span>-XML, mehrere Dateien. Verzeichnis-Import via <span class="mono">showDirectoryPicker()</span>, falls der Browser das unterstützt.</p>
+    <details id="diagnose" hidden><summary>Diagnose des Parsens</summary><div class="body" id="diagnoseBody"></div></details>
+    <div class="row"><button class="btn primary" id="toRoots" disabled>Weiter zu Roots</button></div>
+  </section>
+
+  <!-- 3 -->
+  <section class="card" data-step="roots" hidden>
+    <h2>Schritt 3 — Roots wählen</h2>
+    <div class="field"><input id="rootInput" class="mono" placeholder="browseName=MSSControllerType" aria-label="Root-Selektor">
+      <button class="btn" id="addRoot">Hinzufügen</button></div>
+    <div class="chips" id="rootChips"></div>
+    <p class="muted">Selektoren: <span class="mono">browseName=</span>, <span class="mono">nodeid=</span>, <span class="mono">namespaceUri=</span>, <span class="mono">typeDefinition=</span>.
+      Indizes (<span class="mono">ns=</span>) werden gegen die zusammengeführten Namespace-Tabellen gelöst, nicht gegen einen Dokument-Index.</p>
+    <div class="row"><button class="btn primary" id="toPolicy" disabled>Weiter zu Modus</button></div>
+  </section>
+
+  <!-- 4 -->
+  <section class="card" data-step="policy" hidden>
+    <h2>Schritt 4 — Retention-Modus und externe Modelle</h2>
+    <div class="seg" role="group" aria-label="Modus">
+      <button data-mode="STRICT" aria-pressed="true">STRICT</button>
+      <button data-mode="OPTIONAL_AWARE" aria-pressed="false">OPTIONAL_AWARE</button>
+      <button data-mode="RUNTIME" aria-pressed="false">RUNTIME</button>
+      <button data-mode="CUSTOM" aria-pressed="false">CUSTOM</button>
+    </div>
+    <div id="customRules" hidden>
+      <h3>retain: / exclude:</h3>
+      <div class="field"><input id="retainInput" class="mono" placeholder="namespace=*Machinery*" aria-label="retain-Regel">
+        <button class="btn" id="addRetain">retain</button><button class="btn" id="addExclude">exclude</button></div>
+      <div class="chips" id="ruleChips"></div>
+    </div>
+    <h3>Externe Modelle (nicht exportiert, Referenzen bleiben)</h3>
+    <div class="field"><input id="extInput" class="mono" placeholder="http://opcfoundation.org/UA/" aria-label="ModelUri">
+      <button class="btn" id="addExt">Hinzufügen</button></div>
+    <div class="chips" id="extChips"></div>
+    <div class="row"><button class="btn primary" id="toAnalyze" disabled>Analyse rechnen</button></div>
+  </section>
+
+  <!-- 5 -->
+  <section class="card" data-step="analyze" hidden>
+    <h2>Schritt 5 — Analyse</h2>
+    <div class="tiles">
+      <div class="tile"><b id="tOrig">–</b><span>Knoten original</span></div>
+      <div class="tile"><b id="tRet">–</b><span>behalten</span></div>
+      <div class="tile"><b id="tRem">–</b><span>entfernt</span></div>
+      <div class="tile"><b id="tPct">–</b><span>Reduktion</span></div>
+    </div>
+    <h3>Namespaces</h3>
+    <div id="nsBars"></div>
+    <h3>Validierung</h3>
+    <div id="validation"></div>
+    <details><summary>Graph (Namespace-scoped, max. 60 Knoten)</summary><div class="body"><svg id="graph" role="img" aria-label="Dependency-Graph"></svg></div></details>
+    <div class="row"><button class="btn ghost" id="toExplain">Weiter: Erklären</button></div>
+  </section>
+
+  <!-- 6 -->
+  <section class="card" data-step="explain" hidden>
+    <h2>Schritt 6 — Erklären</h2>
+    <div class="field"><input id="explainInput" class="mono" placeholder="JobStateEnum" aria-label="Knoten suchen">
+      <button class="btn" id="explainBtn">Erklären</button></div>
+    <div id="explainOut"></div>
+    <div class="row"><button class="btn ghost" id="toDiff">Weiter: Diff (optional)</button><button class="btn ghost" id="toExport">Weiter: Export</button></div>
+  </section>
+
+  <!-- 7 -->
+  <section class="card" data-step="diff" hidden>
+    <h2>Schritt 7 — Semantischer Diff</h2>
+    <div class="drop" id="dropNew">Dateien für die <strong>neue</strong> Version ablegen
+      <input type="file" id="newFiles" multiple accept=".xml" hidden>
+      <button class="btn" id="pickNew">Dateien wählen</button>
+    </div>
+    <p class="muted">Verglichen wird: aktueller Workspace (alt) ↔ importierte Dateien (neu), Identität <span class="mono">(namespaceUri, identifier)</span>.</p>
+    <div id="diffOut"></div>
+    <div class="row"><button class="btn ghost" id="diffJson" disabled>Diff als JSON</button>
+      <button class="btn ghost" id="diffDemo">Demo-Diff laden</button></div>
+  </section>
+
+  <!-- 8 -->
+  <section class="card" data-step="export" hidden>
+    <h2>Schritt 8 — Export</h2>
+    <div class="seg" role="group" aria-label="Export-Strategie">
+      <button data-export="merged" aria-pressed="true">merged</button>
+      <button data-export="split" aria-pressed="false">split (per Namespace)</button>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <button class="btn primary" id="doExport" disabled>Reduced NodeSet herunterladen</button>
+      <button class="btn ghost" id="exportJson" disabled>Reports als JSON</button>
+    </div>
+    <div id="exportOut"></div>
+  </section>
+
+  <p class="muted" id="caveats">
+    <strong>Grenzen des Prototyps</strong> — bewusste Vereinfachung gegenüber dem Python-Linker: kein XSD-/Schema-Check,
+    RUNTIME ist eine Näherung (nur ModellingRule <span class="mono">Optional</span>, kein Pflicht-/Optionale-Kanten-Modell),
+    CUSTOM-Regeln ersetzen nicht das vollständige Policy-Registry, der Diff erkennt Umnummerierungen nicht über den
+    Move-Key <span class="mono">(namespace, BrowseName, NodeClass)</span> und prüft keine Encodings/ServerUri.
+    Der Export schreibt keine <span class="mono">Aliases</span>- und keine <span class="mono">NamespaceMetadata</span>-Objekte —
+    beides erzeugt der Linker.
+    Das Parsen im Browser ist die <strong>Vorschau-Schicht</strong> (§2.1 in <a href="ui-concept.md">docs/ui-concept.md</a>):
+    Zahlen und Befunde sind advisory — das exportierte NodeSet und das CI-Urteil kommen immer aus dem
+    Python-Engine (§13). Es ist ein Bedien-Konzept, keine Produktionsimplementierung; „Zurücksetzen"
+    gibt importierte XML-Dokumentationen wieder frei (§5).
+  </p>
+</div>
+
+<script>
+'use strict';
+const UA_NS='http://opcfoundation.org/UA/';
+const UA_TYPES={1:'Boolean',2:'SByte',3:'Byte',4:'Int16',5:'UInt16',6:'Int32',7:'UInt32',8:'Int64',9:'UInt64',
+  10:'Float',11:'Double',12:'String',13:'DateTime',14:'Guid',15:'ByteString',16:'XmlElement',17:'NodeId',
+  18:'ExpandedNodeId',19:'StatusCode',20:'QualifiedName',21:'LocalizedText',22:'Structure',23:'DataValue',
+  24:'BaseDataType',25:'DiagnosticInfo',26:'Number',27:'Integer',28:'UInteger',29:'Enumeration',30:'Image',
+  58:'BaseObjectType',62:'BaseDataVariableType',63:'BaseVariableType',64:'DataVariableType',74:'BaseObjectType'};
+const OWNERSHIP=new Set(['HasComponent','HasProperty','HasOrderedComponent','HasArgumentDescription','HasOptionalInputArgumentDescription']);
+const FORWARD=new Set(['HasTypeDefinition','HasInterface','GeneratesEvent','HasDescription']);
+const HARD=new Set(['HasSubtype','HasTypeDefinition','HasInterface','HasEncoding','GeneratesEvent']);
+const NAV=new Set(['Organizes']);
+const TAG_CLASS={UAObjectType:'ObjectType',UAVariable:'Variable',UAVariableType:'VariableType',
+  UAMethod:'Method',UAMethodDecl:'MethodDecl',UADataType:'DataType',UAReferenceType:'ReferenceType',UAView:'View'};
+
+const state={ws:null,name:'',release:'',files:[],model:null,roots:[],rootIds:[],rootErrors:[],
+  mode:'STRICT',external:new Set(),custom:[],closure:null,validation:null,newModel:null,diff:null,exportMode:'merged'};
+
+const $=s=>document.querySelector(s);
+const $$=s=>[...document.querySelectorAll(s)];
+function gate(msg,kind){const g=$('#gate');g.className='gate'+(kind?' '+kind:'');g.textContent=msg;}
+function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function globToRe(g){return new RegExp('^'+String(g).replace(/[.*+?^${}()|[\]\\]/g,'\\$&').replace(/\\\*/g,'.*').replace(/\\\?/g,'.')+'$','i');}
+
+const UA_RULES={78:'Mandatory',80:'Optional',11508:'OptionalInputArgumentDescription'};
+const FIELD_SELECTOR='DataTypeDefinition > Field, DataTypeDefinition > EnumValue, DataTypeDefinition > Alternative, Definition > Field';
+
+/* ---------- identifiers ---------- */
+function parseId(text,nsUris){
+  if(!text) return null;
+  const parts=text.split(';');
+  let nsUri=UA_NS, kind=null, value=null;
+  for(const p of parts){
+    if(p.startsWith('nsu=')){nsUri=p.slice(4);}
+    else if(p.startsWith('ns=')){const i=Number(p.slice(3)); nsUri=nsUris[i-1]||UA_NS;}
+    else if(p.startsWith('i=')){kind='numeric';value=Number(p.slice(2));}
+    else if(p.startsWith('s=')){kind='string';value=p.slice(2);}
+    else if(p.startsWith('g=')){kind='guid';value=p.slice(2);}
+    else if(p.startsWith('b=')){kind='opaque';value=p.slice(2);}
+  }
+  if(kind===null) return null;
+  return {nsUri,kind,value};
+}
+const keyOf=id=>id?`${id.nsUri}|${id.kind}#${id.value}`:'';
+function parseBrowse(text,nsUris,fallbackUri){
+  const m=/^(\d+):(.*)$/.exec(text||'');
+  if(m) return {nsUri:nsUris[Number(m[1])-1]||UA_NS,name:m[2]};
+  return {nsUri:UA_NS,name:text||''};
+}
+/* Ein Attributwert kann NodeId-Form (ns=1;i=2), QualifiedName-Form (1:JobDataType)
+   oder ein freier UA-Name ("String") sein. Aufgelöst wird nach der Merge-Phase. */
+function findByName(model,uri,name){
+  for(const n of model.nodes.values())
+    if(n.browseName.nsUri===uri&&n.browseName.name===name) return n.id;
+  return null;
+}
+function resolveRef(raw,nsUris,model){
+  if(!raw) return null;
+  const q=/^(\d+):(.*)$/.exec(raw);
+  if(q) return findByName(model,nsUris[Number(q[1])-1]||UA_NS,q[2]);
+  if(/^(ns=|nsu=|i=|s=|g=|b=)/.test(raw)) return parseId(raw,nsUris);
+  return findByName(model,UA_NS,raw);
+}
+
+/* ---------- parsing ---------- */
+function parseFile(text,name){
+  const doc=new DOMParser().parseFromString(text,'application/xml');
+  const err=doc.querySelector('parsererror');
+  if(err) throw new Error(`${name}: XML ungültig — ${err.textContent.split('\n')[0]}`);
+  const root=doc.documentElement;
+  if(!root || root.tagName!=='UANodeSet') throw new Error(`${name}: kein UANodeSet`);
+  const nsUris=[...root.querySelectorAll('NamespaceUris > Uri')].map(e=>e.textContent.trim());
+  const nodes=[];
+  for(const el of root.children){
+    const cls=TAG_CLASS[el.tagName]; if(!cls) continue;
+    const id=parseId(el.getAttribute('NodeId'),nsUris);
+    if(!id) continue;
+    const node={key:keyOf(id),id,nodeClass:cls,file:name,element:el,nsUris,
+      browseName:parseBrowse(el.getAttribute('BrowseName'),nsUris,id.nsUri),
+      displayName:(el.querySelector('DisplayName')?.textContent||'').trim(),
+      description:(el.querySelector('Description')?.textContent||'').trim()||null,
+      isAbstract:(el.getAttribute('IsAbstract')||'false')==='true',
+      dataTypeRaw:el.getAttribute('DataType'), dataType:null,
+      valueRank:el.getAttribute('ValueRank'), arrayDims:el.getAttribute('ArrayDimensions'),
+      parentNodeIdRaw:el.getAttribute('ParentNodeId'), parentNodeId:null,
+      definitionRaw:el.getAttribute('Definition'),
+      symbolicName:el.getAttribute('SymbolicName'),
+      categories:(el.getAttribute('Categories')||'').split(/\s+/).filter(Boolean),
+      refs:[],rule:null,ruleKey:null,fields:[]};
+    for(const r of el.querySelectorAll('References > Reference')){
+      const raw=r.getAttribute('ReferenceType')||'';
+      const forward=(r.getAttribute('IsForward')||'true')!=='false';
+      const target=parseId(r.textContent.trim(),nsUris);
+      if(!target) continue;
+      const typeId=/^(ns=|nsu=|i=|s=|g=|b=)/.test(raw)?parseId(raw,nsUris):null;
+      node.refs.push({typeName:typeId?null:raw,typeId,target,isForward:forward});
+    }
+    for(const f of el.querySelectorAll(FIELD_SELECTOR)){
+      node.fields.push({name:f.getAttribute('Name')||'',rawDataType:f.getAttribute('DataType'),
+        nsUris,dataType:null,optional:(f.getAttribute('IsOptional')||'false')==='true'});
+    }
+    nodes.push(node);
+  }
+  return {name,nodes,nsUris};
+}
+
+function merge(parsedList){
+  const model={nodes:new Map(),conflicts:[],namespaces:new Map()};
+  for(const p of parsedList){
+    p.nsUris.forEach(u=>model.namespaces.set(u,p.name));
+    for(const n of p.nodes){
+      const seen=model.nodes.get(n.key);
+      if(seen){model.conflicts.push({key:n.key,files:[seen.file,p.name]});continue;}
+      model.nodes.set(n.key,n);
+    }
+  }
+  // resolve reference type name <-> identifier, modelling rules, and attribute refs
+  for(const n of model.nodes.values()){
+    n.dataType=resolveRef(n.dataTypeRaw,n.nsUris,model);
+    n.parentNodeId=resolveRef(n.parentNodeIdRaw,n.nsUris,model);
+    for(const f of n.fields) f.dataType=resolveRef(f.rawDataType,f.nsUris,model);
+    for(const r of n.refs){
+      if(!r.typeName && r.typeId){const t=model.nodes.get(keyOf(r.typeId)); if(t) r.typeName=t.browseName.name;}
+      if(!r.typeId && r.typeName){
+        const t=[...model.nodes.values()].find(x=>x.nodeClass==='ReferenceType'&&x.browseName.name===r.typeName);
+        if(t) r.typeId={nsUri:t.id.nsUri,kind:t.id.kind,value:t.id.value};
+      }
+      if(r.typeName==='HasModellingRule'){
+        n.ruleKey=keyOf(r.target);
+        const t=model.nodes.get(n.ruleKey);
+        n.rule=t?t.browseName.name:(r.target.nsUri===UA_NS?(UA_RULES[r.target.value]||null):null);
+      }
+    }
+  }
+  return model;
+}
+
+/* ---------- closure ---------- */
+function follows(r){
+  if(r.typeName==='HasSubtype') return !r.isForward;
+  if(OWNERSHIP.has(r.typeName)||FORWARD.has(r.typeName)||NAV.has(r.typeName)) return r.isForward;
+  return true;
+}
+function reverseDep(r){
+  if(r.typeName==='HasSubtype') return r.isForward;
+  if(r.typeName==='HasEncoding') return true;
+  return (OWNERSHIP.has(r.typeName)||NAV.has(r.typeName)) && !r.isForward;
+}
+function buildAdj(model){
+  const req=new Map(), nav=new Map();
+  const add=(m,a,b)=>{if(!m.has(a))m.set(a,new Set());m.get(a).add(b);};
+  for(const n of model.nodes.values()){
+    for(const r of n.refs){
+      const t=keyOf(r.target);
+      if(!model.nodes.has(t)) continue;
+      const bucket=NAV.has(r.typeName)?nav:req;
+      if(follows(r)) add(bucket,n.key,t);
+      if(reverseDep(r)) add(bucket,t,n.key);
+    }
+    if(n.dataType){const t=keyOf(n.dataType); if(model.nodes.has(t)) add(req,n.key,t);}
+    if(n.parentNodeId){const t=keyOf(n.parentNodeId); if(model.nodes.has(t)) add(nav,n.key,t);}
+    for(const f of n.fields){ if(f.dataType){const t=keyOf(f.dataType); if(model.nodes.has(t)) add(req,n.key,t);} }
+  }
+  return {req,nav};
+}
+function resolveRoots(model,selectors){
+  const ids=[],errors=[];
+  for(const sel of selectors){
+    const [k,rest]=sel.includes('=')?[sel.slice(0,sel.indexOf('=')),sel.slice(sel.indexOf('=')+1)]:['browseName',sel];
+    let found=[];
+    if(k==='browseName') found=[...model.nodes.values()].filter(n=>n.browseName.name===rest);
+    else if(k==='namespaceUri') found=[...model.nodes.values()].filter(n=>n.id.nsUri===rest);
+    else if(k==='nodeid'){
+      if(/\bns=\d/.test(rest)&&!rest.includes('nsu=')){
+        errors.push({sel,why:'ns=-Index ist dokument-lokal — nodeid= mit nsu=… verwenden'});continue;
+      }
+      const n=model.nodes.get(keyOf(parseId(rest,[])));
+      if(n) found=[n];
+    }
+    else if(k==='typeDefinition'){
+      const t=[...model.nodes.values()].find(n=>n.browseName.name===rest);
+      if(t){found=[t];for(const n of model.nodes.values()) if(n.dataType&&keyOf(n.dataType)===t.key) found.push(n);}
+    }
+    else {errors.push({sel,why:`unbekannter Selektor ${k}`});continue;}
+    if(!found.length){errors.push({sel,why:'keine Übereinstimmung in den importierten Nodesets'});continue;}
+    if(found.length>1&&k==='browseName'){
+      errors.push({sel,why:`mehrdeutig (${found.length} Knoten) — mit NodeId auflösen`});continue;
+    }
+    ids.push(found[0].key);
+  }
+  return {ids,errors};
+}
+function computeClosure(model,rootIds,{includeOptional=true}){
+  const {req,nav}=buildAdj(model);
+  const retained=new Map(), navOnly=new Set();
+  const queue=[];
+  for(const r of rootIds){retained.set(r,{origin:r,path:[]});queue.push(r);}
+  while(queue.length){
+    const cur=queue.shift(); const reason=retained.get(cur);
+    for(const t of req.get(cur)||[]){
+      if(retained.has(t)) continue;
+      retained.set(t,{origin:reason.origin,path:[...reason.path,model.nodes.get(cur).browseName.name]});
+      queue.push(t);
+    }
+    for(const t of nav.get(cur)||[]){ if(!retained.has(t)){navOnly.add(t);retained.set(t,{origin:reason.origin,path:[...reason.path,model.nodes.get(cur).browseName.name]});} }
+  }
+  if(!includeOptional){
+    for(const [k,v] of retained) {const n=model.nodes.get(k);
+      if(n&&n.rule==='Optional'&&rootIds.indexOf(k)<0&&v.path.length) retained.delete(k);}
+  }
+  return {retained,navOnly,roots:new Set(rootIds)};
+}
+function applyCustom(model,closure,rules){
+  const {req}=buildAdj(model);
+  for(const n of model.nodes.values()){
+    const r=rules.find(x=>x.matches(n));
+    if(!r) continue;
+    if(r.include){
+      closure.retained.set(n.key,{origin:n.key,path:[],custom:true});
+      const q=[n.key];
+      while(q.length){const c=q.shift();
+        for(const t of req.get(c)||[]) if(!closure.retained.has(t)){
+          closure.retained.set(t,{origin:n.key,path:[model.nodes.get(c).browseName.name]});q.push(t);}
+      }
+    } else closure.retained.delete(n.key);
+  }
+}
+
+/* ---------- validation ---------- */
+function validate(model,closure,external){
+  const errors=[],warnings=[];
+  for(const c of model.conflicts){
+    warnings.push(`Konflikt: ${c.key} in ${c.files.join(' und ')} — erste Erklärung behalten (roadmap: Befund statt Abbruch)`);
+  }
+  for(const n of model.nodes.values()){
+    if(!closure.retained.has(n.key)) continue;
+    if(n.dataType&&!external.has(n.dataType.nsUri)&&!closure.retained.has(keyOf(n.dataType)))
+      errors.push(`${n.browseName.name}: DataType ${n.dataType.nsUri};${n.dataType.kind}=${n.dataType.value} nicht retained — hängt im Export`);
+    for(const r of n.refs){
+      const t=keyOf(r.target);
+      if(!model.nodes.has(t)){
+        if(external.has(r.target.nsUri)) warnings.push(`${n.browseName.name}: Referenz ${r.typeName||''} → ${r.target.nsUri} (extern, nicht exportiert)`);
+        else errors.push(`${n.browseName.name}: Referenz ${r.typeName||''} → ${r.target.nsUri};i=${r.target.value} nicht im Modell`);
+      } else if(HARD.has(r.typeName)&&!external.has(r.target.nsUri)&&!closure.retained.has(t)){
+        errors.push(`${n.browseName.name}: ${r.typeName}-Ziel ${model.nodes.get(t).browseName.name} nicht retained — hängt im Export`);
+      }
+    }
+  }
+  return {errors,warnings};
+}
+
+/* ---------- diff ---------- */
+function diffModels(oldM,newM){
+  const added=[],removed=[],modified=[];
+  for(const [k,n] of oldM.nodes) if(!newM.nodes.has(k)) removed.push(n);
+  for(const [k,n] of newM.nodes) if(!oldM.nodes.has(k)) added.push(n);
+  for(const [k,n] of oldM.nodes){
+    const m=newM.nodes.get(k); if(!m) continue;
+    const changes=[];
+    if(n.nodeClass!==m.nodeClass) changes.push({what:'NodeClass',old:n.nodeClass,new:m.nodeClass,breaking:true});
+    if(n.browseName.name!==m.browseName.name||n.browseName.nsUri!==m.browseName.nsUri) changes.push({what:'BrowseName',old:n.browseName.name,new:m.browseName.name,breaking:true});
+    if(n.displayName!==m.displayName) changes.push({what:'DisplayName',old:n.displayName,new:m.displayName,breaking:false});
+    if((n.dataType&&keyOf(n.dataType))!==(m.dataType&&keyOf(m.dataType))) changes.push({what:'DataType',old:n.dataType?`${n.dataType.nsUri};i=${n.dataType.value}`:'(none)',new:m.dataType?`${m.dataType.nsUri};i=${m.dataType.value}`:'(none)',breaking:true});
+    if(n.isAbstract&&!m.isAbstract||!n.isAbstract&&m.isAbstract) changes.push({what:'IsAbstract',old:String(n.isAbstract),new:String(m.isAbstract),breaking:m.isAbstract});
+    if(n.ruleKey!==m.ruleKey) changes.push({what:'ModellingRule',old:n.rule||'(none)',new:m.rule||'(none)',breaking:n.rule==='Optional'&&m.rule==='Mandatory'});
+    if(n.description!==m.description) changes.push({what:'Description',old:n.description||'(none)',new:m.description||'(none)',breaking:false});
+    const oldFields=new Map(n.fields.map(f=>[f.name,f]));
+    const newFields=new Map(m.fields.map(f=>[f.name,f]));
+    for(const [name,f] of oldFields){
+      const g=newFields.get(name);
+      if(!g) changes.push({what:'Definition-Feld entfernt',old:name,new:'(none)',breaking:!f.optional});
+      else if((f.dataType&&keyOf(f.dataType))!==(g.dataType&&keyOf(g.dataType))) changes.push({what:`Feld ${name}: DataType`,old:f.dataType?String(f.dataType.value):'(none)',new:g.dataType?String(g.dataType.value):'(none)',breaking:true});
+      else if(f.optional&&!g.optional) changes.push({what:`Feld ${name}: IsOptional`,old:'true',new:'false',breaking:true});
+    }
+    for(const [name] of newFields) if(!oldFields.has(name)) changes.push({what:'Definition-Feld hinzugefügt',old:'(none)',new:name,breaking:false});
+    const hardOld=n.refs.filter(r=>HARD.has(r.typeName)).map(r=>keyOf(r.target));
+    const hardNew=m.refs.filter(r=>HARD.has(r.typeName)).map(r=>keyOf(r.target));
+    for(const t of hardOld) if(!hardNew.includes(t)) changes.push({what:'Referenz entfernt',old:t,new:'(none)',breaking:true});
+    for(const t of hardNew) if(!hardOld.includes(t)) changes.push({what:'Referenz hinzugefügt',old:'(none)',new:t,breaking:false});
+    if(changes.length) modified.push({node:n,newNode:m,changes});
+  }
+  const breaking=[...removed.map(n=>({node:n,reason:'Knoten entfernt'})),
+    ...modified.filter(x=>x.changes.some(c=>c.breaking)).map(x=>({node:x.node,reason:x.changes.filter(c=>c.breaking).map(c=>`${c.what}: ${c.old} → ${c.new}`).join('; ')}))];
+  const {req}=buildAdj(newM);
+  const reverse=new Map();
+  for(const [a,bs] of req) for(const b of bs){ if(!reverse.has(b)) reverse.set(b,new Set()); reverse.get(b).add(a); }
+  const affected=id=>{const seen=new Set();const q=[id];
+    while(q.length){const c=q.shift();for(const s of reverse.get(c)||[]){if(s===id||seen.has(s))continue;seen.add(s);q.push(s);}}
+    return seen.size;};
+  for(const b of breaking) b.affected=affected(b.node.key);
+  return {added,removed,modified,breaking,identical:!breaking.length&&!modified.length&&!added.length&&!removed.length};
+}
+
+/* ---------- export ---------- */
+function serialize(model,keep,external,documentNamespace){
+  const shipped=[...model.nodes.values()].filter(n=>keep.has(n.key)&&!external.has(n.id.nsUri));
+  const used=new Set();
+  for(const n of shipped){
+    used.add(n.id.nsUri); used.add(n.browseName.nsUri);
+    if(n.dataType) used.add(n.dataType.nsUri);
+    if(n.parentNodeId) used.add(n.parentNodeId.nsUri);
+    if(n.definitionRaw){const d=resolveRef(n.definitionRaw,n.nsUris,model); if(d) used.add(d.nsUri);}
+    for(const r of n.refs){used.add(r.target.nsUri); if(r.typeId) used.add(r.typeId.nsUri);}
+    for(const f of n.fields) if(f.dataType) used.add(f.dataType.nsUri);
+  }
+  used.delete(UA_NS);
+  const order=documentNamespace
+    ?[documentNamespace,...[...used].filter(u=>u!==documentNamespace).sort()]
+    :[...used].sort();
+  const index=new Map(order.map((u,i)=>[u,i+1]));
+  const idxOf=uri=>uri===UA_NS?0:index.get(uri);
+  const local=id=>{
+    if(!id) return '';
+    const i=idxOf(id.nsUri);
+    return `${i?`ns=${i};`:''}${id.kind}=${id.value}`;
+  };
+  // bewahrt die Roh-Form des Attributs: 1:Name → neuer Index:Name, nodeid-Form → neuer Index, freier UA-Name bleibt
+  const qual=(raw,id)=>{
+    if(!id) return raw||'';
+    const tn=model.nodes.get(keyOf(id));
+    const name=tn?tn.browseName.name:(UA_TYPES[id.value]||raw);
+    if(/^\d+:/.test(raw)){const i=idxOf(id.nsUri); return i?`${i}:${name}`:name;}
+    if(/^(ns=|nsu=|i=|s=|g=|b=)/.test(raw)) return local(id);
+    return raw;
+  };
+  const clone=document.createElementNS('http://opcfoundation.org/UA/2011/03/UANodeSet.xsd','UANodeSet');
+  const nsUri=document.createElement('NamespaceUris');
+  order.forEach(u=>{const e=document.createElement('Uri');e.textContent=u;nsUri.appendChild(e);});
+  clone.appendChild(nsUri);
+  for(const n of shipped){
+    const el=n.element.cloneNode(true);
+    el.setAttribute('NodeId',local(n.id));
+    const bi=idxOf(n.browseName.nsUri);
+    el.setAttribute('BrowseName',bi?`${bi}:${n.browseName.name}`:n.browseName.name);
+    if(n.dataTypeRaw&&n.dataType) el.setAttribute('DataType',qual(n.dataTypeRaw,n.dataType));
+    if(n.parentNodeIdRaw&&n.parentNodeId) el.setAttribute('ParentNodeId',local(n.parentNodeId));
+    if(n.definitionRaw) el.setAttribute('Definition',qual(n.definitionRaw,resolveRef(n.definitionRaw,n.nsUris,model)));
+    [...el.querySelectorAll(FIELD_SELECTOR)].forEach((f,i)=>{
+      const fd=n.fields[i];
+      if(fd&&fd.rawDataType&&fd.dataType) f.setAttribute('DataType',qual(fd.rawDataType,fd.dataType));
+    });
+    for(const r of el.querySelectorAll('References > Reference')){
+      const raw=r.getAttribute('ReferenceType')||'';
+      if(/^(ns=|nsu=|i=|s=|g=|b=)/.test(raw)) r.setAttribute('ReferenceType',local(parseId(raw,n.nsUris)));
+      const t=parseId(r.textContent.trim(),n.nsUris);
+      if(t) r.textContent=local(t);
+    }
+    clone.appendChild(el);
+  }
+  return new XMLSerializer().serializeToString(clone);
+}
+
+/* ---------- UI wiring ---------- */
+function show(step){
+  $$('.card[data-step]').forEach(c=>{c.hidden=c.dataset.step!==step;});
+  $$('.step').forEach(s=>{s.setAttribute('aria-current',s.dataset.step===step?'step':'false');
+    s.classList.toggle('done',completed(s.dataset.step));});
+}
+function completed(step){
+  switch(step){
+    case 'workspace': return !!state.ws;
+    case 'import': return state.files.length>0;
+    case 'roots': return state.rootIds.length>0;
+    case 'policy': return state.closure!==null;
+    case 'analyze': return state.closure!==null;
+    case 'explain': return state.closure!==null;
+    case 'diff': return state.diff!==null;
+    case 'export': return state.closure!==null;
+  }
+  return false;
+}
+function refresh(){ show($$('.step').find(s=>s.getAttribute('aria-current')==='step').dataset.step); updateGate(); }
+function updateGate(){
+  if(!state.ws){gate('Noch kein Workspace — Schritt 1.');return;}
+  if(!state.files.length){gate('Nodesets importieren (Schritt 2).');return;}
+  if(!state.rootIds.length){gate('Mindestens einen Root wählen (Schritt 3).');return;}
+  if(!state.closure){gate('Analyse rechnen (Schritt 4 → 5).');return;}
+  if(state.validation.errors.length){gate(`${state.validation.errors.length} Validierungsfehler — Export blockiert.`,'bad');return;}
+  if(state.diff&&state.diff.breaking.length){gate(`${state.diff.breaking.length} breaking changes (Diff).`,'bad');return;}
+  gate('Analyse fertig — Export möglich.','ok');
+}
+function recompute(){
+  state.model=merge(state.files);
+  const r=resolveRoots(state.model,state.roots);
+  state.rootIds=r.ids; state.rootErrors=r.errors;
+  if(!r.ids.length){state.closure=null;renderRoots();updateGate();return;}
+  const externalized=[...state.model.nodes.values()].filter(n=>state.external.has(n.id.nsUri)).map(n=>n.key);
+  for(const root of r.ids) if(state.external.has(state.model.nodes.get(root).id.nsUri)) state.rootErrors.push({sel:'(root)',why:'Root liegt in einem externen Modell — nicht exportiert'});
+  const closure=computeClosure(state.model,state.rootIds,{includeOptional:state.mode!=='RUNTIME'});
+  if(state.mode==='CUSTOM') applyCustom(state.model,closure,state.custom);
+  state.closure=closure;
+  state.validation=validate(state.model,closure,state.external);
+  renderAnalyze(); renderRoots(); renderPolicy(); updateGate();
+}
+function retainedSet(){
+  const keep=new Set(state.closure.retained.keys());
+  for(const k of keep) if(state.external.has(state.model.nodes.get(k).id.nsUri)) keep.delete(k);
+  return keep;
+}
+function renderRoots(){
+  const chips=$('#rootChips'); chips.innerHTML='';
+  for(const sel of state.roots){
+    const err=state.rootErrors.find(e=>e.sel===sel);
+    const span=document.createElement('span');
+    span.className='chip'+(err?' bad':' ok');
+    span.innerHTML=`${esc(sel)} <span class="count">${err?esc(err.why):'gelöst'}</span>`;
+    chips.appendChild(span);
+  }
+  $('#toPolicy').disabled=!state.rootIds.length;
+  $('#toAnalyze').disabled=!state.rootIds.length;
+}
+function renderPolicy(){
+  $('#extChips').innerHTML=[...state.external].map(u=>`<span class="chip ext">${esc(u)}</span>`).join('');
+  $('#ruleChips').innerHTML=state.custom.map(r=>`<span class="chip ${r.include?'ok':'bad'}">${esc((r.include?'retain: ':'exclude: ')+r.text)}</span>`).join('');
+  $('#customRules').hidden=state.mode!=='CUSTOM';
+  $('#toAnalyze').disabled=!state.rootIds.length;
+}
+function renderAnalyze(){
+  const keep=retainedSet();
+  const external=[...state.model.nodes.values()].filter(n=>state.external.has(n.id.nsUri)).length;
+  const orig=state.model.nodes.size, ret=keep.size, rem=orig-external-ret;
+  $('#tOrig').textContent=orig; $('#tRet').textContent=ret; $('#tRem').textContent=rem;
+  $('#tPct').textContent=orig-external?((rem/(orig-external))*100).toFixed(1)+' %':'0 %';
+  const declared=new Map(), kept=new Map();
+  for(const n of state.model.nodes.values()) declared.set(n.id.nsUri,(declared.get(n.id.nsUri)||0)+1);
+  for(const k of keep) {const n=state.model.nodes.get(k); kept.set(n.id.nsUri,(kept.get(n.id.nsUri)||0)+1);}
+  $('#nsBars').innerHTML=[...declared.keys()].sort().map(u=>{
+    const d=declared.get(u),k=kept.get(u)||0,ext=state.external.has(u);
+    const pct=d?Math.round(k/d*100):0;
+    return `<div class="bar"><span class="mono">${esc(u)}</span><div class="track"><div class="${ext?'fill hatch':'fill'}" style="width:${pct}%"></div></div>
+      <span class="count">${d} → ${k}</span>${ext?'<span class="badge ext">extern</span>':(k<d?'<span class="badge warn">subset</span>':'<span class="badge">voll</span>')}</div>`;
+  }).join('');
+  const v=[];
+  for(const e of state.validation.errors) v.push(`<div class="row"><span class="badge bad">Fehler</span><span class="grow mono">${esc(e)}</span></div>`);
+  for(const w of state.validation.warnings.slice(0,40)) v.push(`<div class="row"><span class="badge warn">Warnung</span><span class="grow mono">${esc(w)}</span></div>`);
+  if(!v.length) v.push('<div class="row"><span class="badge ok">ohne Befunde</span></div>');
+  $('#validation').innerHTML=v.join('');
+  renderGraph(keep);
+  $('#doExport').disabled=state.validation.errors.length>0;
+  $('#exportJson').disabled=false;
+  $('#explainBtn').disabled=false;
+}
+function renderGraph(keep){
+  const svg=$('#graph'); svg.innerHTML='';
+  const {req}=buildAdj(state.model);
+  const nodes=[...keep].filter(k=>!state.external.has(state.model.nodes.get(k).id.nsUri)).slice(0,60);
+  const depth=new Map();
+  for(const r of state.rootIds) depth.set(r,0);
+  let frontier=[...state.rootIds];
+  while(frontier.length){
+    const next=[];
+    for(const c of frontier) for(const t of req.get(c)||[]) if(!depth.has(t)&&keep.has(t)){depth.set(t,(depth.get(c)||0)+1);next.push(t);}
+    frontier=next;
+  }
+  const cols=new Map();
+  for(const k of nodes){const d=depth.has(k)?depth.get(k):9; if(!cols.has(d))cols.set(d,[]);cols.get(d).push(k);}
+  const W=320,H=220, colKeys=[...cols.keys()].sort((a,b)=>a-b);
+  const cw=W/Math.max(colKeys.length,1);
+  const pos=new Map();
+  colKeys.forEach((d,ci)=>{const list=cols.get(d);list.forEach((k,i)=>{
+    pos.set(k,{x:ci*cw+14,y:(i+1)*(H/(list.length+1))});});});
+  const NS='http://www.w3.org/2000/svg';
+  for(const [a,bs] of req){ if(!pos.has(a))continue;
+    for(const b of bs){ if(!pos.has(b))continue;
+      const p=document.createElementNS(NS,'line');
+      p.setAttribute('x1',pos.get(a).x);p.setAttribute('y1',pos.get(a).y);
+      p.setAttribute('x2',pos.get(b).x);p.setAttribute('y2',pos.get(b).y);
+      p.setAttribute('stroke','var(--muted)');p.setAttribute('stroke-width','1');svg.appendChild(p);}
+  }
+  const color={ObjectType:'var(--accent)',Variable:'var(--ok)',DataType:'#7a4bb8',VariableType:'var(--accent)',
+    ReferenceType:'var(--muted)',Method:'var(--warn)',MethodDecl:'var(--warn)',View:'var(--muted)'};
+  for(const k of nodes){
+    const n=state.model.nodes.get(k),p=pos.get(k);
+    const c=document.createElementNS(NS,'circle');
+    c.setAttribute('cx',p.x);c.setAttribute('cy',p.y);c.setAttribute('r',8);
+    c.setAttribute('fill',color[n.nodeClass]||'var(--muted)');svg.appendChild(c);
+    const t=document.createElementNS(NS,'text');
+    t.setAttribute('x',p.x);t.setAttribute('y',p.y-12);t.setAttribute('text-anchor','middle');
+    t.setAttribute('font-size','9');t.setAttribute('fill','var(--fg)');
+    t.textContent=n.browseName.name.slice(0,18);svg.appendChild(t);
+  }
+}
+function renderExplain(query){
+  const out=$('#explainOut'); out.innerHTML='';
+  const matches=[...state.model.nodes.values()].filter(n=>n.browseName.name===query||n.displayName===query||keyOf(n.id)===query);
+  if(!matches.length){out.innerHTML='<div class="badge bad">Keine Übereinstimmung</div>';return;}
+  if(matches.length>1){
+    out.innerHTML='<p class="muted">Mehrdeutig — bitte NodeId verwenden:</p><div class="chips">'+
+      matches.slice(0,6).map(m=>`<span class="chip mono">${esc(`${m.id.nsUri};${m.id.kind}=${m.id.value}`)}</span>`).join('')+'</div>';
+    return;
+  }
+  const n=matches[0]; const reason=state.closure.retained.get(n.key);
+  if(!reason){out.innerHTML=`<div class="badge bad">${esc(n.browseName.name)}: entfernt (nicht von einem Root erreichbar)</div>`;return;}
+  const origin=state.model.nodes.get(reason.origin);
+  const hops=[origin?origin.browseName.name:'(custom rule)',...(reason.path||[])];
+  if(!reason.custom) hops.push(n.browseName.name);
+  const uniq=hops.filter((v,i)=>i===0||v!==hops[i-1]);
+  out.innerHTML=`<div class="row"><span class="mono" style="font-weight:650">${esc(n.browseName.name)}</span>
+    <span class="badge ok">behalten</span>${state.closure.navOnly.has(n.key)?'<span class="badge">navigation-only</span>':''}
+    <span class="badge">${esc(n.nodeClass)}</span></div>
+    <div class="rail">${uniq.map(h=>`<span class="hop">${esc(h)}</span>`).join('<span class="arrow">→</span>')}</div>
+    <p class="muted">Ursprung: ${esc(origin?origin.browseName.name:'custom rule')}</p>`;
+}
+function renderDiff(d){
+  const out=$('#diffOut');
+  const banner=d.identical?'<div class="badge ok">kein semantischer Unterschied</div>'
+    :`<div class="badge bad">${d.breaking.length} breaking changes</div>`;
+  const rows=[];
+  for(const b of d.breaking) rows.push(`<div class="row"><span class="badge bad mono">${esc(b.node.browseName.name)}</span>
+    <span class="grow mono">${esc(b.reason)}</span><span class="count">betroffen: ${b.affected}</span></div>`);
+  for(const m of d.modified) if(!m.changes.some(c=>c.breaking)) rows.push(`<div class="row"><span class="badge mono">${esc(m.node.browseName.name)}</span>
+    <span class="grow mono">${esc(m.changes.map(c=>`${c.what}: ${c.old} → ${c.new}`).join('; '))}</span></div>`);
+  if(d.added.length) rows.push(`<div class="row"><span class="badge ok">${d.added.length} Knoten hinzugefügt</span></div>`);
+  if(d.removed.length) rows.push(`<div class="row"><span class="badge bad">${d.removed.length} Knoten entfernt</span></div>`);
+  out.innerHTML=banner+(rows.length?rows.join(''):'<p class="muted">keine Knotenänderungen</p>');
+  $('#diffJson').disabled=false;
+}
+function download(name,text,mime='application/xml'){
+  const blob=new Blob([text],{type:mime});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name;
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+}
+function doExport(){
+  const keep=retainedSet();
+  if(state.exportMode==='merged'){
+    const xml=serialize(state.model,keep,state.external,null);
+    download(`${(state.name||'workspace').replace(/\s+/g,'-')}-reduced.xml`,xml);
+    $('#exportOut').innerHTML=`<div class="artifact row"><span class="mono grow">${esc((state.name||'workspace')+'-reduced.xml')}</span><span class="badge ok">geschrieben</span></div>`;
+    return;
+  }
+  const byNs=new Map();
+  for(const k of keep){const n=state.model.nodes.get(k); if(!byNs.has(n.id.nsUri)) byNs.set(n.id.nsUri,new Set()); byNs.get(n.id.nsUri).add(k);}
+  const manifest={export_mode:'split',namespaces:[...byNs.keys()].sort().map(u=>({uri:u,output_file:u.split('/').filter(Boolean).pop()+'.xml'})),
+    external_models:[...state.external].sort(),nodes:[...byNs.entries()].map(([u,s])=>({uri:u,count:s.size}))};
+  download('manifest.json',JSON.stringify(manifest,null,2),'application/json');
+  [...byNs.entries()].sort(([a],[b])=>a.localeCompare(b)).forEach(([u,ids])=>{
+    download(u.split('/').filter(Boolean).pop()+'.xml',serialize(state.model,ids,state.external,u));
+  });
+  $('#exportOut').innerHTML=`<div class="row"><span class="badge ok">manifest.json + ${byNs.size} Namespace-Dateien</span></div>`;
+}
+function exportReports(){
+  const keep=retainedSet();
+  const payload={workspace:state.name,release:state.release,mode:state.mode,external:[...state.external],
+    roots:state.roots,statistics:{original:state.model.nodes.size,retained:keep.size,
+      external:[...state.model.nodes.values()].filter(n=>state.external.has(n.id.nsUri)).length},
+    namespace_subsets:[...new Map([...keep].map(k=>[state.model.nodes.get(k).id.nsUri,true])).keys()],
+    validation:state.validation,
+    reasons:[...state.closure.retained.entries()].slice(0,200).map(([k,v])=>({node:state.model.nodes.get(k).browseName.name,origin:state.model.nodes.get(v.origin)?.browseName.name}))};
+  download(`${(state.name||'workspace').replace(/\s+/g,'-')}-reports.json`,JSON.stringify(payload,null,2),'application/json');
+}
+function readFiles(list){
+  const diag=[];
+  Promise.all([...list].map(async f=>{
+    try{const text=await f.text();const parsed=parseFile(text,f.name);
+      diag.push(`${f.name}: ${parsed.nodes.length} Knoten, ${parsed.nsUris.length} Namespaces`);
+      return parsed;}
+    catch(e){diag.push(`${f.name}: ${e.message}`);return null;}
+  })).then(parsed=>{
+    for(const p of parsed){ if(!p) continue;
+      // Dieselbe Datei ersetzt ihre alte Version. Ohne das wächst state.files bei jedem
+      // Import weiter und hält jedes geparste XML-Dokument dauerhaft im Speicher.
+      state.files=state.files.filter(x=>x.name!==p.name);
+      state.files.push(p);
+    }
+    state.model=null;state.closure=null;state.diff=null;state.newModel=null;
+    $('#diagnose').hidden=!diag.length;$('#diagnoseBody').innerHTML=diag.map(d=>`<div class="row mono grow">${esc(d)}</div>`).join('');
+    $('#toRoots').disabled=state.files.length===0;
+    gate(state.files.length?`Importiert: ${state.files.length} Dateien — Roots wählen.`:'Import fehlgeschlagen — Dateien prüfen.');
+    recompute();show('import');
+  });
+}
+const DEMO_UA=`<?xml version="1.0" encoding="utf-8"?><UANodeSet xmlns="http://opcfoundation.org/UA/2011/03/UANodeSet.xsd">
+  <UADataType NodeId="i=24" BrowseName="BaseDataType"><DisplayName>BaseDataType</DisplayName></UADataType>
+  <UADataType NodeId="i=22" BrowseName="Structure"><DisplayName>Structure</DisplayName><References><Reference ReferenceType="HasSubtype" IsForward="false">i=24</Reference></References></UADataType>
+  <UADataType NodeId="i=29" BrowseName="Enumeration"><DisplayName>Enumeration</DisplayName><References><Reference ReferenceType="HasSubtype" IsForward="false">i=24</Reference></References></UADataType>
+  <UAObjectType NodeId="i=58" BrowseName="BaseObjectType"><DisplayName>BaseObjectType</DisplayName></UAObjectType>
+  <UAReferenceType NodeId="i=47" BrowseName="HasHierarchicalOrganization"><DisplayName>HasHierarchicalOrganization</DisplayName></UAReferenceType>
+  <UAReferenceType NodeId="i=48" BrowseName="HasComponent"><DisplayName>HasComponent</DisplayName><References><Reference ReferenceType="HasSubtype" IsForward="false">i=47</Reference></References></UAReferenceType>
+</UANodeSet>`;
+const DEMO_MACH=`<?xml version="1.0" encoding="utf-8"?><UANodeSet xmlns="http://opcfoundation.org/UA/2011/03/UANodeSet.xsd">
+  <NamespaceUris><Uri>http://opcfoundation.org/UA/Machinery/</Uri></NamespaceUris>
+  <UAView NodeId="ns=1;i=50" BrowseName="1:Machinery"><DisplayName>Machinery</DisplayName><References><Reference ReferenceType="Organizes">ns=1;i=2200</Reference></References></UAView>
+  <UADataType NodeId="ns=1;i=2500" BrowseName="1:JobStateEnum"><DisplayName>JobStateEnum</DisplayName>
+    <References><Reference ReferenceType="HasSubtype" IsForward="false">i=29</Reference></References>
+    <Definition Name="1:JobStateEnum"><Field Name="Running" Value="0"/><Field Name="Completed" Value="1"/></Definition></UADataType>
+  <UADataType NodeId="ns=1;i=2501" BrowseName="1:JobDataType"><DisplayName>JobDataType</DisplayName>
+    <References><Reference ReferenceType="HasSubtype" IsForward="false">i=22</Reference></References>
+    <Definition Name="1:JobDataType"><Field Name="state" DataType="ns=1;i=2500"/><Field Name="id" DataType="i=12"/></Definition></UADataType>
+  <UAObjectType NodeId="ns=1;i=2200" BrowseName="1:MSSControllerType"><DisplayName>MSSControllerType</DisplayName>
+    <References><Reference ReferenceType="HasSubtype" IsForward="false">i=58</Reference><Reference ReferenceType="HasComponent">ns=1;i=2300</Reference></References></UAObjectType>
+  <UAObjectType NodeId="ns=1;i=2300" BrowseName="1:JobManagementType"><DisplayName>JobManagementType</DisplayName>
+    <References><Reference ReferenceType="HasSubtype" IsForward="false">i=58</Reference><Reference ReferenceType="HasComponent">ns=1;i=2400</Reference></References></UAObjectType>
+  <UAVariable NodeId="ns=1;i=2400" BrowseName="1:CurrentJob" DataType="ns=1;i=2501"><DisplayName>CurrentJob</DisplayName>
+    <References><Reference ReferenceType="HasModellingRule">i=80</Reference></References></UAVariable>
+  <UAVariable NodeId="ns=1;i=2100" BrowseName="1:LegacyAlarm" DataType="i=12"><DisplayName>LegacyAlarm</DisplayName></UAVariable>
+  <UAObjectType NodeId="ns=1;i=2600" BrowseName="1:DeprecatedType"><DisplayName>DeprecatedType</DisplayName>
+    <References><Reference ReferenceType="HasSubtype" IsForward="false">i=58</Reference></References></UAObjectType>
+</UANodeSet>`;
+const DEMO_MACH_NEW=`<?xml version="1.0" encoding="utf-8"?><UANodeSet xmlns="http://opcfoundation.org/UA/2011/03/UANodeSet.xsd">
+  <NamespaceUris><Uri>http://opcfoundation.org/UA/Machinery/</Uri></NamespaceUris>
+  <UAView NodeId="ns=1;i=50" BrowseName="1:Machinery"><DisplayName>Machinery</DisplayName><References><Reference ReferenceType="Organizes">ns=1;i=2200</Reference></References></UAView>
+  <UADataType NodeId="ns=1;i=2500" BrowseName="1:JobStateEnum"><DisplayName>JobStateEnum</DisplayName>
+    <References><Reference ReferenceType="HasSubtype" IsForward="false">i=29</Reference></References>
+    <Definition Name="1:JobStateEnum"><Field Name="Running" Value="0"/><Field Name="Idle" Value="1"/></Definition></UADataType>
+  <UADataType NodeId="ns=1;i=2501" BrowseName="1:JobDataType"><DisplayName>JobDataType</DisplayName>
+    <References><Reference ReferenceType="HasSubtype" IsForward="false">i=22</Reference></References>
+    <Definition Name="1:JobDataType"><Field Name="state" DataType="ns=1;i=2500"/><Field Name="id" DataType="i=12" IsOptional="true"/></Definition></UADataType>
+  <UAObjectType NodeId="ns=1;i=2200" BrowseName="1:MSSControllerType"><DisplayName>MSSControllerType</DisplayName>
+    <References><Reference ReferenceType="HasSubtype" IsForward="false">i=58</Reference><Reference ReferenceType="HasComponent">ns=1;i=2300</Reference></References></UAObjectType>
+  <UAObjectType NodeId="ns=1;i=2300" BrowseName="1:JobManagementType"><DisplayName>JobManagementType</DisplayName>
+    <References><Reference ReferenceType="HasSubtype" IsForward="false">i=58</Reference><Reference ReferenceType="HasComponent">ns=1;i=2400</Reference></References></UAObjectType>
+  <UAVariable NodeId="ns=1;i=2400" BrowseName="1:CurrentJob" DataType="ns=1;i=2501"><DisplayName>CurrentJob</DisplayName>
+    <References><Reference ReferenceType="HasModellingRule">i=78</Reference></References></UAVariable>
+  <UAObjectType NodeId="ns=1;i=2700" BrowseName="1:JobResultType"><DisplayName>JobResultType</DisplayName>
+    <References><Reference ReferenceType="HasSubtype" IsForward="false">i=58</Reference></References></UAObjectType>
+  <UAObjectType NodeId="ns=1;i=2600" BrowseName="1:DeprecatedType"><DisplayName>DeprecatedType</DisplayName>
+    <References><Reference ReferenceType="HasSubtype" IsForward="false">i=58</Reference></References></UAObjectType>
+</UANodeSet>`;
+function loadDemo(){
+  state.files=[parseFile(DEMO_UA,'ua_base.xml'),parseFile(DEMO_MACH,'machinery.xml')];
+  state.ws=true; state.name=$('#wsName').value||'Machinery Demo'; state.release=$('#wsRelease').value||'1.0.0';
+  state.roots=['browseName=MSSControllerType'];
+  state.external=new Set([UA_NS]);
+  state.diff=null;state.newModel=null;state.custom=[];state.rootErrors=[];
+  $('#diagnose').hidden=false;
+  $('#diagnoseBody').innerHTML=[
+    'ua_base.xml: 6 Knoten, 0 Namespaces (Namespace 0 = http://opcfoundation.org/UA/)',
+    'machinery.xml: 8 Knoten, 1 Namespace',
+    'Root browseName=MSSControllerType gelöst; UA als externes Modell gesetzt'].map(d=>`<div class="row mono grow">${esc(d)}</div>`).join('');
+  $('#toRoots').disabled=false;
+  recompute();show('roots');
+}
+function resetWorkspace(){
+  // Alle referenzierten Modelle und Dokumente loslassen — der einzige Weg, großes XML
+  // im Browser wieder freizugeben.
+  state.ws=null;state.name='';state.release='';state.files=[];state.model=null;state.closure=null;
+  state.validation=null;state.newModel=null;state.diff=null;state.roots=[];state.rootIds=[];
+  state.rootErrors=[];state.custom=[];state.external=new Set();
+  $('#diagnose').hidden=true;$('#diagnoseBody').innerHTML='';$('#diffOut').innerHTML='';
+  $('#explainOut').innerHTML='';$('#exportOut').innerHTML='';$('#graph').innerHTML='';
+  $('#nsBars').innerHTML='';$('#validation').innerHTML='';
+  $('#tOrig').textContent='–';$('#tRet').textContent='–';$('#tRem').textContent='–';$('#tPct').textContent='–';
+  $('#toRoots').disabled=true;$('#toPolicy').disabled=true;$('#doExport').disabled=true;
+  $('#exportJson').disabled=true;$('#explainBtn').disabled=true;$('#diffJson').disabled=true;
+  renderRoots();renderPolicy();show('workspace');
+  gate('Workspace zurückgesetzt — importierte Dokumente sind freigegeben.');
+}
+function loadDemoDiff(){
+  if(!state.model){gate('Erst den Demo-Workspace laden (Schritt 1).','bad');return;}
+  runDiffText(DEMO_MACH_NEW,'machinery-v2.xml');
+  show('diff');
+}
+function bind(){
+  $$('.step').forEach(s=>s.addEventListener('click',()=>{show(s.dataset.step);updateGate();}));
+  $('#createWs').addEventListener('click',()=>{state.ws=true;state.name=$('#wsName').value||'Workspace';state.release=$('#wsRelease').value||'';
+    refresh();show('import');});
+  $('#loadDemo').addEventListener('click',loadDemo);
+  $('#resetWs').addEventListener('click',resetWorkspace);
+  const drop=$('#drop');
+  ['dragenter','dragover'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('hot');}));
+  ['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('hot');}));
+  drop.addEventListener('drop',e=>{if(e.dataTransfer?.files?.length) readFiles(e.dataTransfer.files);});
+  $('#pick').addEventListener('click',()=>$('#files').click());
+  $('#files').addEventListener('change',e=>{
+    if(e.target.files.length) readFiles(e.target.files);
+    e.target.value=''; // FileList loslassen, sonst bleiben die File-Objekte über den Input referenziert
+  });
+  $('#addRoot').addEventListener('click',()=>{const v=$('#rootInput').value.trim(); if(v){state.roots.push(v);$('#rootInput').value='';recompute();}});
+  $('#rootInput').addEventListener('keydown',e=>{if(e.key==='Enter')$('#addRoot').click();});
+  $$('.seg [data-mode]').forEach(b=>b.addEventListener('click',()=>{
+    state.mode=b.dataset.mode;$$('.seg [data-mode]').forEach(x=>x.setAttribute('aria-pressed',x===b));recompute();}));
+  $$('.seg [data-export]').forEach(b=>b.addEventListener('click',()=>{
+    state.exportMode=b.dataset.export;$$('.seg [data-export]').forEach(x=>x.setAttribute('aria-pressed',x===b));}));
+  $('#addExt').addEventListener('click',()=>{const v=$('#extInput').value.trim(); if(v.includes('://')){state.external.add(v);$('#extInput').value='';recompute();}else gate('Externe Modelle sind ModelUris (http://…), keine NodeIds.','bad');});
+  const addRule=include=>{const v=$('#retainInput').value.trim(); if(v&&v.includes('=')){state.custom.push({text:v,include,matches:ruleMatches(v)});$('#retainInput').value='';recompute();}};
+  $('#addRetain').addEventListener('click',()=>addRule(true));
+  $('#addExclude').addEventListener('click',()=>addRule(false));
+  $('#toRoots').addEventListener('click',()=>show('roots'));
+  $('#toPolicy').addEventListener('click',()=>show('policy'));
+  $('#toAnalyze').addEventListener('click',()=>{recompute();show('analyze');});
+  $('#toExplain').addEventListener('click',()=>show('explain'));
+  $('#toDiff').addEventListener('click',()=>show('diff'));
+  $('#toExport').addEventListener('click',()=>show('export'));
+  $('#explainBtn').addEventListener('click',()=>{if(state.closure)renderExplain($('#explainInput').value.trim());});
+  $('#explainInput').addEventListener('keydown',e=>{if(e.key==='Enter')$('#explainBtn').click();});
+  const dropNew=$('#dropNew');
+  dropNew.addEventListener('dragover',e=>e.preventDefault());
+  dropNew.addEventListener('drop',e=>{if(e.dataTransfer?.files?.length) runDiff(e.dataTransfer.files);});
+  $('#pickNew').addEventListener('click',()=>$('#newFiles').click());
+  $('#newFiles').addEventListener('change',e=>{
+    if(e.target.files.length) runDiff(e.target.files);
+    e.target.value=''; // FileList loslassen, sonst bleiben die File-Objekte über den Input referenziert
+  });
+  $('#diffJson').addEventListener('click',()=>download('diff.json',JSON.stringify(state.diff,null,2),'application/json'));
+  $('#diffDemo').addEventListener('click',loadDemoDiff);
+  $('#doExport').addEventListener('click',doExport);
+  $('#exportJson').addEventListener('click',exportReports);
+}
+function ruleMatches(line){
+  const [k,v]=line.split('=');
+  const re=globToRe(v);
+  return n=>{
+    switch(k.toLowerCase()){
+      case 'namespace': return re.test(n.id.nsUri);
+      case 'browsename': return re.test(n.browseName.name);
+      case 'nodeclass': return re.test(n.nodeClass);
+      case 'modellingrule': return re.test(n.rule||'');
+      default: return false;
+    }
+  };
+}
+function runDiffText(text,name){
+  try{
+    state.newModel=merge([parseFile(text,name)]);
+    state.diff=diffModels(state.model,state.newModel);
+    renderDiff(state.diff);
+    gate(state.diff.identical?'Diff: kein semantischer Unterschied':`Diff gerechnet: ${state.diff.breaking.length} breaking changes.`);
+  }catch(e){gate(`Import der neuen Version fehlgeschlagen: ${e.message}`,'bad');}
+}
+async function runDiff(list){
+  const texts=[];
+  for(const f of list){ try{texts.push([await f.text(),f.name]);}catch(e){gate(`Import der neuen Version fehlgeschlagen: ${f.name}: ${e.message}`,'bad');return;} }
+  try{
+    state.newModel=merge(texts.map(([t,n])=>parseFile(t,n)));
+    state.diff=diffModels(state.model,state.newModel);
+    renderDiff(state.diff);
+    gate(state.diff.identical?'Diff: kein semantischer Unterschied':`Diff gerechnet: ${state.diff.breaking.length} breaking changes.`);
+  }catch(e){gate(`Diff fehlgeschlagen: ${e.message}`,'bad');}
+}
+bind();
+gate('Start: Workspace anlegen oder Demo laden.');
+show('workspace');
+</script>
+</body>
+</html>
