@@ -2,9 +2,10 @@
 
 The diff reads the semantic model objects produced by the repository layer and reports
 what changed in the *information model*: added and removed nodes, changed references,
-changed type definitions, namespace totals, dependency impact and whether a change is
-breaking.  XML ordering, formatting, whitespace and ``NamespaceIndex`` never reach the
-comparison — identity is ``(namespaceUri, identifier)``.
+changed type definitions, namespace totals and namespace release metadata (§11.1, §11.2,
+§11.3), dependency impact and whether a change is breaking.  XML ordering, formatting,
+whitespace and ``NamespaceIndex`` never reach the comparison — identity is
+``(namespaceUri, identifier)``.
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ from nodeset_linker.diff.impact import apply_impact, dependents, total_impact
 from nodeset_linker.diff.model import (
     BreakingChange,
     Change,
+    MetadataDelta,
     NamespaceChange,
     NodeEntry,
     NodeModification,
@@ -28,6 +30,7 @@ __all__ = [
     "PAPER",
     "BreakingChange",
     "Change",
+    "MetadataDelta",
     "NamespaceChange",
     "NodeEntry",
     "NodeModification",

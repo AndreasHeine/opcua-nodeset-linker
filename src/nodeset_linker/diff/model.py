@@ -323,15 +323,97 @@ class BreakingChange:
         }
 
 
+#: Namespace metadata attribute → the label used in human-readable output.
+METADATA_LABELS: dict[str, str] = {
+    "uri": "NamespaceUri",
+    "alias": "Alias",
+    "version": "Version",
+    "publication_date": "PublicationDate",
+    "xml_schema_uri": "XmlSchemaUri",
+    "model_version": "ModelVersion",
+    "required_models": "RequiredModel",
+    "required_model_version": "RequiredModel version",
+}
+
+
+@dataclass(frozen=True, slots=True)
+class MetadataDelta:
+    """One namespace metadata value, old → new, with the rule that judged it.
+
+    A metadata conflict between two source documents has no old/new pair: it carries a
+    note naming what the documents declared and what the merge kept.
+    """
+
+    attribute: str
+    verdict: RuleVerdict
+    old: str | None = None
+    new: str | None = None
+    note: str | None = None
+
+    @property
+    def label(self) -> str:
+        return METADATA_LABELS.get(self.attribute, self.attribute)
+
+    def describe(self) -> str:
+        if self.old is None and self.new is None:
+            return self.note or self.label
+        if self.old is None:
+            text = f"{self.label}: + {self.new}"
+        elif self.new is None:
+            text = f"{self.label}: - {self.old}"
+        else:
+            text = f"{self.label}: {self.old} → {self.new}"
+        return f"{text} ({self.note})" if self.note else text
+
+    def as_json(self) -> dict[str, Any]:
+        return {
+            "attribute": self.attribute,
+            "old": self.old,
+            "new": self.new,
+            "severity": self.verdict.severity.value,
+            "rule_id": self.verdict.rule_id,
+            "rationale": self.verdict.rationale,
+            "clause": self.verdict.clause,
+            "note": self.note,
+        }
+
+
 @dataclass(frozen=True, slots=True)
 class NamespaceChange:
-    """Totals per namespace: nodes, references and data types, old → new."""
+    """Totals and release metadata per namespace: nodes, references and data types."""
 
     alias: str
     uri: str
     nodes: tuple[int, int]
     references: tuple[int, int]
     datatypes: tuple[int, int]
+    metadata: tuple[MetadataDelta, ...] = ()
+    verdicts: tuple[RuleVerdict, ...] = ()
+
+    @property
+    def breaking(self) -> bool:
+        return any(verdict.breaking for verdict in self.all_verdicts())
+
+    @property
+    def severity(self) -> Severity:
+        """The strongest severity this namespace entry carries."""
+        severities = {verdict.severity for verdict in self.all_verdicts()}
+        for severity in (Severity.BREAKING, Severity.ADVISORY):
+            if severity in severities:
+                return severity
+        return Severity.INFO
+
+    @property
+    def rule_id(self) -> str | None:
+        """The rule behind the strongest severity, so a report can cite one id."""
+        for severity in (Severity.BREAKING, Severity.ADVISORY, Severity.INFO):
+            for verdict in self.all_verdicts():
+                if verdict.severity is severity:
+                    return verdict.rule_id
+        return None
+
+    def all_verdicts(self) -> list[RuleVerdict]:
+        return [*self.verdicts, *[delta.verdict for delta in self.metadata]]
 
     @staticmethod
     def delta(old: int, new: int) -> str:
@@ -344,6 +426,9 @@ class NamespaceChange:
         return {
             "namespace": self.alias,
             "uri": self.uri,
+            "severity": self.severity.value,
+            "rule_id": self.rule_id,
+            "metadata": [delta.as_json() for delta in self.metadata],
             "nodes": {
                 "old": self.nodes[0],
                 "new": self.nodes[1],
@@ -384,6 +469,15 @@ class SemanticDiff:
         return not (self.added or self.removed or self.modified or self.renumbered)
 
     @property
+    def breaking_namespaces(self) -> list[NamespaceChange]:
+        """Namespaces whose *release* metadata broke (§11.3), most often a moved URI.
+
+        These findings belong to a namespace, not to a node, so they never appear in
+        ``breaking``; a release gate has to check both lists.
+        """
+        return [entry for entry in self.namespaces if entry.breaking]
+
+    @property
     def changed_nodes(self) -> list[ExpandedNodeId]:
         """Every node the diff touched — what impact analysis is computed for."""
         entries: list[NodeEntry | NodeModification | RenumberedNode] = [
@@ -406,7 +500,7 @@ class SemanticDiff:
             "removed_nodes": len(self.removed),
             "modified_nodes": len(self.modified),
             "renumbered_nodes": len(self.renumbered),
-            "breaking_changes": len(self.breaking),
+            "breaking_changes": len(self.breaking) + len(self.breaking_namespaces),
             "advisory_changes": len(self.advisory),
             "advisory_nodes": severities.get(Severity.ADVISORY, 0),
             "info_nodes": severities.get(Severity.INFO, 0),

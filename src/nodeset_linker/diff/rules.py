@@ -651,6 +651,22 @@ _RULES: dict[str, RuleVerdict] = {
         "BP-Namespace-VersionDrift",
         "11.3",
     ),
+    "namespace_metadata_conflict": RuleVerdict(
+        Severity.ADVISORY,
+        "Two source documents declare different metadata for the same namespace (§11.2): the "
+        "merge keeps one spelling, so the published file may state a version that no document "
+        "claimed on its own. Declare the release metadata in exactly one document.",
+        "BP-Namespace-MetadataConflict",
+        "11.2",
+    ),
+    "namespace_model_precedence": RuleVerdict(
+        Severity.ADVISORY,
+        "Two source documents declare a Model entry for the same namespace (§11.2, OPC 10000-6 "
+        "ModelTableEntry): the one carrying a version wins, so a RequiredModel table from the "
+        "other document is dropped. Keep one Model entry per namespace.",
+        "BP-Namespace-ModelPrecedence",
+        "11.2",
+    ),
     "naming_convention": RuleVerdict(
         Severity.ADVISORY,
         "A name does not follow the naming rules of the paper (§2.1.2, §2.2, §2.3, §2.6): "

@@ -21,6 +21,7 @@ from typing import Self
 from nodeset_linker.diff.model import (
     BreakingChange,
     Change,
+    MetadataDelta,
     NamespaceChange,
     NodeEntry,
     NodeModification,
@@ -36,7 +37,7 @@ from nodeset_linker.models.identifiers import (
     NodeId,
     QualifiedName,
 )
-from nodeset_linker.models.namespace import alias_from_uri
+from nodeset_linker.models.namespace import ModelInfo, Namespace, alias_from_uri
 from nodeset_linker.models.node import (
     Definition,
     EnumValue,
@@ -75,6 +76,24 @@ DEPRECATION_REFERENCES = frozenset({"IsDeprecated"})
 #: engine works without the OPC UA base nodeset loaded.
 UA_EVENT_BASE_NAME = "BaseEventType"
 UA_HIERARCHICAL_REFERENCE_NAME = "HierarchicalReference"
+
+#: Namespace metadata attribute → the rule that judges a change of it (§11.1, §11.2, §11.3).
+_METADATA_RULES: Mapping[str, str] = {
+    "alias": "namespace_alias_changed",
+    "version": "namespace_version_changed",
+    "publication_date": "namespace_publication_date_changed",
+    "xml_schema_uri": "namespace_xml_schema_uri_changed",
+    "model_version": "namespace_model_version_changed",
+}
+
+#: Namespace metadata that two source documents must not declare differently (§11.2); the
+#: merge keeps one spelling, so a published file can carry metadata no document claimed.
+_CONFLICT_ATTRIBUTES: Mapping[str, str] = {
+    "version": "Version",
+    "publication_date": "PublicationDate",
+    "xml_schema_uri": "XmlSchemaUri",
+    "model_version": "ModelVersion",
+}
 
 #: Definition members whose optional attributes still carry semantic meaning.
 FIELD_METADATA_LABELS: tuple[tuple[str, str], ...] = (
@@ -1696,18 +1715,41 @@ def _reference_category(name: str, target: str, index: ModelIndex) -> str:
 
 
 def _namespace_changes(old: ModelIndex, new: ModelIndex) -> list[NamespaceChange]:
+    """Totals *and* release metadata per namespace (§11.1, §11.2, §11.3).
+
+    A namespace also appears when only its metadata moved — a version bump with no node
+    change is a release fact, not a modelling fact, and a release note has to name it.
+    """
     old_totals = _namespace_totals(old.model)
     new_totals = _namespace_totals(new.model)
+    renamed = _namespace_renames(old.model, new.model, old_totals, new_totals)
+    conflicts = _metadata_conflicts(new.model)
+    uris = (
+        set(old_totals)
+        | set(new_totals)
+        | set(old.model.namespaces)
+        | set(new.model.namespaces)
+    ) - set(renamed.values())
     changes: list[NamespaceChange] = []
-    for uri in sorted(set(old_totals) | set(new_totals)):
-        before = old_totals.get(uri, NamespaceTotals())
+    for uri in sorted(uris):
+        source = renamed.get(uri)
+        before = old_totals.get(source or uri, NamespaceTotals())
         after = new_totals.get(uri, NamespaceTotals())
+        metadata = _release_metadata(uri, source, old.model, new.model)
+        metadata.extend(_model_deltas(uri, source, old.model, new.model))
+        metadata.extend(_version_drift(uri, new.model))
+        metadata.extend(conflicts.get(uri, ()))
         if (before.nodes, before.references, before.datatypes) == (
             after.nodes,
             after.references,
             after.datatypes,
-        ):
+        ) and not metadata:
             continue
+        verdicts: list[RuleVerdict] = []
+        if source is None and uri not in old.model.namespaces and before.nodes == 0:
+            verdicts.append(verdict("namespace_added"))
+        elif source is None and uri not in new.model.namespaces and after.nodes == 0:
+            verdicts.append(verdict("namespace_removed"))
         changes.append(
             NamespaceChange(
                 alias=new.alias(uri),
@@ -1715,9 +1757,187 @@ def _namespace_changes(old: ModelIndex, new: ModelIndex) -> list[NamespaceChange
                 nodes=(before.nodes, after.nodes),
                 references=(before.references, after.references),
                 datatypes=(before.datatypes, after.datatypes),
+                metadata=tuple(metadata),
+                verdicts=tuple(verdicts),
             )
         )
     return changes
+
+
+def _namespace_renames(
+    old: SemanticModel, new: SemanticModel, old_totals: Mapping[str, NamespaceTotals],
+    new_totals: Mapping[str, NamespaceTotals],
+) -> dict[str, str]:
+    """Pair a namespace that vanished with one that appeared under the same alias.
+
+    A renamed NamespaceUri is breaking (§11.3), but the diff only sees one URI leave and
+    another arrive.  A shared alias *and* identical node totals is the evidence that the
+    two are the same model; without it, a new namespace stays a new namespace.
+    """
+    gone = {uri for uri in old.namespaces if uri not in new.namespaces}
+    fresh = {uri for uri in new.namespaces if uri not in old.namespaces}
+    by_alias = {_namespace_label(old.namespaces[uri]): uri for uri in gone}
+    pairs: dict[str, str] = {}
+    for uri in fresh:
+        source = by_alias.get(_namespace_label(new.namespaces[uri]))
+        if source is not None and old_totals.get(source, NamespaceTotals()) == new_totals.get(
+            uri, NamespaceTotals()
+        ):
+            pairs[uri] = source
+    return pairs
+
+
+def _namespace_label(namespace: Namespace) -> str:
+    return namespace.alias or alias_from_uri(namespace.uri) or namespace.uri
+
+
+def _release_metadata(
+    uri: str, source: str | None, old: SemanticModel, new: SemanticModel
+) -> list[MetadataDelta]:
+    """Namespace metadata that moved between the two releases (§11.1, §11.3)."""
+    deltas: list[MetadataDelta] = []
+    if source is not None:
+        deltas.append(MetadataDelta("uri", verdict("namespace_uri_changed"), source, uri))
+    before = old.namespaces.get(source or uri)
+    after = new.namespaces.get(uri)
+    if before is None or after is None:
+        return deltas
+    for attribute, rule_kind in _METADATA_RULES.items():
+        old_value = getattr(before, attribute)
+        new_value = getattr(after, attribute)
+        if old_value != new_value:
+            deltas.append(
+                MetadataDelta(attribute, verdict(rule_kind), old_value, new_value)
+            )
+    return deltas
+
+
+def _model_deltas(
+    uri: str, source: str | None, old: SemanticModel, new: SemanticModel
+) -> list[MetadataDelta]:
+    """What the Model table now requires: the dependency set and the versions it claims."""
+    before = old.models.get(source or uri)
+    after = new.models.get(uri)
+    if before is None or after is None:
+        return []
+    deltas: list[MetadataDelta] = []
+    required_before = tuple(sorted(before.required_models))
+    required_after = tuple(sorted(after.required_models))
+    if required_before != required_after:
+        deltas.append(
+            MetadataDelta(
+                "required_models",
+                verdict("namespace_required_model_changed"),
+                _joined(required_before),
+                _joined(required_after),
+            )
+        )
+    versions_before = {
+        entry.namespace_uri: entry.version for entry in before.required_model_entries
+    }
+    versions_after = {
+        entry.namespace_uri: entry.version for entry in after.required_model_entries
+    }
+    for dependency in sorted(set(versions_before) | set(versions_after)):
+        old_version = versions_before.get(dependency)
+        new_version = versions_after.get(dependency)
+        if old_version != new_version:
+            deltas.append(
+                MetadataDelta(
+                    "required_model_version",
+                    verdict("namespace_model_version_changed"),
+                    old_version,
+                    new_version,
+                    note=dependency,
+                )
+            )
+    return deltas
+
+
+def _version_drift(uri: str, new: SemanticModel) -> list[MetadataDelta]:
+    """One release, two version claims (§11.3): Version and ModelVersion disagree."""
+    namespace = new.namespaces.get(uri)
+    if namespace is None or namespace.version is None or namespace.model_version is None:
+        return []
+    if namespace.version == namespace.model_version:
+        return []
+    return [
+        MetadataDelta(
+            "version",
+            verdict("namespace_version_drift"),
+            note=(
+                f"Version {namespace.version} and ModelVersion {namespace.model_version} "
+                f"of {uri} describe the same release differently"
+            ),
+        )
+    ]
+
+
+def _metadata_conflicts(model: SemanticModel) -> dict[str, list[MetadataDelta]]:
+    """Namespace and Model metadata two source documents declared differently (§11.2)."""
+    namespaces: dict[str, list[Namespace]] = {}
+    models: dict[str, list[ModelInfo]] = {}
+    for document in model.documents:
+        for namespace in document.namespaces:
+            namespaces.setdefault(namespace.uri, []).append(namespace)
+        for declaration in document.models:
+            models.setdefault(declaration.namespace_uri, []).append(declaration)
+    conflicts: dict[str, list[MetadataDelta]] = {}
+    for uri, seen in sorted(namespaces.items()):
+        if len(seen) < 2:
+            continue
+        for attribute, label in _CONFLICT_ATTRIBUTES.items():
+            values = sorted(
+                {
+                    declared
+                    for namespace in seen
+                    if (declared := getattr(namespace, attribute))
+                }
+            )
+            if len(values) > 1:
+                conflicts.setdefault(uri, []).append(
+                    MetadataDelta(
+                        attribute,
+                        verdict("namespace_metadata_conflict"),
+                        note=(
+                            f"{label} of {uri} declared as {' and '.join(values)} across "
+                            "documents; the merge kept one"
+                        ),
+                    )
+                )
+    for uri, declarations in sorted(models.items()):
+        if len(declarations) < 2:
+            continue
+        values = sorted(
+            {
+                spelled
+                for entry in declarations
+                if (spelled := _spell_model(entry))
+            }
+        )
+        if len(values) > 1:
+            conflicts.setdefault(uri, []).append(
+                MetadataDelta(
+                    "model",
+                    verdict("namespace_model_precedence"),
+                    note=(
+                        f"Model of {uri} declared as {' and '.join(values)} across documents; "
+                        "the entry carrying a version wins"
+                    ),
+                )
+            )
+    return conflicts
+
+
+def _spell_model(entry: ModelInfo) -> str:
+    parts = [entry.namespace_uri]
+    if entry.version:
+        parts.append(f"Version {entry.version}")
+    if entry.publication_date:
+        parts.append(f"PublicationDate {entry.publication_date}")
+    if entry.required_models:
+        parts.append(f"RequiredModel {_joined(entry.required_models)}")
+    return ", ".join(parts)
 
 
 def _namespace_totals(model: SemanticModel) -> dict[str, NamespaceTotals]:

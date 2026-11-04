@@ -2,14 +2,17 @@
 
 These findings depend on where a node sits in a type tree, not on the node itself: a new type
 above an existing one, an Interface that adds obligations, or a declaration that changed its
-type definition.
+type definition.  Namespace release metadata (§11.1, §11.2, §11.3) belongs to the same class
+of rules: it says what a release *is*, without changing the information model.
 """
 
 from __future__ import annotations
 
 import dataclasses
+import json
 
 from tests.conftest import (
+    UA_NS,
     Machinery_NS,
     enum_definition,
     make_data_type,
@@ -20,11 +23,17 @@ from tests.conftest import (
     structure_definition,
 )
 
-from nodeset_linker.diff import Severity, diff_models
+from nodeset_linker.diff import (
+    Severity,
+    console_text,
+    diff_models,
+    json_text,
+)
 from nodeset_linker.models.identifiers import ExpandedNodeId, QualifiedName
+from nodeset_linker.models.namespace import ModelInfo, Namespace
 from nodeset_linker.models.node import Reference
 from nodeset_linker.models.node_class import ModellingRule
-from nodeset_linker.repository.model import build_model
+from nodeset_linker.repository.model import SemanticModel, build_model, load_nodesets
 
 
 def replace(node, **changes):
@@ -400,3 +409,148 @@ def test_bare_node_without_name_still_classifies() -> None:
     )
     diff = diff_models(build_model([node]), build_model([orphan]))
     assert {change.rule_id for change in diff.breaking} == {"BP-Hierarchy-Move"}
+
+
+def namespace(uri: str = Machinery_NS, **metadata: str) -> Namespace:
+    """Namespace metadata as the Model table of a release declares it."""
+    return Namespace(uri=uri, **metadata)
+
+
+def model_of(nodes: list[object], uri: str = Machinery_NS, **metadata: str) -> SemanticModel:
+    """An in-memory model whose namespace carries release metadata."""
+    return build_model(list(nodes), {uri: namespace(uri, **metadata)})
+
+
+def diff_metadata(old_metadata: dict[str, str], new_metadata: dict[str, str]):
+    """Diff of two releases that differ only in their namespace metadata."""
+    node = in_machinery(make_object_type("MachineType", 2200))
+    return diff_models(
+        model_of([node], **old_metadata),
+        model_of([node], **new_metadata),
+    )
+
+
+def namespace_document(uri: str, version: str) -> str:
+    """A nodeset that declares one namespace and one Model entry, without any nodes."""
+    return (
+        '<?xml version="1.0" encoding="utf-8"?>'
+        '<UANodeSet xmlns="http://opcfoundation.org/UA/2011/03/UANodeSet.xsd">'
+        f"<NamespaceUris><Uri>{uri}</Uri></NamespaceUris>"
+        f'<Models><Model ModelUri="{uri}" Version="{version}" /></Models>'
+        "</UANodeSet>"
+    )
+
+
+class TestNamespaceMetadata:
+    """§11.1, §11.2, §11.3: release metadata belongs to the release, not to the model."""
+
+    def test_metadata_only_release_move_is_information(self) -> None:
+        diff = diff_metadata({"version": "1.0.1"}, {"version": "1.0.2"})
+        # No node changed, yet the release moved — that is a fact a release note needs.
+        assert diff.is_empty
+        entry = diff.namespaces[0]
+        assert entry.metadata[0].describe() == "Version: 1.0.1 → 1.0.2"
+        assert entry.rule_id == "BP-Namespace-Version"
+        assert entry.severity is Severity.INFO
+        assert not diff.breaking and not diff.advisory
+
+    def test_moved_namespace_uri_is_breaking(self) -> None:
+        node = in_machinery(make_object_type("MachineType", 2200))
+        moved_uri = "http://opcfoundation.org/UA2/Machinery/"
+        moved = replace(node, node_id=node_id(2200, moved_uri))
+        diff = diff_models(model_of([node]), model_of([moved], uri=moved_uri))
+        # §11.3: consumers resolve the model under the old URI and find nothing.
+        assert diff.breaking_namespaces
+        entry = diff.breaking_namespaces[0]
+        assert entry.metadata[0].attribute == "uri"
+        assert entry.rule_id == "BP-NamespaceUri-Changed"
+
+    def test_new_namespace_with_a_version_suffix_is_not_a_rename(self) -> None:
+        node = in_machinery(make_object_type("MachineType", 2200))
+        bumped_uri = "http://opcfoundation.org/UA/Machinery/V2/"
+        bumped = replace(node, node_id=node_id(2200, bumped_uri))
+        diff = diff_models(model_of([node]), model_of([bumped], uri=bumped_uri))
+        # §11.3 recommends exactly this spelling: a new namespace, not a renamed one.
+        assert not diff.breaking_namespaces
+        rules = {entry.rule_id for entry in diff.namespaces}
+        assert rules == {"BP-Namespace-Added", "BP-Namespace-Removed"}
+
+    def test_alias_change_is_document_local(self) -> None:
+        diff = diff_metadata({"alias": "Machinery"}, {"alias": "Machine"})
+        entry = diff.namespaces[0]
+        assert entry.rule_id == "BP-Namespace-Alias"
+        assert entry.severity is Severity.INFO
+
+    def test_schema_uri_change_is_reported(self) -> None:
+        diff = diff_metadata(
+            {"xml_schema_uri": "http://opcfoundation.org/UA/Machinery/Types.xsd"},
+            {"xml_schema_uri": "http://opcfoundation.org/UA/Machinery/TypesV2.xsd"},
+        )
+        assert diff.namespaces[0].rule_id == "BP-Namespace-XmlSchema"
+
+    def test_required_model_version_change_is_reported(self) -> None:
+        node = in_machinery(make_object_type("MachineType", 2200))
+        old = model_of([node])
+        new = model_of([node])
+        old.models[Machinery_NS] = ModelInfo(
+            namespace_uri=Machinery_NS,
+            required_models=(UA_NS,),
+            required_model_entries=(ModelInfo(namespace_uri=UA_NS, version="1.05.07"),),
+        )
+        new.models[Machinery_NS] = ModelInfo(
+            namespace_uri=Machinery_NS,
+            required_models=(UA_NS,),
+            required_model_entries=(ModelInfo(namespace_uri=UA_NS, version="1.05.08"),),
+        )
+        diff = diff_models(old, new)
+        deltas = diff.namespaces[0].metadata
+        assert {delta.verdict.rule_id for delta in deltas} == {"BP-Namespace-ModelVersion"}
+        assert deltas[0].note == UA_NS
+
+    def test_added_dependency_is_reported(self) -> None:
+        node = in_machinery(make_object_type("MachineType", 2200))
+        old = model_of([node])
+        old.models[Machinery_NS] = ModelInfo(namespace_uri=Machinery_NS, required_models=(UA_NS,))
+        new = model_of([node])
+        new.models[Machinery_NS] = ModelInfo(
+            namespace_uri=Machinery_NS, required_models=(UA_NS, "http://opcfoundation.org/UA/DI/")
+        )
+        diff = diff_models(old, new)
+        deltas = diff.namespaces[0].metadata
+        assert {delta.verdict.rule_id for delta in deltas} == {"BP-Namespace-RequiredModel"}
+        assert "DI" in deltas[0].new
+
+    def test_version_and_model_version_drift_advises(self) -> None:
+        diff = diff_metadata(
+            {"version": "1.0.1", "model_version": "1.0.1"},
+            {"version": "1.0.2", "model_version": "1.0.1"},
+        )
+        entry = diff.namespaces[0]
+        assert "BP-Namespace-VersionDrift" in {delta.verdict.rule_id for delta in entry.metadata}
+        assert entry.severity is Severity.ADVISORY
+        assert not diff.breaking
+
+    def test_conflicting_metadata_across_documents_advises(self, tmp_path) -> None:
+        first = tmp_path / "a.xml"
+        second = tmp_path / "b.xml"
+        first.write_text(namespace_document(Machinery_NS, "1.0.1"), encoding="utf-8")
+        second.write_text(namespace_document(Machinery_NS, "1.0.2"), encoding="utf-8")
+        model = load_nodesets([first, second])
+        diff = diff_models(model, model)
+        # The merged release states a version neither document claimed on its own.
+        rules = {delta.verdict.rule_id for delta in diff.namespaces[0].metadata}
+        assert rules == {"BP-Namespace-MetadataConflict", "BP-Namespace-ModelPrecedence"}
+        assert not diff.breaking
+
+    def test_namespace_metadata_reaches_the_json_report(self) -> None:
+        payload = json.loads(json_text(diff_metadata({"version": "1.0.1"}, {"version": "1.0.2"})))
+        entry = payload["namespace_changes"][0]
+        assert entry["severity"] == "info"
+        assert entry["rule_id"] == "BP-Namespace-Version"
+        assert entry["metadata"][0]["rule_id"] == "BP-Namespace-Version"
+        assert entry["nodes"] == {"old": 1, "new": 1, "delta": 0}
+
+    def test_namespace_metadata_reaches_the_console_report(self) -> None:
+        text = console_text(diff_metadata({"version": "1.0.1"}, {"version": "1.0.2"}))
+        assert "Version: 1.0.1 → 1.0.2" in text
+        assert "BP-Namespace-Version" not in text

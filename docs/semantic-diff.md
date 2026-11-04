@@ -95,10 +95,16 @@ an explicitly mandatory node (`_removal_breaking`). `_is_explicitly_mandatory` i
 never treats OPC-UA-namespace nodes as mandatory, because Part 5 declares no modelling rules
 there.
 
-### 2.4 Namespace totals
+### 2.4 Namespace totals and release metadata
 
 `NamespaceChange` reports per namespace URI: node count, reference count, datatype count,
-old → new with delta. Only namespaces whose totals changed are listed.
+old → new with delta, plus the release metadata of that namespace — `NamespaceUri`, alias,
+`Version`, `PublicationDate`, `XmlSchemaUri`, `ModelVersion`, and the `RequiredModel` set with
+the version each dependency claims. A namespace is listed when its totals changed **or** when
+its metadata changed, so a release that only bumped a version still shows up.
+
+Namespace findings stay on the namespace entry, not in the flat breaking list (§2.5): they
+describe a release, not a node, and there is no node id to attribute them to.
 
 ### 2.5 Breaking list
 
@@ -160,15 +166,22 @@ The CI gate documented in README/usage guide:
   "added_nodes": [ { "label", "node_id", "namespace", "node_class", "breaking",
                      "impacted_nodes", "impact_count" } ],
   "removed_nodes": [ …same… ],
-  "modified_nodes": [ { …, "changes": [ {"area","kind","subject","old","new","breaking","text"} ] } ],
+  "modified_nodes": [ { …, "changes": [ {"area","kind","subject","old","new","breaking","text",
+                                        "severity","rule_id","rationale","clause"} ] } ],
   "renumbered_nodes": [ { …, "old_node_id", "new_node_id", … } ],
-  "namespace_changes": [ { "namespace","uri","nodes":{"old","new","delta"}, … } ],
+  "namespace_changes": [ { "namespace","uri","nodes":{"old","new","delta"}, "severity",
+                           "rule_id","verdicts":[ … ],
+                           "metadata":[ {"attribute","old","new","severity","rule_id",
+                                         "rationale","clause","note"} ] } ],
   "breaking_changes": [ { "label","node_id","reason","affected_nodes","breaking":true } ]
 }
 ```
 
-There is **no schema version field** and no machine-readable severity beyond the boolean
-`breaking`; `impacted_nodes` only appear after impact was applied.
+Keys are added, never renamed or dropped: the boolean `breaking` stays for existing consumers,
+while severity comes as `severity`/`rule_id`/`rationale`/`clause` per change plus a `verdicts`
+list per entry; `paper` names the whitepaper the severities derive from, and `advisory_changes`
+mirrors `breaking_changes` for findings that never gate. There is **no schema version field**;
+`impacted_nodes` only appear after impact was applied.
 
 ---
 
@@ -233,19 +246,23 @@ removal of optional nodes, namespace versioning, deprecation — are mapped clau
 
 ### 5.3 Metadata-level gaps (release-relevant)
 
-12. **Model/namespace version metadata is never diffed.** `SemanticModel.models` (`ModelInfo`:
-    `version`, `publication_date`, `xml_schema_uri`, `model_version`, `required_models`,
-    `required_model_entries`) and `Namespace` version fields exist, but `NamespaceChange`
-    reports only node/reference/datatype totals. A release that bumps `Version`/
-    `PublicationDate`, changes `XmlSchemaUri` or `ModelVersion`, or rewrites the `RequiredModel`
-    version claims of a companion spec produces **no diff output at all** — exactly the changes
-    a release note needs.
-13. **Required-model dependency changes are invisible.** A companion spec that starts (or
-    stops) depending on another model, or changes its required-model version, is not reported;
-    neither is a namespace that merely changes its alias.
-14. **Namespace merge loses metadata conflicts.** `_merge_namespace` keeps the richest value
-    per field across documents, with no conflict warning — if two loaded files declare
-    different versions for the same URI, the diff silently adopts one.
+12. **Model/namespace version metadata is reported.** `NamespaceChange` carries the release
+    metadata of a namespace next to its totals: `Version`, `PublicationDate`, `XmlSchemaUri`,
+    `ModelVersion` and alias (OPC 11030 §11.1, §11.2). A metadata-only release move — a version
+    bump with no node change — now appears as an *information* entry, so a release note can name
+    the fact without gating the release. A changed `NamespaceUri` is breaking (§11.3): consumers
+    resolve the model under the old URI and find nothing.
+13. **Required-model dependencies and aliases are visible.** The `RequiredModel` set and the
+    version each dependency claims are compared per namespace, and an alias change is reported
+    as document-local information (namespaces are addressed by URI, not by alias). A namespace
+    that vanishes while another appears under the same alias with identical node totals is read
+    as a *moved* URI; a namespace under a genuinely new URI — the recommended `…/V2/` spelling —
+    stays an added/removed pair and is never read as a rename.
+14. **Namespace metadata conflicts across documents are reported.** `_merge_namespace` still
+    keeps the richest value per field, but the diff now reports an advisory naming both
+    declarations when two loaded documents disagree on namespace metadata, or when a namespace
+    carries `Model` entries in more than one document — the merge keeps one spelling, so the
+    published file can state a version no document claimed on its own (§11.2).
 15. **Duplicate detection is only partial.** `SemanticModel.add` tolerates "same semantics"
     re-declarations based on `node_class`, `browse_name`, `is_abstract` and `HasSubtype`
     targets only. Two companion specs that re-declare a shared UA base node with *different*
@@ -343,8 +360,8 @@ release comparison):
   meaning at scale.
 * **Renumbered releases pass the CI gate silently** (gap 4) — the riskiest release change is
   the one the gate does not catch.
-* **Version metadata moves go unreported** (gap 12) — release notes generated from the diff
-  miss the most release-relevant facts.
+* **Version metadata moves now reach the report** (gap 12 closed) — but the report still says
+  nothing about whether the release may reuse its identifiers (gap 28 stays open).
 * **One inconsistent declaration aborts everything** (gap 24) — the more specs loaded, the
   higher the chance the diff cannot run at all.
 * **Runtime grows quadratically-ish** (gap 26) — impact per changed node over a growing graph.
@@ -374,12 +391,12 @@ release comparison):
 
 ### 7.2 Release metadata
 
-7. **Report version and dependency metadata changes**: per namespace, `Version`,
+7. **Report version and dependency metadata changes** *(implemented)*: per namespace, `Version`,
    `PublicationDate`, `XmlSchemaUri`, `ModelVersion`, alias, and the set (and versions) of
-   `RequiredModel` entries — old → new with deltas. This is what a companion-spec release note
-   needs; currently invisible.
-8. **Warn on conflicting namespace metadata across documents** instead of silently merging
-   (richer-value merge stays, but report the conflict as a diff finding).
+   `RequiredModel` entries — old → new, one severity per attribute. This is what a companion-spec
+   release note needs.
+8. **Warn on conflicting namespace metadata across documents** *(implemented)*: the richer-value
+   merge stays, and the conflict is reported as an advisory finding in the diff.
 9. **Compare model-level conformance metadata** when present (CU/Profile declarations): see
    §7.5.
 

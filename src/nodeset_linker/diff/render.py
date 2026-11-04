@@ -20,7 +20,7 @@ from nodeset_linker.diff.model import (
     RenumberedNode,
     SemanticDiff,
 )
-from nodeset_linker.diff.rules import Severity
+from nodeset_linker.diff.rules import RuleVerdict, Severity
 
 #: A report entry, so the severity filter keeps its concrete type.
 EntryT = TypeVar("EntryT", NodeEntry, NodeModification, RenumberedNode)
@@ -202,11 +202,14 @@ def _sections(
             )
         )
 
-    if diff.namespaces:
+    namespace_entries = [
+        entry for entry in diff.namespaces if not breaking_only or entry.breaking
+    ]
+    if namespace_entries:
         sections.append(
             Section(
                 title="Namespace changes",
-                entries=tuple(_namespace_line(entry) for entry in diff.namespaces),
+                entries=tuple(_namespace_line(entry) for entry in namespace_entries),
             )
         )
 
@@ -243,9 +246,12 @@ def _summary_lines(diff: SemanticDiff, *, impact: bool, include_advisory: bool) 
     ]
     if diff.renumbered:
         lines.append(f"Renumbered: {len(diff.renumbered)}")
-    lines.append(f"Breaking changes: {len(diff.breaking)}")
-    if diff.advisory and include_advisory:
-        lines.append(f"Advisory: {len(diff.advisory)}")
+    lines.append(f"Breaking changes: {len(diff.breaking) + len(diff.breaking_namespaces)}")
+    advisory_namespaces = [
+        entry for entry in diff.namespaces if entry.severity is Severity.ADVISORY
+    ]
+    if (diff.advisory or advisory_namespaces) and include_advisory:
+        lines.append(f"Advisory: {len(diff.advisory) + len(advisory_namespaces)}")
     if impact:
         lines.append(_node_count(total_impact(diff)))
     return tuple(lines)
@@ -316,14 +322,25 @@ def _renumbered_line(entry: RenumberedNode) -> Entry:
 
 
 def _namespace_line(entry: NamespaceChange) -> Entry:
-    return Entry(
-        header=f"{entry.alias} ({entry.uri})",
-        details=(
-            _count_line("Nodes", *entry.nodes),
-            _count_line("References", *entry.references),
-            _count_line("DataTypes", *entry.datatypes),
-        ),
-    )
+    details = [
+        _count_line("Nodes", *entry.nodes),
+        _count_line("References", *entry.references),
+        _count_line("DataTypes", *entry.datatypes),
+    ]
+    details.extend(delta.describe() for delta in entry.metadata)
+    strongest = _strongest(entry.all_verdicts())
+    if strongest is not None and strongest.severity is not Severity.INFO:
+        details.append(f"{strongest.rule_id}: {strongest.rationale}")
+    return Entry(header=f"{entry.alias} ({entry.uri})", details=tuple(details))
+
+
+def _strongest(verdicts: list[RuleVerdict]) -> RuleVerdict | None:
+    """The verdict a report cites: breaking first, then advisory, then information."""
+    for severity in (Severity.BREAKING, Severity.ADVISORY, Severity.INFO):
+        for candidate in verdicts:
+            if candidate.severity is severity:
+                return candidate
+    return None
 
 
 def _breaking_line(entry: BreakingChange) -> Entry:

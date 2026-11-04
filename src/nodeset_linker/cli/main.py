@@ -23,6 +23,7 @@ from rich.tree import Tree
 
 from nodeset_linker.config.schema import load_config
 from nodeset_linker.diff import (
+    Severity,
     apply_impact,
     console_text,
     diff_models,
@@ -263,9 +264,12 @@ def diff(
     else:
         console.print(text, markup=False, soft_wrap=True)
 
-    if fail_on_breaking and result.breaking:
+    if fail_on_breaking and (result.breaking or result.breaking_namespaces):
         raise SystemExit(1)
-    if fail_on_advisory and result.advisory:
+    advisory_namespaces = [
+        entry for entry in result.namespaces if entry.severity is Severity.ADVISORY
+    ]
+    if fail_on_advisory and (result.advisory or advisory_namespaces):
         raise SystemExit(1)
 
 
