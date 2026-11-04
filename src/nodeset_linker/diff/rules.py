@@ -71,7 +71,8 @@ class RuleContext:
     ``member`` names the kind of definition member (``field``, ``enum_value``,
     ``option_set_value``, ``union_alternative``, ``argument``, ``member_text``,
     ``member_metadata``); ``reference`` names the reference category; ``tightened`` says a
-    modelling rule went from optional to mandatory.
+    contract got narrower; ``metadata_attribute`` names the semantic attribute of a member
+    that changed; ``rename_confidence`` says how sure a pairing guess is.
     """
 
     member: str | None = None
@@ -82,6 +83,8 @@ class RuleContext:
     now_abstract: bool | None = None
     modelling_rule: ModellingRule | None = None
     symmetric_flip: bool = False
+    metadata_attribute: str | None = None
+    rename_confidence: str = "exact"
 
 
 #: Fallback for anything the table below does not know: reporting, never gating.
@@ -453,6 +456,55 @@ _RULES: dict[str, RuleVerdict] = {
         "BP-Member-Metadata",
         "3.2.5",
     ),
+    "field_renamed": RuleVerdict(
+        Severity.BREAKING,
+        "A field of a Structure was renamed (§3.2.5, §2.2): the encoded field name changed, "
+        "so consumers that address it by name or symbol break. Use a new namespace (§11.3).",
+        "BP-Field-Renamed",
+        "3.2.5",
+    ),
+    "field_rename_guess": RuleVerdict(
+        Severity.ADVISORY,
+        "A field disappeared and another appeared in its place, which reads like a rename "
+        "(§2.2); the pairing is a guess, so check it by hand before treating it as one.",
+        "BP-Field-Rename-Guess",
+        "2.2",
+    ),
+    "duplicate_member": RuleVerdict(
+        Severity.ADVISORY,
+        "A definition carries two members with the same name (§2.2, §2.3): consumers and "
+        "generated code cannot tell them apart, and a name-keyed comparison sees only one.",
+        "BP-Duplicate-Member",
+        "2.2",
+    ),
+    "allow_sub_types_tightened": RuleVerdict(
+        Severity.BREAKING,
+        "AllowSubTypes turned off (§3.2.5): values that carried a subtype of the field's "
+        "DataType are now rejected, so consumers that passed one break.",
+        "BP-Field-AllowSubTypes-Changed",
+        "3.2.5",
+    ),
+    "allow_sub_types_relaxed": RuleVerdict(
+        Severity.INFO,
+        "AllowSubTypes turned on (§3.2.5): the field now also accepts subtypes, which widens "
+        "the model without breaking a consumer.",
+        "BP-Field-AllowSubTypes-Changed",
+        "3.2.5",
+    ),
+    "max_string_length_reduced": RuleVerdict(
+        Severity.BREAKING,
+        "MaxStringLength got smaller or appeared (§3.2.5): a value that was valid before is "
+        "now out of range, so consumers that sent it break.",
+        "BP-Field-MaxStringLength-Reduced",
+        "3.2.5",
+    ),
+    "max_string_length_raised": RuleVerdict(
+        Severity.INFO,
+        "MaxStringLength got larger or disappeared (§3.2.5): the field accepts more, which "
+        "widens the model without breaking a consumer.",
+        "BP-Field-MaxStringLength-Raised",
+        "3.2.5",
+    ),
     "symmetric_changed": RuleVerdict(
         Severity.BREAKING,
         "Symmetric of a ReferenceType shall not change (§3.2.14): the meaning of the "
@@ -678,6 +730,22 @@ _MEMBER_RULES: dict[tuple[str, str], RuleVerdict] = {
 def verdict(kind: str, context: RuleContext | None = None) -> RuleVerdict:
     """The verdict for one change, given what the change actually was."""
     ctx = context or RuleContext()
+    if ctx.metadata_attribute == "allow_sub_types":
+        # Turning AllowSubTypes off rejects values; turning it on only widens the model.
+        tightened = _RULES["allow_sub_types_tightened"]
+        relaxed = _RULES["allow_sub_types_relaxed"]
+        return tightened if ctx.tightened else relaxed
+    if ctx.metadata_attribute == "max_string_length":
+        # A smaller limit rejects values a consumer already sent (§3.2.5).
+        reduced = _RULES["max_string_length_reduced"]
+        raised = _RULES["max_string_length_raised"]
+        return reduced if ctx.tightened else raised
+    if kind == "renamed":
+        proven = _RULES["field_renamed"]
+        guess = _RULES["field_rename_guess"]
+        return proven if ctx.rename_confidence == "exact" else guess
+    if kind == "duplicate_member":
+        return _RULES["duplicate_member"]
     if ctx.member is not None and (rule := _MEMBER_RULES.get((ctx.member, kind))) is not None:
         return rule
     if kind == "is_abstract":

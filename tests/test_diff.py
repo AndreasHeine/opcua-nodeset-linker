@@ -39,6 +39,7 @@ from nodeset_linker.diff.model import NamespaceChange, SemanticDiff
 from nodeset_linker.models.identifiers import ExpandedNodeId, QualifiedName
 from nodeset_linker.models.node import (
     Definition,
+    EnumValue,
     FieldMetadata,
     OptionSetValue,
     Reference,
@@ -784,6 +785,161 @@ class TestFieldMetadataAndText:
         assert diff.modified[0].severity == Severity.ADVISORY
 
 
+class TestStructureFieldRules:
+    """§3.2.5 and §2.2: fields are a contract, so renames and duplicates stay visible."""
+
+    def _diff(self, number: int, old: Definition, new: Definition) -> SemanticDiff:
+        return diff_models(
+            build_model([make_data_type("JobInfo", number, definition=old)]),
+            build_model([make_data_type("JobInfo", number, definition=new)]),
+        )
+
+    def test_field_rename_is_breaking(self) -> None:
+        old = structure_of(
+            StructureField(name="JobId", data_type=node_id(12)),
+            StructureField(name="State", data_type=node_id(6)),
+        )
+        new = structure_of(
+            StructureField(name="JobIdentifier", data_type=node_id(12)),
+            StructureField(name="State", data_type=node_id(6)),
+        )
+        diff = self._diff(9600, old, new)
+        # §2.2: the field name is what an encoder and generated code address, so a rename breaks.
+        assert diff.breaking
+        assert diff.modified[0].rule_id == "BP-Field-Renamed"
+        assert [change.kind for change in diff.modified[0].changes] == ["renamed"]
+        assert "Renamed: JobId → JobIdentifier" in console_text(diff)
+
+    def test_rename_guess_is_advisory(self) -> None:
+        old = structure_of(
+            StructureField(name="First", data_type=node_id(12)),
+            StructureField(name="Second", data_type=node_id(12)),
+        )
+        new = structure_of(
+            StructureField(name="Alpha", data_type=node_id(12)),
+            StructureField(name="Beta", data_type=node_id(12)),
+        )
+        diff = self._diff(9610, old, new)
+        # Two candidates cannot be proven to be renames, so this is a hint to check, not a gate.
+        assert not diff.breaking
+        assert diff.modified[0].severity == Severity.ADVISORY
+        assert diff.modified[0].rule_id == "BP-Field-Rename-Guess"
+
+    def test_rename_that_also_changes_the_type_stays_removal_and_addition(self) -> None:
+        old = structure_of(StructureField(name="JobId", data_type=node_id(12)))
+        new = structure_of(StructureField(name="JobIdentifier", data_type=node_id(9)))
+        diff = self._diff(9620, old, new)
+        # Folding the type change into a rename would hide it, so both findings stay (§3.2.5).
+        assert {change.rule_id for change in diff.breaking} == {
+            "BP-StructureField-Removed",
+            "BP-StructureField-Added",
+        }
+        assert all(change.kind != "renamed" for change in diff.modified[0].changes)
+
+    def test_duplicate_field_names_are_advisory(self) -> None:
+        doubled = structure_of(
+            StructureField(name="Progress", data_type=node_id(6)),
+            StructureField(name="Progress", data_type=node_id(12)),
+        )
+        diff = self._diff(9630, structure_of(StructureField(name="Progress", data_type=node_id(6))), doubled)
+        assert "BP-Duplicate-Member" in {change.rule_id for change in diff.modified[0].changes}
+        duplicate = next(change for change in diff.modified[0].changes if change.kind == "duplicate_member")
+        assert duplicate.severity == Severity.ADVISORY
+        assert "field Progress (2 occurrences)" in duplicate.new
+
+    def test_duplicate_members_are_reported_even_without_a_change(self) -> None:
+        doubled = structure_of(
+            StructureField(name="State", data_type=node_id(6)),
+            StructureField(name="State", data_type=node_id(12)),
+        )
+        model = build_model([make_data_type("JobInfo", 9640, definition=doubled)])
+        diff = diff_models(model, model)
+        # A published model that carries two members of one name is worth a hint (§2.2).
+        assert diff.modified[0].severity == Severity.ADVISORY
+        assert diff.modified[0].rule_id == "BP-Duplicate-Member"
+
+    def test_duplicate_enum_values_are_advisory(self) -> None:
+        definition = Definition(
+            kind="Enum",
+            enum_values=(EnumValue(name="Idle", value=0), EnumValue(name="Idle", value=1)),
+        )
+        model = build_model([make_data_type("JobStateEnum", 9650, definition=definition)])
+        diff = diff_models(model, model)
+        assert diff.modified[0].rule_id == "BP-Duplicate-Member"
+
+    def test_allow_sub_types_turned_off_is_breaking(self) -> None:
+        field = StructureField(
+            name="Payload", data_type=node_id(6), metadata=FieldMetadata(allow_sub_types=True)
+        )
+        strict = replace(field, metadata=FieldMetadata(allow_sub_types=False))
+        diff = self._diff(9660, structure_of(field), structure_of(strict))
+        assert diff.breaking
+        assert diff.modified[0].rule_id == "BP-Field-AllowSubTypes-Changed"
+        assert [change.subject for change in diff.modified[0].changes] == ["Payload AllowSubTypes"]
+
+    def test_allow_sub_types_turned_on_is_information(self) -> None:
+        field = StructureField(
+            name="Payload", data_type=node_id(6), metadata=FieldMetadata(allow_sub_types=False)
+        )
+        open_field = replace(field, metadata=FieldMetadata(allow_sub_types=True))
+        diff = self._diff(9670, structure_of(field), structure_of(open_field))
+        # Widening a field accepts more values; nobody written against the old model breaks.
+        assert not diff.breaking
+        assert not diff.advisory
+        assert diff.modified[0].rule_id == "BP-Field-AllowSubTypes-Changed"
+
+    def test_max_string_length_reduction_is_breaking(self) -> None:
+        field = StructureField(
+            name="JobId", data_type=node_id(12), metadata=FieldMetadata(max_string_length=10)
+        )
+        shorter = replace(field, metadata=FieldMetadata(max_string_length=4))
+        diff = self._diff(9680, structure_of(field), structure_of(shorter))
+        assert diff.breaking
+        assert diff.modified[0].rule_id == "BP-Field-MaxStringLength-Reduced"
+
+    def test_max_string_length_appearing_is_breaking(self) -> None:
+        field = StructureField(name="JobId", data_type=node_id(12))
+        limited = replace(field, metadata=FieldMetadata(max_string_length=20))
+        diff = self._diff(9690, structure_of(field), structure_of(limited))
+        assert diff.breaking
+        assert diff.modified[0].rule_id == "BP-Field-MaxStringLength-Reduced"
+
+    def test_max_string_length_increase_is_information(self) -> None:
+        field = StructureField(
+            name="JobId", data_type=node_id(12), metadata=FieldMetadata(max_string_length=4)
+        )
+        longer = replace(field, metadata=FieldMetadata(max_string_length=40))
+        diff = self._diff(9700, structure_of(field), structure_of(longer))
+        assert not diff.breaking
+        assert not diff.advisory
+        assert diff.modified[0].rule_id == "BP-Field-MaxStringLength-Raised"
+
+
+class TestRenamedNodes:
+    """A node that came back under another BrowseName is a rename, not add plus remove."""
+
+    def test_renamed_node_is_paired_as_a_rename(self) -> None:
+        old = make_variable("Counter", 7970, data_type=node_id(6))
+        new = replace(old, node_id=node_id(7971), browse_name=QualifiedName(name="Count"))
+        diff = diff_models(build_model([old]), build_model([new]))
+        assert not diff.removed
+        assert not diff.added
+        assert len(diff.renumbered) == 1
+        entry = diff.renumbered[0]
+        assert entry.confidence == "heuristic"
+        assert entry.rule_id == "BP-NodeId-Immutable"
+        assert [change.rule_id for change in entry.changes] == ["BP-Node-Renamed"]
+        assert "Renamed: Counter → Count" in console_text(diff)
+
+    def test_unrelated_nodes_are_not_paired_as_renames(self) -> None:
+        old = make_variable("Counter", 7980, data_type=node_id(6))
+        other = make_variable("Alarm", 7981, data_type=node_id(12))
+        diff = diff_models(build_model([old]), build_model([other]))
+        assert len(diff.removed) == 1
+        assert len(diff.added) == 1
+        assert not diff.renumbered
+
+
 class TestNodeAttributes:
     @pytest.mark.parametrize(("name", "number"), STANDARD_DATA_TYPE_IDS.items())
     def test_standard_datatype_labels_without_a_core_provider(self, name, number) -> None:
@@ -1028,11 +1184,9 @@ class TestMethodSignature:
         )
         _, _, diff = diff_texts(tmp_path, BASE, new)
         assert diff.breaking
-        # §3.2.11 names the method and §3.2.12 names the argument variable that changed.
-        assert {change.rule_id for change in diff.breaking} == {
-            "BP-MethodSignature-Immutable",
-            "BP-DataType-Immutable",
-        }
+        # §3.2.11: the argument's DataType *is* the method signature, so the method entry
+        # carries the break once instead of also naming the argument variable.
+        assert {change.rule_id for change in diff.breaking} == {"BP-MethodSignature-Immutable"}
         assert self.signature(diff) == [("changed", "InputArguments")]
 
     def test_argument_rank_and_dimensions_changes_are_breaking(self, tmp_path) -> None:

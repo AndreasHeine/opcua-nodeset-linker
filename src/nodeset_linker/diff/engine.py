@@ -13,8 +13,9 @@ the file.
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Self
 
 from nodeset_linker.diff.model import (
@@ -169,6 +170,13 @@ def diff_models(
     shared = sorted(set(old_index.nodes) & set(new_index.nodes), key=_sort_key)
 
     renumbered, removed_ids, added_ids = _pair_renumbering(gone, fresh, old_index, new_index)
+    renamed, rename_removed, rename_added = _pair_renames(
+        removed_ids, added_ids, old_index, new_index
+    )
+    renumbered.extend(renamed)
+    renumbered.sort(key=lambda entry: entry.label)
+    removed_ids = [identity for identity in removed_ids if identity not in rename_removed]
+    added_ids = [identity for identity in added_ids if identity not in rename_added]
     removed_nodes = [old_index.nodes[node_id] for node_id in removed_ids]
     added_nodes = [new_index.nodes[node_id] for node_id in added_ids]
 
@@ -282,6 +290,71 @@ def _pair_renumbering(
         [node_identity for node_identity in gone if node_identity not in paired_removed],
         [node_identity for node_identity in fresh if node_identity not in paired_added],
     )
+
+
+def _pair_renames(
+    gone: list[Identity],
+    fresh: list[Identity],
+    old_index: ModelIndex,
+    new_index: ModelIndex,
+) -> tuple[list[RenumberedNode], set[Identity], set[Identity]]:
+    """Pair a removed and an added node that differ only in their BrowseName (§2.1.2).
+
+    A node that vanished and came back with the same identifier-free shape under another name
+    is a rename, not an unrelated removal plus addition.  Only an unambiguous candidate is
+    paired, and the entry says so, because pairing is a guess.
+    """
+    renamed: list[RenumberedNode] = []
+    paired_removed: set[Identity] = set()
+    paired_added: set[Identity] = set()
+    candidates: dict[tuple[str, NodeClass], list[Identity]] = {}
+    for node_identity in fresh:
+        node = new_index.nodes[node_identity]
+        candidates.setdefault((node.node_id.namespace, node.node_class), []).append(node_identity)
+    for node_identity in sorted(gone, key=_sort_key):
+        old_node = old_index.nodes[node_identity]
+        group = candidates.get((old_node.node_id.namespace, old_node.node_class), [])
+        matches = [
+            candidate
+            for candidate in group
+            if candidate not in paired_added
+            and _differs_only_in_name(old_node, new_index.nodes[candidate], old_index, new_index)
+        ]
+        if len(matches) != 1:
+            continue
+        new_node = new_index.nodes[matches[0]]
+        paired_removed.add(node_identity)
+        paired_added.add(matches[0])
+        renamed.append(
+            RenumberedNode(
+                label=_label(new_node),
+                old_node_id=old_node.node_id,
+                new_node_id=new_node.node_id,
+                node_class=new_node.node_class.value,
+                namespace=new_index.alias(new_node.node_id.namespace),
+                confidence="heuristic",
+                changes=[
+                    Change(
+                        area="node",
+                        kind="renamed",
+                        old=old_node.browse_name.name,
+                        new=new_node.browse_name.name,
+                        verdict=verdict("node_renamed"),
+                    )
+                ],
+                verdicts=(verdict("identifier_move"),),
+            )
+        )
+    renamed.sort(key=lambda entry: entry.label)
+    return renamed, paired_removed, paired_added
+
+
+def _differs_only_in_name(
+    old_node: UANode, new_node: UANode, old: ModelIndex, new: ModelIndex
+) -> bool:
+    """Whether the two nodes are identical apart from their BrowseName."""
+    differences = [change.kind for change in _node_changes(old_node, new_node, old, new)]
+    return differences == ["browse_name"]
 
 
 def _move_key(node: UANode) -> tuple[str, str, NodeClass]:
@@ -506,6 +579,9 @@ def _variable_changes(
         new_node, UAVariable | UAVariableType
     ):
         return []
+    if _argument_contract_changed(old_node, new_node, old, new):
+        # The method entry carries this break; the argument adds no new information (§3.2.11).
+        return []
     changes: list[Change] = []
     if old_node.data_type != new_node.data_type:
         changes.append(
@@ -548,6 +624,39 @@ def _variable_changes(
             )
         )
     return changes
+
+
+def _argument_method(node: UANode, index: ModelIndex) -> ExpandedNodeId | None:
+    """The method an argument variable is contracted with, by parent or inverse HasProperty."""
+    parent = node.parent_node_id
+    if parent is not None:
+        holder = index.node(parent)
+        if holder is not None and holder.node_class is NodeClass.METHOD:
+            return parent
+    for ref in node.references:
+        if _reference_key(ref)[0] != "HasProperty" or ref.is_forward:
+            continue
+        holder = index.node(ref.target)
+        if holder is not None and holder.node_class is NodeClass.METHOD:
+            return ref.target
+    return None
+
+
+def _argument_contract_changed(
+    old_node: UANode, new_node: UANode, old: ModelIndex, new: ModelIndex
+) -> bool:
+    """Whether the enclosing method already reports this argument variable (§3.2.11).
+
+    An argument's DataType, ValueRank, ArrayDimensions and value list *are* the method
+    signature; reporting them on the argument as well would state the same break twice.
+    """
+    if not isinstance(old_node, UAVariable) or not isinstance(new_node, UAVariable):
+        return False
+    if old_node.role is not NodeRole.ARGUMENT or new_node.role is not NodeRole.ARGUMENT:
+        return False
+    if _argument_method(old_node, old) is None or _argument_method(new_node, new) is None:
+        return False
+    return _argument_contract(old, old_node) != _argument_contract(new, new_node)
 
 
 def _method_changes(
@@ -678,22 +787,56 @@ def _definition_changes(
             )
         ]
     if new_definition.kind == "Structure":
-        return _structure_changes(old_definition.fields, new_definition.fields, old, new)
-    if new_definition.kind == "Union":
-        return _union_changes(
+        changes = _structure_changes(old_definition.fields, new_definition.fields, old, new)
+    elif new_definition.kind == "Union":
+        changes = _union_changes(
             old_definition.union_alternatives, new_definition.union_alternatives, old, new
         )
-    if new_definition.kind == "Enum":
-        return _value_member_changes(
+    elif new_definition.kind == "Enum":
+        changes = _value_member_changes(
             old_definition.enum_values, new_definition.enum_values, member="enum_value"
         )
-    if new_definition.kind == "OptionSet":
-        return _value_member_changes(
+    elif new_definition.kind == "OptionSet":
+        changes = _value_member_changes(
             old_definition.option_set_values,
             new_definition.option_set_values,
             member="option_set_value",
         )
-    return []
+    else:
+        changes = []
+    duplicates = _duplicate_members(new_definition)
+    if duplicates:
+        # A name-keyed comparison cannot see two members of one name, so they are named here.
+        changes.append(
+            Change(
+                area="definition",
+                kind="duplicate_member",
+                subject=new_definition.kind,
+                new=", ".join(duplicates),
+                verdict=verdict("duplicate_member"),
+            )
+        )
+    return changes
+
+
+def _duplicate_members(definition: Definition) -> tuple[str, ...]:
+    """Member names the definition states more than once (§2.2, §2.3).
+
+    The occurrences are counted before the name-keyed lookups are built: a dict would keep
+    the last member of a name and hide the duplicate from every comparison.
+    """
+    groups: tuple[tuple[str, Sequence[str]], ...] = (
+        ("field", [field.name for field in definition.fields]),
+        ("enum value", [value.name for value in definition.enum_values]),
+        ("OptionSet bit", [bit.name for bit in definition.option_set_values]),
+        ("Union alternative", [alternative.name for alternative in definition.union_alternatives]),
+    )
+    found: list[str] = []
+    for label, names in groups:
+        for name, count in sorted(Counter(names).items()):
+            if count > 1:
+                found.append(f"{label} {name} ({count} occurrences)")
+    return tuple(found)
 
 
 def _structure_changes(
@@ -706,7 +849,27 @@ def _structure_changes(
     new_by_name = {field.name: field for field in new_fields}
     changes: list[Change] = []
     field_context = RuleContext(member="field")
+    renames = _rename_pairs(old_fields, new_fields)
+    renamed = {name for pair in renames for name in pair[:2]}
+    for old_name, new_name, confidence in renames:
+        gone = old_by_name[old_name]
+        fresh = new_by_name[new_name]
+        rename_context = RuleContext(member="field", rename_confidence=confidence)
+        changes.append(
+            Change(
+                area="definition",
+                kind="renamed",
+                subject=new_name,
+                old=old_name,
+                new=new_name,
+                verdict=verdict("renamed", rename_context),
+            )
+        )
+        changes.extend(_metadata_changes(new_name, gone.metadata, fresh.metadata))
+        changes.extend(_member_text_changes(new_name, gone, fresh))
     for name in sorted(set(old_by_name) | set(new_by_name)):
+        if name in renamed:
+            continue
         old_field = old_by_name.get(name)
         new_field = new_by_name.get(name)
         if old_field is None and new_field is not None:
@@ -765,6 +928,30 @@ def _structure_changes(
         )
     )
     return changes
+
+
+def _rename_pairs(
+    old_fields: Sequence[StructureField], new_fields: Sequence[StructureField]
+) -> tuple[tuple[str, str, str], ...]:
+    """Fields that vanished and reappeared under a new name, plus how sure that pairing is.
+
+    A rename is proven only when exactly one field was removed and exactly one was added and
+    they encode the same DataType; anything else is a guess a reader has to check (§2.2), and
+    a pair whose DataType differs is left as a real removal plus addition instead of folded
+    into a rename that would hide the type change.
+    """
+    new_names = {field.name for field in new_fields}
+    old_names = {field.name for field in old_fields}
+    gone = [field for field in old_fields if field.name not in new_names]
+    fresh = [field for field in new_fields if field.name not in old_names]
+    if not gone or not fresh:
+        return ()
+    confidence = "exact" if len(gone) == len(fresh) == 1 else "heuristic"
+    return tuple(
+        (old_field.name, new_field.name, confidence)
+        for old_field, new_field in zip(gone, fresh, strict=False)
+        if old_field.data_type == new_field.data_type
+    )
 
 
 def _union_changes(
@@ -901,14 +1088,23 @@ def _member_text_changes(name: str, old_member: object, new_member: object) -> l
 
 
 def _metadata_changes(name: str, old_meta: FieldMetadata, new_meta: FieldMetadata) -> list[Change]:
-    """ValueRank, ArrayDimensions, MaxStringLength, AllowSubTypes: all part of the contract."""
+    """ValueRank, ArrayDimensions, MaxStringLength, AllowSubTypes: all part of the contract.
+
+    Two of them are judged by their direction: a smaller limit or a switched-off
+    AllowSubTypes rejects values a consumer already sent, while the other direction only
+    widens the model (§3.2.5).
+    """
     changes: list[Change] = []
-    context = RuleContext(member="member_metadata")
     for attribute, label in FIELD_METADATA_LABELS:
         old_value = getattr(old_meta, attribute)
         new_value = getattr(new_meta, attribute)
         if old_value == new_value:
             continue
+        context = RuleContext(member="member_metadata", metadata_attribute=attribute)
+        if attribute == "max_string_length":
+            context = replace(context, tightened=_limit_tightened(old_value, new_value))
+        elif attribute == "allow_sub_types":
+            context = replace(context, tightened=bool(old_value) and not bool(new_value))
         changes.append(
             Change(
                 area="definition",
@@ -920,6 +1116,15 @@ def _metadata_changes(name: str, old_meta: FieldMetadata, new_meta: FieldMetadat
             )
         )
     return changes
+
+
+def _limit_tightened(old_value: int | None, new_value: int | None) -> bool:
+    """Whether a MaxStringLength change rejects values that were valid before (§3.2.5)."""
+    old_limit = old_value if old_value else None
+    new_limit = new_value if new_value else None
+    if new_limit is None:
+        return False
+    return old_limit is None or new_limit < old_limit
 
 
 def _order_change(

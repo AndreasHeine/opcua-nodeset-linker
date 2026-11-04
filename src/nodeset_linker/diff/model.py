@@ -35,6 +35,8 @@ CHANGE_LABELS: dict[str, str] = {
     "definition_kind": "Definition kind",
     "field_order": "Field order",
     "alternative_order": "Alternative order",
+    "renamed": "Renamed",
+    "duplicate_member": "Duplicate members",
 }
 
 
