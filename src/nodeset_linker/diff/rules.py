@@ -464,6 +464,58 @@ _RULES: dict[str, RuleVerdict] = {
         "BP-Deprecation-Without-NewNamespace",
         "14.3",
     ),
+    "cu_added": RuleVerdict(
+        Severity.INFO,
+        "A ConformanceUnit was added (§12.1): it states what a product must implement and test, "
+        "and existing consumers are unaffected.",
+        "BP-CU-Added",
+        "12.1",
+    ),
+    "profile_added": RuleVerdict(
+        Severity.INFO,
+        "A Profile was added (§12.2): it groups ConformanceUnits into what a product must "
+        "support.",
+        "BP-Profile-Added",
+        "12.2",
+    ),
+    "cu_removed": RuleVerdict(
+        Severity.ADVISORY,
+        "A ConformanceUnit was removed (§12.1): certification and test coverage for that "
+        "functionality disappears, and a derived spec that reused it now has to define its own.",
+        "BP-CU-Removed",
+        "12.1",
+    ),
+    "profile_removed": RuleVerdict(
+        Severity.ADVISORY,
+        "A Profile was removed (§12.2): consumers that claimed support for it now have no "
+        "group of ConformanceUnits to certify against.",
+        "BP-Profile-Removed",
+        "12.2",
+    ),
+    "reference_cu_dependency_removed": RuleVerdict(
+        Severity.ADVISORY,
+        "A ConformanceUnit or Profile stopped requiring one of its members (§12.1, §12.2): the "
+        "tested scope narrows, and a product certified against the old scope is no longer "
+        "covered by the declaration.",
+        "BP-CU-DependencyChanged",
+        "12.1",
+    ),
+    "reference_cu_dependency_added": RuleVerdict(
+        Severity.ADVISORY,
+        "A ConformanceUnit or Profile started requiring one more member (§12.1, §12.2): a "
+        "product that already claims it must implement and test the added node to stay "
+        "conformant.",
+        "BP-CU-DependencyChanged",
+        "12.1",
+    ),
+    "namespace_without_cu": RuleVerdict(
+        Severity.ADVISORY,
+        "A new NamespaceUri declares no ConformanceUnit or Profile (§11.3, §12.1): a new "
+        "namespace needs its own, because the old ones reference the old namespace, and "
+        "without them nothing is testable or certifiable.",
+        "BP-NewNamespace-WithoutCU",
+        "11.3",
+    ),
     "reference_hard_removed": RuleVerdict(
         Severity.BREAKING,
         "A contract reference was removed (§3.2.16, §3.2.14): subtype, type-definition, "

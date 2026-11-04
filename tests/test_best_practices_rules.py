@@ -5,7 +5,9 @@ above an existing one, an Interface that adds obligations, or a declaration that
 type definition.  Namespace release metadata (§11.1, §11.2, §11.3) belongs to the same class of
 rules: it says what a release *is*, without changing the information model.  The release verdict
 (§3.3, §11.3) then answers the one question a release manager has: may this NamespaceUri be
-reused, or must the release publish a versioned one?
+reused, or must the release publish a versioned one?  ConformanceUnits and Profiles (§12) say
+what a product must implement and test, so a change to them is worth naming even when the model
+itself stays compatible.
 """
 
 from __future__ import annotations
@@ -482,8 +484,11 @@ class TestNamespaceMetadata:
         diff = diff_models(model_of([node]), model_of([bumped], uri=bumped_uri))
         # §11.3 recommends exactly this spelling: a new namespace, not a renamed one.
         assert not diff.breaking_namespaces
-        rules = {entry.rule_id for entry in diff.namespaces}
-        assert rules == {"BP-Namespace-Added", "BP-Namespace-Removed"}
+        rules = {rule.rule_id for entry in diff.namespaces for rule in entry.all_verdicts()}
+        # The new namespace declares no ConformanceUnit, which §11.3 requires because the
+        # ConformanceUnits of the old namespace point at the old namespace.
+        assert rules == {"BP-Namespace-Added", "BP-Namespace-Removed", "BP-NewNamespace-WithoutCU"}
+        assert all(not entry.breaking for entry in diff.namespaces)
 
     def test_alias_change_is_document_local(self) -> None:
         diff = diff_metadata({"alias": "Machinery"}, {"alias": "Machine"})
@@ -840,3 +845,115 @@ class TestDeprecationAndReplacement:
             for item in entry.metadata
             if item.attribute == "deprecations"
         ]
+
+
+def conformance_declaration(number: int, members: tuple[int, ...], *, profile: bool) -> object:
+    """A ConformanceUnit or Profile Object of the companion namespace (§12.1, §12.2)."""
+    browse_name = "Profile" if profile else "ConformanceUnit"
+    refs = tuple(
+        Reference(target=node_id(member, Machinery_NS), type_name="HasComponent")
+        for member in members
+    )
+    return in_machinery(make_object(browse_name, number, refs=refs))
+
+
+class TestConformanceUnits:
+    """ConformanceUnits and Profiles declare a test scope (§12), so losing one is advice."""
+
+    def test_added_conformance_unit_is_information(self) -> None:
+        machine = in_machinery(make_object_type("MachineType", 2200))
+        unit = conformance_declaration(2600, (2200,), profile=False)
+        diff = diff_models(model_of([machine]), model_of([machine, unit]))
+        entry = next(item for item in diff.added if item.label == "ConformanceUnit")
+        assert entry.severity is Severity.INFO
+        assert "BP-CU-Added" in _verdict_ids(entry)
+        assert not diff.breaking and not diff.advisory
+
+    def test_added_profile_is_information(self) -> None:
+        machine = in_machinery(make_object_type("MachineType", 2200))
+        profile = conformance_declaration(2601, (2200,), profile=True)
+        diff = diff_models(model_of([machine]), model_of([machine, profile]))
+        entry = next(item for item in diff.added if item.label == "Profile")
+        assert "BP-Profile-Added" in _verdict_ids(entry)
+        assert not diff.breaking and not diff.advisory
+
+    def test_removed_conformance_unit_names_the_lost_test_scope(self) -> None:
+        machine = in_machinery(make_object_type("MachineType", 2200))
+        unit = conformance_declaration(2600, (2200,), profile=False)
+        diff = diff_models(model_of([machine, unit]), model_of([machine]))
+        entry = diff.removed[0]
+        # The removal itself is breaking (§3.2.16); the CU fact says *what* was lost (§12.1).
+        assert _verdict_ids(entry) == {"BP-Declaration-Removed-Optional", "BP-CU-Removed"}
+        assert entry.breaking
+        assert [rule.rule_id for rule in diff.advisory] == ["BP-CU-Removed"]
+
+    def test_removed_profile_is_advised(self) -> None:
+        machine = in_machinery(make_object_type("MachineType", 2200))
+        profile = conformance_declaration(2601, (2200,), profile=True)
+        diff = diff_models(model_of([machine, profile]), model_of([machine]))
+        assert "BP-Profile-Removed" in _verdict_ids(diff.removed[0])
+
+    def test_conformance_unit_dependency_change_is_advisory(self) -> None:
+        machine = in_machinery(make_object_type("MachineType", 2200))
+        diagnostics = in_machinery(
+            make_variable(
+                "DiagnosticsStatus",
+                2211,
+                refs=(Reference(target=node_id(2200, Machinery_NS), type_name="HasComponent"),),
+                rule=ModellingRule.OPTIONAL,
+            )
+        )
+        before = conformance_declaration(2600, (2200,), profile=False)
+        after = conformance_declaration(2600, (2211,), profile=False)
+        diff = diff_models(
+            model_of([machine, before]), model_of([machine, diagnostics, after])
+        )
+        entry = next(item for item in diff.modified if item.label == "ConformanceUnit")
+        # Swapping a required member changes certification scope, not the model contract.
+        assert {rule.rule_id for rule in entry.all_verdicts()} == {"BP-CU-DependencyChanged"}
+        assert entry.severity is Severity.ADVISORY
+        assert not entry.breaking and not diff.breaking
+
+    def test_conformance_nodes_of_the_opc_ua_namespace_are_not_companion_units(self) -> None:
+        machine = in_machinery(make_object_type("MachineType", 2200))
+        meta = make_object("ConformanceUnit", 2600)
+        diff = diff_models(model_of([machine]), model_of([machine, meta]))
+        # The base nodeset's ConformanceUnit meta nodes are not this model's declarations.
+        assert "BP-CU-Added" not in _verdict_ids(diff.added[0])
+
+    def test_new_namespace_without_a_conformance_unit_is_advised(self) -> None:
+        v2 = "http://opcfoundation.org/UA/Machinery/V2/"
+        machine = replace(
+            in_machinery(make_object_type("MachineType", 2200)), node_id=node_id(2200, v2)
+        )
+        diff = diff_models(
+            model_of([in_machinery(make_object_type("MachineType", 2200))]),
+            model_of([machine], uri=v2),
+        )
+        entry = next(item for item in diff.namespaces if item.uri == v2)
+        assert entry.severity is Severity.ADVISORY
+        assert entry.rule_id == "BP-NewNamespace-WithoutCU"
+        assert not entry.breaking and not diff.breaking_namespaces
+
+    def test_new_namespace_with_a_conformance_unit_is_accepted(self) -> None:
+        v2 = "http://opcfoundation.org/UA/Machinery/V2/"
+        machine = in_namespace(
+            in_machinery(make_object_type("MachineType", 2200)), v2
+        )
+        unit = in_namespace(
+            make_object(
+                "ConformanceUnit",
+                2600,
+                refs=(Reference(target=node_id(2200, v2), type_name="HasComponent"),),
+            ),
+            v2,
+        )
+        diff = diff_models(
+            model_of([in_machinery(make_object_type("MachineType", 2200))]),
+            model_of([machine, unit], uri=v2),
+        )
+        # §11.3 is satisfied: the new namespace declares its own ConformanceUnit.
+        assert {entry.rule_id for entry in diff.namespaces} == {
+            "BP-Namespace-Added",
+            "BP-Namespace-Removed",
+        }

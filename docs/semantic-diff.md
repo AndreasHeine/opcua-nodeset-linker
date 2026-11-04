@@ -416,7 +416,12 @@ release comparison):
    release note needs.
 8. **Warn on conflicting namespace metadata across documents** *(implemented)*: the richer-value
    merge stays, and the conflict is reported as an advisory finding in the diff.
-9. **Compare model-level conformance metadata** when present (CU/Profile declarations): see
+9. **Compare model-level conformance metadata** *(implemented for ConformanceUnits and Profiles,
+   §12.1/§12.2)*: the declarations are found by BrowseName in the companion namespace, never by
+   hardcoded identifiers, so an added unit or profile is information, a removed one is an advisory
+   naming the lost test scope, and a changed member list is one advisory
+   `BP-CU-DependencyChanged`. A new NamespaceUri that declares neither is advised (§11.3). Facets
+   and Feature-Sets remain open:
    §7.5.
 
 ### 7.3 Scaling for many companion specs
@@ -466,10 +471,15 @@ release comparison):
     comparing what two linker configurations *would produce* (root/external/mode changes shown
     as retained-set differences). High usability value: today diff can only compare written
     files, not configuration decisions.
-22. **CU / Profile / Facet / Feature-Set policies**: plug into the documented
+22. **CU / Profile / Facet / Feature-Set policies** *(partly implemented)*: the diff side is done —
+     ConformanceUnit and Profile declarations are resolved by BrowseName in the companion namespace,
+     their addition is information, and their removal or changed member list is an advisory
+     (`BP-CU-Removed`, `BP-Profile-Removed`, `BP-CU-DependencyChanged`), so removing a CU is no
+     longer invisible. Retention still wants the documented
     `policies/registry.py` seam — retention driven by a Conformance Unit ("keep everything the
-    CU declares"), and diff rules aware of CU declarations (a CU member removed from a spec
-    release is breaking by CU contract, not by heuristic).
+    CU declares"), together with the Facet and Feature-Set shapes.
+    A CU member that a release drops stays breaking by §3.2.16; what the loss means for
+     certification is the separate advisory (§12.1).
 23. **Semantic conformance checks as diff findings**: encoding completeness (new datatype
     without `Default Binary/XML/JSON`), subtype-chain completeness (added type whose base is
     missing), `RequiredModel` claims that resolve to nothing, `IsNamespaceSubset` drift between
@@ -507,7 +517,7 @@ release comparison):
 | P1 | Impact by NodeId + context loading (§7.3.12) | Impact numbers become trustworthy across specs. |
 | P2 | Scoping filters, grouped reports, performance (§7.3.11/13/14) | Usability at registry scale. |
 | P2 | ServerUri, Extensions/RolePermissions, value-dependency diffs (§7.1.4–5) | Correctness for vendor/server-qualified models. |
-| P3 | CU/Profile policies, release fingerprints and aggregation, PR action (§7.5) | Longer-term roadmap on the existing seams. |
+| P3 | CU/Profile *retention* policies, release fingerprints and aggregation, PR action (§7.5) | Longer-term roadmap on the existing seams. |
 
 ## 9. Related documents
 

@@ -76,6 +76,10 @@ DEPRECATION_REFERENCES = frozenset({"IsDeprecated"})
 #: ``<SpecName>Version1_02``; a replacement type names itself with a version suffix (§11.2.6).
 DEPRECATION_OBJECT_NAME = re.compile(r"Version\d+(?:_\d+)?$")
 VERSION_SUFFIX = re.compile(r"\d+$")
+#: ConformanceUnits and Profiles of a companion namespace (§12.1, §12.2).  Found by BrowseName,
+#: never by identifier, so the engine works without the OPC UA base nodeset loaded.
+CONFORMANCE_UNIT_NAME = "ConformanceUnit"
+PROFILE_NAME = "Profile"
 #: The two OPC UA types that decide whether a hierarchy change sits inside a filtering
 #: hierarchy (§3.2.9, §3.2.15).  Both are found by BrowseName, never by identifier, so the
 #: engine works without the OPC UA base nodeset loaded.
@@ -247,7 +251,7 @@ def diff_models(
             for node in added_nodes
         ],
         removed=[
-            _entry(node, old_index, verdicts=(_removal_verdict(node),)) for node in removed_nodes
+            _entry(node, old_index, verdicts=_removal_verdicts(node)) for node in removed_nodes
         ],
         modified=_modified_nodes(shared, old_index, new_index),
         renumbered=renumbered,
@@ -274,6 +278,9 @@ def _entry_verdicts(
         node.browse_name.name
     ):
         verdicts.append(verdict("deprecation_version"))
+    conformance = _conformance_role(node)
+    if conformance is not None:
+        verdicts.append(verdict("cu_added" if conformance == "cu" else "profile_added"))
     return tuple(verdicts)
 
 
@@ -309,6 +316,26 @@ def _deprecation_counts(model: SemanticModel) -> dict[str, int]:
     counts: Counter[str] = Counter()
     for node in model.iter_nodes():
         if _is_deprecated(node):
+            counts[node.node_id.namespace] += 1
+    return dict(counts)
+
+
+def _conformance_role(node: UANode) -> str | None:
+    """Whether a node declares a ConformanceUnit or a Profile (§12.1, §12.2)."""
+    if node.node_class is not NodeClass.OBJECT or node.node_id.namespace == UA_NAMESPACE_URI:
+        return None
+    if node.browse_name.name == CONFORMANCE_UNIT_NAME:
+        return "cu"
+    if node.browse_name.name == PROFILE_NAME:
+        return "profile"
+    return None
+
+
+def _conformance_declarations(model: SemanticModel) -> dict[str, int]:
+    """How many ConformanceUnits and Profiles each namespace declares (§12.1, §12.2)."""
+    counts: Counter[str] = Counter()
+    for node in model.iter_nodes():
+        if _conformance_role(node) is not None:
             counts[node.node_id.namespace] += 1
     return dict(counts)
 
@@ -546,13 +573,24 @@ def _entry(
     )
 
 
-def _removal_verdict(node: UANode) -> RuleVerdict:
-    """The rule verdict for a node that vanished from the model.
+def _removal_verdicts(node: UANode) -> tuple[RuleVerdict, ...]:
+    """The rule verdicts for a node that vanished from the model.
 
     Types, encodings and placeholders are part of the published contract; so is an
     explicitly ``Mandatory`` declaration.  Nodes of the OPC UA namespace are not this
-    model's declarations, and an optional declaration carries no promise.
+    model's declarations, and an optional declaration carries no promise.  A removed
+    ConformanceUnit or Profile additionally loses test scope (§12.1, §12.2), which is
+    worth naming even where the removal itself is not what breaks a consumer.
     """
+    verdicts = [_removal_base_verdict(node)]
+    conformance = _conformance_role(node)
+    if conformance is not None:
+        verdicts.append(verdict("cu_removed" if conformance == "cu" else "profile_removed"))
+    return tuple(verdicts)
+
+
+def _removal_base_verdict(node: UANode) -> RuleVerdict:
+    """The contract verdict of a removal, before conformance context."""
     if node.node_class.is_type or node.role in {NodeRole.ENCODING, NodeRole.PLACEHOLDER}:
         return verdict("node_removed")
     if node.node_id.namespace == UA_NAMESPACE_URI:
@@ -1738,7 +1776,8 @@ def _reference_changes(
                 subject=f"{name or 'Reference'} -> {_target_label(old, target, is_forward)}",
                 old=name,
                 verdict=verdict(
-                    "removed", RuleContext(reference=_reference_category(name, target, old))
+                    "removed",
+                    RuleContext(reference=_reference_category(name, target, old, old_node)),
                 ),
             )
         )
@@ -1752,7 +1791,8 @@ def _reference_changes(
                 subject=f"{name or 'Reference'} -> {_target_label(new, target, is_forward)}",
                 new=name,
                 verdict=verdict(
-                    "added", RuleContext(reference=_reference_category(name, target, new))
+                    "added",
+                    RuleContext(reference=_reference_category(name, target, new, new_node)),
                 ),
             )
         )
@@ -1800,14 +1840,20 @@ def _target_label(index: ModelIndex, identity_text: str, is_forward: bool) -> st
     return label if is_forward else f"{label} (inverse)"
 
 
-def _reference_category(name: str, target: str, index: ModelIndex) -> str:
+def _reference_category(
+    name: str, target: str, index: ModelIndex, owner: UANode | None = None
+) -> str:
     """Which kind of reference this is, so the rule table can judge its removal.
 
     Contract references (subtype, type definition, interface, encoding, event) break a
     consumer; navigation references only change browsing; an ownership reference breaks
     when its target is an explicitly mandatory declaration; an IsDeprecated reference is
-    judged by the deprecation rules (§14.2).
+    judged by the deprecation rules (§14.2).  Members of a ConformanceUnit or Profile are
+    judged by the conformance rules (§12.1, §12.2), because they declare a test scope
+    rather than a model contract.
     """
+    if owner is not None and _conformance_role(owner) is not None:
+        return "cu_dependency"
     if name in DEPRECATION_REFERENCES:
         return "deprecation"
     if name in SOFT_REFERENCES:
@@ -1832,6 +1878,7 @@ def _namespace_changes(old: ModelIndex, new: ModelIndex) -> list[NamespaceChange
     conflicts = _metadata_conflicts(new.model)
     old_deprecated = _deprecation_counts(old.model)
     new_deprecated = _deprecation_counts(new.model)
+    new_conformance = _conformance_declarations(new.model)
     uris = (
         set(old_totals)
         | set(new_totals)
@@ -1857,6 +1904,9 @@ def _namespace_changes(old: ModelIndex, new: ModelIndex) -> list[NamespaceChange
         verdicts: list[RuleVerdict] = []
         if source is None and uri not in old.model.namespaces and before.nodes == 0:
             verdicts.append(verdict("namespace_added"))
+            # A new namespace needs its own ConformanceUnits and Profiles (§11.3, §12.1).
+            if uri != UA_NAMESPACE_URI and new_conformance.get(uri, 0) == 0:
+                verdicts.append(verdict("namespace_without_cu"))
         elif source is None and uri not in new.model.namespaces and after.nodes == 0:
             verdicts.append(verdict("namespace_removed"))
         changes.append(
