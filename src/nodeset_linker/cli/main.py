@@ -4,7 +4,7 @@ nodeset-linker analyze config.yaml
 nodeset-linker link config.yaml
 nodeset-linker explain --node JobStateEnum config.yaml
 nodeset-linker stats output.xml
-nodeset-linker validate output.xml [--schema tests/data/schema/UANodeSet.xsd]
+nodeset-linker validate output.xml [--schema tests/data/schema/UANodeSet.xsd] [--best-practices]
 nodeset-linker diff old.xml new.xml [--json | --markdown | --html] [--impact] [--breaking]
     [--advisory/--no-advisory] [--impact-limit N] [--context <file>...] [--breaking]
     [--fail-on-breaking] [--fail-on-advisory]
@@ -37,6 +37,7 @@ from nodeset_linker.diff import (
     release_verdict,
 )
 from nodeset_linker.explain.explainer import Explainer
+from nodeset_linker.lint import LintReport, lint_model
 from nodeset_linker.pipeline import LinkerPipeline
 from nodeset_linker.reports.data import DependencyReportData, Statistics
 from nodeset_linker.repository.model import load_nodesets
@@ -163,7 +164,12 @@ def stats(output: Path) -> None:
     default=None,
     help="Also validate the XML against a UANodeSet.xsd (e.g. tests/data/schema/UANodeSet.xsd).",
 )
-def validate(output: Path, schema: Path | None) -> None:
+@click.option(
+    "--best-practices",
+    is_flag=True,
+    help="Also report OPC 11030 best practices; advisory findings never fail the command.",
+)
+def validate(output: Path, schema: Path | None, best_practices: bool) -> None:
     """Validate a produced NodeSet: semantics, and the XSD when ``--schema`` is given.
 
     Without ``--schema`` this is *semantic* validation only — reference targets, type
@@ -173,6 +179,10 @@ def validate(output: Path, schema: Path | None) -> None:
     A ``RequiredModel`` whose declarations are not in the file is read as an external
     dependency: references into it are accepted, references into any other namespace that
     the file does not contain are errors.
+
+    ``--best-practices`` adds the OPC 11030 lint pass on top of the semantic findings.  Its
+    findings are advisory and information only, so they are printed but never change the exit
+    code: a lint finding says *look at this*, not *this broke*.
     """
     failures = 0
     if schema is not None:
@@ -180,6 +190,8 @@ def validate(output: Path, schema: Path | None) -> None:
     model = load_nodesets([output])
     report = validate_model(model, external=declared_external_namespaces(model))
     _render_validation(report)
+    if best_practices:
+        _render_lint(lint_model(model))
     if not report.ok:
         failures += len(report.errors)
     if failures:
@@ -417,6 +429,20 @@ def _render_validation(report: ValidationReport) -> None:
         console.print("[green]validation passed with warnings[/]")
     else:
         console.print("[green]validation passed - no findings[/]")
+
+
+def _render_lint(report: LintReport) -> None:
+    """Print the best-practice findings of a lint pass, never as errors.
+
+    The severity buckets are the ones the diff report uses: *advisory* and *information*.  A
+    lint finding is not a failure, so nothing here touches the exit code.
+    """
+    console.print(f"[bold]best practices[/] - {report.summary()}")
+    for severity, colour in ((Severity.ADVISORY, "yellow"), (Severity.INFO, "blue")):
+        for item in report.by_severity(severity):
+            console.print(f"  [{colour}]{item}[/]")
+    if not report.findings:
+        console.print("[green]no best-practice findings[/]")
 
 
 def _fail(message: str) -> None:

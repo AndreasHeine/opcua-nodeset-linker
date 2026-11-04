@@ -218,6 +218,23 @@ OPC UA conformance. The validator also has a defined scope and does not check ev
 specification rule. Test the exported file with the OPC UA application or server that will
 consume it.
 
+The best-practice lint pass over OPC 11030 *Best Practices for Companion Models* runs on the
+same model with `--best-practices`:
+
+```powershell
+nodeset-linker validate out/reduced.xml --best-practices
+```
+
+It reports naming (§2.1 - §2.6), BrowsePath uniqueness once case is ignored (§2.1.4), the file
+name and `NamespaceUri` conventions (§2.4, §2.5), StatusCode definitions outside the base
+specification (§4), the optional-field limit and the AllowSubTypes/optional combination of a
+Structure (§7.9), mandatory self-containing declarations (§7.10), `NamespaceIndex` values written
+into text (§13.3), and extra fields on audit-event subtypes (§15). Every finding is advisory or
+information and prints the rule slug it came from; none of them change the exit code, because a
+best-practice violation is not a modelling error. The rule slugs are the ones the diff report uses
+too, so `BP-Naming-PascalCase` names one rule in both places. The Python entry point is
+`lint_model(model)` from `nodeset_linker.lint`, which returns a `LintReport`.
+
 Inspect the exported node and namespace counts with:
 
 ```powershell
