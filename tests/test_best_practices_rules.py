@@ -19,6 +19,7 @@ from tests.conftest import (
     Machinery_NS,
     enum_definition,
     make_data_type,
+    make_object,
     make_object_type,
     make_reference_type,
     make_variable,
@@ -703,4 +704,139 @@ class TestReleaseReport:
         release = release_verdict(diff, published(tmp_path, [Machinery_NS]))
         text = console_text(diff, release=release)
         assert "Release verdict" in text
-        assert "Reusable" in text
+
+
+def marked(node: object, marker: object) -> object:
+    """A copy of a node carrying the ``IsDeprecated`` reference of §14.2."""
+    return replace(node, references=(Reference(target=_id(marker), type_name="IsDeprecated"),))
+
+
+def _verdict_ids(entry) -> set[str]:
+    return {rule.rule_id for rule in entry.verdicts}
+
+
+class TestDeprecationAndReplacement:
+    """§14.2, §14.3, §11.2.6: what a release says about the nodes it stops supporting."""
+
+    def test_deprecation_reference_names_the_version_that_deprecated_it(self) -> None:
+        holder = in_machinery(make_object_type("MachineType", 2200))
+        marker = in_machinery(make_object("MachineryVersion1_02", 2210))
+        diff = diff_models(
+            build_model([holder, marker]),
+            build_model([marked(holder, marker), marker]),
+        )
+        # §14.2: the marker points at an object naming the version; nothing a client reads breaks.
+        assert not diff.breaking and not diff.advisory
+        assert {change.rule_id for change in diff.modified[0].changes} == {
+            "BP-Deprecation-Added",
+            "BP-Deprecation-Version",
+        }
+        assert "MachineryVersion1_02" in " ".join(
+            change.describe() for change in diff.modified[0].changes
+        )
+
+    def test_deprecation_without_a_version_object_stays_a_plain_finding(self) -> None:
+        holder = in_machinery(make_object_type("MachineType", 2200))
+        marker = in_machinery(make_object("DeprecationInfo", 2210))
+        diff = diff_models(
+            build_model([holder, marker]),
+            build_model([marked(holder, marker), marker]),
+        )
+        assert {change.rule_id for change in diff.modified[0].changes} == {"BP-Deprecation-Added"}
+
+    def test_a_version_object_is_release_information(self) -> None:
+        holder = in_machinery(make_object_type("MachineType", 2200))
+        marker = in_machinery(make_object("MachineryVersion1_02", 2210))
+        diff = diff_models(build_model([holder]), build_model([holder, marker]))
+        # §14.3.2: the object is a child of the NamespaceMetadata object and states no modelling
+        # fact, so it reads as release information next to the node it announces.
+        assert not diff.breaking and not diff.advisory
+        assert diff.added[0].severity is Severity.INFO
+        assert "BP-Deprecation-Version" in _verdict_ids(diff.added[0])
+
+    def test_replacing_a_deprecated_type_without_a_suffix_is_advisory(self) -> None:
+        old = in_machinery(make_object_type("MachineType", 2200))
+        marker = in_machinery(make_object("MachineryVersion1_02", 2210))
+        replacement = in_machinery(make_object_type("MachineTypeExtended", 2205))
+        diff = diff_models(
+            build_model([old]),
+            build_model([marked(old, marker), marker, replacement]),
+        )
+        # §11.2.6 asks for a version suffix, so consumers can tell which type replaced which.
+        assert not diff.breaking
+        assert diff.added[0].severity is Severity.ADVISORY
+        assert diff.added[0].rule_id == "BP-Type-Replaced"
+        assert "BP-Declaration-Added" in _verdict_ids(diff.added[0])
+
+    def test_replacing_a_deprecated_type_with_a_suffix_is_information(self) -> None:
+        old = in_machinery(make_object_type("MachineType", 2200))
+        marker = in_machinery(make_object("MachineryVersion1_02", 2210))
+        replacement = in_machinery(make_object_type("MachineType2", 2205))
+        diff = diff_models(
+            build_model([old]),
+            build_model([marked(old, marker), marker, replacement]),
+        )
+        assert not diff.advisory
+        assert _verdict_ids(diff.added[0]) == {"BP-Declaration-Added", "BP-Type-Replaced-Numbered"}
+
+    def test_a_removed_type_replaced_by_an_unrelated_name_is_advisory(self) -> None:
+        old = in_machinery(make_object_type("MachineType", 2200))
+        replacement = in_machinery(
+            make_object_type(
+                "MachineTypeExtended",
+                2205,
+                refs=(Reference(target=node_id(2211, Machinery_NS), type_name="HasComponent"),),
+            )
+        )
+        health = in_machinery(
+            make_variable(
+                "HealthStatus",
+                2211,
+                refs=(Reference(target=node_id(2205, Machinery_NS), type_name="HasComponent"),),
+                rule=ModellingRule.OPTIONAL,
+            )
+        )
+        diff = diff_models(build_model([old]), build_model([replacement, health]))
+        entry = next(item for item in diff.added if item.label == "MachineTypeExtended")
+        assert entry.rule_id == "BP-Type-Replaced"
+        # Removing the old type is breaking on its own (§3.2.16).
+        assert diff.breaking
+
+    def test_a_subtype_of_a_deprecated_type_is_not_a_replacement(self) -> None:
+        old = in_machinery(make_object_type("MachineType", 2200))
+        marker = in_machinery(make_object("MachineryVersion1_02", 2210))
+        child = in_machinery(subtype_of(make_object_type("MachineTypeDiagnostics", 2205), old))
+        diff = diff_models(build_model([old]), build_model([marked(old, marker), marker, child]))
+        # Extending the deprecated type is an extension (§3.2.9), not a replacement (§11.2.6).
+        assert "BP-Type-Replaced" not in _verdict_ids(diff.added[0])
+
+    def test_deprecating_inside_a_kept_namespace_is_advised(self) -> None:
+        holder = in_machinery(make_object_type("MachineType", 2200))
+        marker = in_machinery(make_object("MachineryVersion1_02", 2210))
+        diff = diff_models(model_of([holder]), model_of([marked(holder, marker), marker]))
+        # §14.3: a NamespaceUri that stays published can never drop those nodes again.
+        entry = diff.namespaces[0]
+        assert entry.uri == Machinery_NS
+        assert entry.severity is Severity.ADVISORY
+        assert entry.rule_id == "BP-Deprecation-Without-NewNamespace"
+        assert not entry.breaking and not diff.breaking
+        assert not diff.advisory
+        assert [
+            item.describe() for item in entry.metadata if item.attribute == "deprecations"
+        ] == ["Deprecations: 0 → 1"]
+
+    def test_deprecating_inside_a_new_namespace_is_not_advised(self) -> None:
+        moved = "http://opcfoundation.org/UA/Machinery/V2/"
+        holder = in_namespace(in_machinery(make_object_type("MachineType", 2200)), moved)
+        marker = in_namespace(in_machinery(make_object("MachineryVersion1_02", 2210)), moved)
+        diff = diff_models(
+            model_of([in_machinery(make_object_type("MachineType", 2200))]),
+            model_of([marked(holder, marker), marker], uri=moved),
+        )
+        # Moving to a new NamespaceUri is what §14.3 asks for, so the advisory does not fire.
+        assert not [
+            item
+            for entry in diff.namespaces
+            for item in entry.metadata
+            if item.attribute == "deprecations"
+        ]

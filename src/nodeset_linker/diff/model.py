@@ -343,6 +343,7 @@ METADATA_LABELS: dict[str, str] = {
     "model_version": "ModelVersion",
     "required_models": "RequiredModel",
     "required_model_version": "RequiredModel version",
+    "deprecations": "Deprecations",
 }
 
 

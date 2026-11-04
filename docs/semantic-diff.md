@@ -101,7 +101,10 @@ there.
 old → new with delta, plus the release metadata of that namespace — `NamespaceUri`, alias,
 `Version`, `PublicationDate`, `XmlSchemaUri`, `ModelVersion`, and the `RequiredModel` set with
 the version each dependency claims. A namespace is listed when its totals changed **or** when
-its metadata changed, so a release that only bumped a version still shows up.
+its metadata changed, so a release that only bumped a version still shows up. The entry also
+counts the nodes that carry an `IsDeprecated` reference (§14.2): a release that deprecates
+inside a NamespaceUri it keeps is advised, because that URI can never drop those nodes again
+(§14.3).
 
 Namespace findings stay on the namespace entry, not in the flat breaking list (§2.5): they
 describe a release, not a node, and there is no node id to attribute them to.
@@ -471,9 +474,13 @@ release comparison):
     without `Default Binary/XML/JSON`), subtype-chain completeness (added type whose base is
     missing), `RequiredModel` claims that resolve to nothing, `IsNamespaceSubset` drift between
     a source file and its reduced export.
-24. **Deprecation awareness**: treat `Categories` containing a deprecation marker as
-    *non-breaking-with-warning* removal candidates; suggest replacement nodes when a removal's
-    label matches a new node (rename detection via DisplayName/SymbolicName similarity).
+24. **Deprecation awareness** *(implemented for `IsDeprecated`, §14.2)*: an added or removed
+    `IsDeprecated` reference is reported, an `IsDeprecated` target whose BrowseName names a
+    version (`<SpecName>Version1_02`, §14.3.2) is reported as release information on both sides,
+    a type that replaces exactly one removed or deprecated type is reported with the version
+    suffix it should carry (§11.2.6), and deprecations inside a kept NamespaceUri are advised
+    (§14.3). Still open: `Categories` carrying a deprecation marker as a non-breaking removal
+    candidate.
 25. **Bundle validation CLI**: `nodeset-linker validate --bundle out/split/` validating the
     split-export bundle + manifest together (today only single files validate; the usage guide
     shows a manual Python snippet).

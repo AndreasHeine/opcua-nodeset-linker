@@ -13,6 +13,7 @@ the file.
 
 from __future__ import annotations
 
+import re
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -71,6 +72,10 @@ HIERARCHY_REFERENCES = frozenset({"HasSubtype", "HasTypeDefinition", "HasInterfa
 #: The deprecation marker of the paper (§14.2): adding it informs consumers, removing it
 #: leaves them reading a node that was announced as deprecated.
 DEPRECATION_REFERENCES = frozenset({"IsDeprecated"})
+#: A deprecation object names the version that deprecated the node (§14.3.2), for example
+#: ``<SpecName>Version1_02``; a replacement type names itself with a version suffix (§11.2.6).
+DEPRECATION_OBJECT_NAME = re.compile(r"Version\d+(?:_\d+)?$")
+VERSION_SUFFIX = re.compile(r"\d+$")
 #: The two OPC UA types that decide whether a hierarchy change sits inside a filtering
 #: hierarchy (§3.2.9, §3.2.15).  Both are found by BrowseName, never by identifier, so the
 #: engine works without the OPC UA base nodeset loaded.
@@ -224,6 +229,9 @@ def diff_models(
     added_ids = [identity for identity in added_ids if identity not in rename_added]
     removed_nodes = [old_index.nodes[node_id] for node_id in removed_ids]
     added_nodes = [new_index.nodes[node_id] for node_id in added_ids]
+    replacements = _type_replacements(
+        removed_nodes, _newly_deprecated(old_index, new_index, shared), added_nodes
+    )
 
     diff = SemanticDiff(
         old_source=old_source,
@@ -231,7 +239,11 @@ def diff_models(
         old_nodes=len(old_index.nodes),
         new_nodes=len(new_index.nodes),
         added=[
-            _entry(node, new_index, verdicts=(_entry_verdict(node, new_index, old_index),))
+            _entry(
+                node,
+                new_index,
+                verdicts=_entry_verdicts(node, new_index, old_index, replacements),
+            )
             for node in added_nodes
         ],
         removed=[
@@ -246,9 +258,27 @@ def diff_models(
     return diff
 
 
-def _entry_verdict(node: UANode, index: ModelIndex, previous: ModelIndex) -> RuleVerdict:
-    """The rule verdict for a node that appeared in the new model (§3.2.1, §3.2.2, §3.2.9,
-    §3.2.15)."""
+def _entry_verdicts(
+    node: UANode,
+    index: ModelIndex,
+    previous: ModelIndex,
+    replacements: Mapping[Identity, RuleVerdict],
+) -> tuple[RuleVerdict, ...]:
+    """The rule verdicts for a node that appeared in the new model (§3.2.1, §3.2.2, §3.2.9,
+    §3.2.15, §11.2.6, §14.3.2)."""
+    verdicts = [_base_entry_verdict(node, index, previous)]
+    replacement = replacements.get(identity(node.node_id))
+    if replacement is not None:
+        verdicts.append(replacement)
+    if node.node_class is NodeClass.OBJECT and DEPRECATION_OBJECT_NAME.search(
+        node.browse_name.name
+    ):
+        verdicts.append(verdict("deprecation_version"))
+    return tuple(verdicts)
+
+
+def _base_entry_verdict(node: UANode, index: ModelIndex, previous: ModelIndex) -> RuleVerdict:
+    """The contract verdict for an added node, before deprecation and replacement context."""
     if _is_added_mandatory_declaration(node):
         return verdict("node_added_mandatory", RuleContext(mandatory_target=True))
     if node.node_class is NodeClass.REFERENCE_TYPE and _reference_type_inside_hierarchy(
@@ -258,6 +288,59 @@ def _entry_verdict(node: UANode, index: ModelIndex, previous: ModelIndex) -> Rul
     if node.node_class.is_type and _base_is_extension(node, index):
         return verdict("subtype_inserted")
     return verdict("node_added", RuleContext(modelling_rule=node.modelling_rule))
+
+
+def _is_deprecated(node: UANode) -> bool:
+    """Whether a node carries an ``IsDeprecated`` reference (§14.2)."""
+    return any(reference.type_name in DEPRECATION_REFERENCES for reference in node.references)
+
+
+def _newly_deprecated(old: ModelIndex, new: ModelIndex, shared: Sequence[Identity]) -> list[UANode]:
+    """The nodes this release deprecated — present in both models, marked only in the new one."""
+    return [
+        new.nodes[node_id]
+        for node_id in shared
+        if _is_deprecated(new.nodes[node_id]) and not _is_deprecated(old.nodes[node_id])
+    ]
+
+
+def _deprecation_counts(model: SemanticModel) -> dict[str, int]:
+    """How many nodes of each namespace this model marks deprecated (§14.2)."""
+    counts: Counter[str] = Counter()
+    for node in model.iter_nodes():
+        if _is_deprecated(node):
+            counts[node.node_id.namespace] += 1
+    return dict(counts)
+
+
+def _type_replacements(
+    gone: Sequence[UANode], deprecated: Sequence[UANode], added: Sequence[UANode]
+) -> dict[Identity, RuleVerdict]:
+    """Name the type that replaces a removed or deprecated one (§11.2.6).
+
+    The replacement is recognised by the base name the old type had: ``MachineType`` gains a
+    version suffix (``MachineType2``) or an unrelated name.  A subtype of the old type is an
+    extension, not a replacement, and is skipped.
+    """
+    stale = [node for node in [*gone, *deprecated] if node.node_class.is_type]
+    verdicts: dict[Identity, RuleVerdict] = {}
+    for old_node in stale:
+        base = VERSION_SUFFIX.sub("", old_node.browse_name.name)
+        matches = [
+            node
+            for node in added
+            if node.node_class is old_node.node_class
+            and node.node_id.namespace == old_node.node_id.namespace
+            and node.browse_name.name.startswith(base)
+            and _base_type(node) != _identity_text(old_node.node_id)
+        ]
+        if len(matches) != 1:
+            continue
+        numbered = VERSION_SUFFIX.search(matches[0].browse_name.name) is not None
+        verdicts[identity(matches[0].node_id)] = verdict(
+            "type_replaced_numbered" if numbered else "type_replaced"
+        )
+    return verdicts
 
 
 def _reference_type_inside_hierarchy(
@@ -1673,7 +1756,26 @@ def _reference_changes(
                 ),
             )
         )
+        version = _deprecation_target_name(new, target) if name in DEPRECATION_REFERENCES else None
+        if version is not None:
+            changes.append(
+                Change(
+                    area="reference",
+                    kind="deprecation_version",
+                    subject="Deprecation version",
+                    new=version,
+                    verdict=verdict("deprecation_version"),
+                )
+            )
     return changes
+
+
+def _deprecation_target_name(index: ModelIndex, target: str) -> str | None:
+    """The BrowseName of a deprecation object that names its version (§14.3.2)."""
+    node = _lookup(index, target)
+    if node is None or node.node_class is not NodeClass.OBJECT:
+        return None
+    return node.browse_name.name if DEPRECATION_OBJECT_NAME.search(node.browse_name.name) else None
 
 
 def _reference_key(ref: Reference) -> tuple[str, str, bool]:
@@ -1728,6 +1830,8 @@ def _namespace_changes(old: ModelIndex, new: ModelIndex) -> list[NamespaceChange
     new_totals = _namespace_totals(new.model)
     renamed = _namespace_renames(old.model, new.model, old_totals, new_totals)
     conflicts = _metadata_conflicts(new.model)
+    old_deprecated = _deprecation_counts(old.model)
+    new_deprecated = _deprecation_counts(new.model)
     uris = (
         set(old_totals)
         | set(new_totals)
@@ -1743,6 +1847,7 @@ def _namespace_changes(old: ModelIndex, new: ModelIndex) -> list[NamespaceChange
         metadata.extend(_model_deltas(uri, source, old.model, new.model))
         metadata.extend(_version_drift(uri, new.model))
         metadata.extend(conflicts.get(uri, ()))
+        metadata.extend(_deprecation_delta(uri, source, old_deprecated, new_deprecated, old.model))
         if (before.nodes, before.references, before.datatypes) == (
             after.nodes,
             after.references,
@@ -1873,6 +1978,33 @@ def _version_drift(uri: str, new: SemanticModel) -> list[MetadataDelta]:
                 f"Version {namespace.version} and ModelVersion {namespace.model_version} "
                 f"of {uri} describe the same release differently"
             ),
+        )
+    ]
+
+
+def _deprecation_delta(
+    uri: str,
+    source: str | None,
+    before: Mapping[str, int],
+    after: Mapping[str, int],
+    old: SemanticModel,
+) -> list[MetadataDelta]:
+    """Deprecations added inside the NamespaceUri a release kept (§14.3).
+
+    A release that moved to another URI or introduced one did what §14.3 asks for; a namespace
+    that stays published keeps accumulating nodes clients should stop using and can never drop.
+    """
+    if source is not None or uri not in old.namespaces:
+        return []
+    gained = after.get(uri, 0) - before.get(uri, 0)
+    if gained <= 0:
+        return []
+    return [
+        MetadataDelta(
+            "deprecations",
+            verdict("deprecations_without_new_namespace"),
+            old=str(before.get(uri, 0)),
+            new=str(after.get(uri, 0)),
         )
     ]
 

@@ -433,6 +433,37 @@ _RULES: dict[str, RuleVerdict] = {
         "BP-Deprecation-Removed",
         "14.2",
     ),
+    "deprecation_version": RuleVerdict(
+        Severity.INFO,
+        "The IsDeprecated reference points at an object naming the deprecation version "
+        "(§14.3.2): the release states when the node stopped being current, and a child of the "
+        "NamespaceMetadata object is the place that says so.",
+        "BP-Deprecation-Version",
+        "14.3.2",
+    ),
+    "type_replaced": RuleVerdict(
+        Severity.ADVISORY,
+        "A type was replaced rather than deprecated in place, and the replacement carries no "
+        "version suffix (§11.2.6 recommends DeviceType2): consumers cannot tell which type "
+        "replaced which, and cannot keep using the old one as a fallback path (§14.2).",
+        "BP-Type-Replaced",
+        "11.2.6",
+    ),
+    "type_replaced_numbered": RuleVerdict(
+        Severity.INFO,
+        "One type replaced exactly one other and carries a version suffix (§11.2.6): the naming "
+        "says which replaced which, so old clients can still resolve the deprecated type.",
+        "BP-Type-Replaced-Numbered",
+        "11.2.6",
+    ),
+    "deprecations_without_new_namespace": RuleVerdict(
+        Severity.ADVISORY,
+        "The release deprecates nodes inside a NamespaceUri it already published (§14.3): a "
+        "deprecated node can never be removed from that URI, so the ambiguity stays forever. "
+        "Beyond a small optional InstanceDeclaration, publish a new NamespaceUri instead.",
+        "BP-Deprecation-Without-NewNamespace",
+        "14.3",
+    ),
     "reference_hard_removed": RuleVerdict(
         Severity.BREAKING,
         "A contract reference was removed (§3.2.16, §3.2.14): subtype, type-definition, "
