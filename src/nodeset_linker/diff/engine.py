@@ -63,6 +63,9 @@ HARD_REFERENCES = frozenset(
 )
 #: Removing one of these is navigation-only and therefore never breaking.
 SOFT_REFERENCES = frozenset({"Organizes", "HasDescription"})
+#: Where a node sits in its hierarchy is judged as a hierarchy change (§3.2.9, §3.2.10,
+#: §3.2.13, §3.2.15), not as a reference change, so it is reported once.
+HIERARCHY_REFERENCES = frozenset({"HasSubtype", "HasTypeDefinition", "HasInterface"})
 
 #: Definition members whose optional attributes still carry semantic meaning.
 FIELD_METADATA_LABELS: tuple[tuple[str, str], ...] = (
@@ -171,7 +174,10 @@ def diff_models(
         new_source=new_source,
         old_nodes=len(old_index.nodes),
         new_nodes=len(new_index.nodes),
-        added=[_entry(node, new_index, verdicts=(_entry_verdict(node),)) for node in added_nodes],
+        added=[
+            _entry(node, new_index, verdicts=(_entry_verdict(node, new_index),))
+            for node in added_nodes
+        ],
         removed=[
             _entry(node, old_index, verdicts=(_removal_verdict(node),)) for node in removed_nodes
         ],
@@ -184,9 +190,36 @@ def diff_models(
     return diff
 
 
-def _entry_verdict(node: UANode) -> RuleVerdict:
-    """The rule verdict for a node that appeared in the new model."""
+def _entry_verdict(node: UANode, index: ModelIndex) -> RuleVerdict:
+    """The rule verdict for a node that appeared in the new model (§3.2.1, §3.2.2, §3.2.9)."""
+    if _is_added_mandatory_declaration(node):
+        return verdict("node_added_mandatory", RuleContext(mandatory_target=True))
+    if node.node_class.is_type and _base_is_extension(node, index):
+        return verdict("subtype_inserted")
     return verdict("node_added", RuleContext(modelling_rule=node.modelling_rule))
+
+
+def _is_added_mandatory_declaration(node: UANode) -> bool:
+    """An InstanceDeclaration that hangs off a type and is not marked Optional (§3.2.1).
+
+    A whole type is not an InstanceDeclaration, so adding a type stays an optional addition
+    even though the absence of a modelling rule makes declarations mandatory.
+    """
+    if not node.node_class.is_instance:
+        return False
+    if node.parent_node_id is None and node.type_definition is None:
+        return False
+    return mandatory_level_of(node) is MandatoryLevel.MANDATORY
+
+
+def _base_is_extension(node: UANode, index: ModelIndex) -> bool:
+    """Whether a new type hangs off a companion type of the same release — an inserted subtype."""
+    base_identity = _base_type(node)
+    if base_identity is None:
+        return False
+    if base_identity.partition("|")[0] == UA_NAMESPACE_URI:
+        return False
+    return _lookup(index, base_identity) is not None
 
 
 def _sort_key(node_identity: Identity) -> tuple[str, str, str]:
@@ -374,6 +407,9 @@ def _node_changes(
                 verdict=verdict("attributes"),
             )
         )
+    symmetric = _symmetric_change(old_node, new_node)
+    if symmetric is not None:
+        changes.append(symmetric)
     if old_node.is_abstract != new_node.is_abstract:
         changes.append(
             Change(
@@ -389,6 +425,7 @@ def _node_changes(
         changes.append(rule)
     changes.extend(_variable_changes(old_node, new_node, old, new))
     changes.extend(_definition_changes(old_node, new_node, old, new))
+    changes.extend(_hierarchy_changes(old_node, new_node, old, new))
     changes.extend(_reference_changes(old_node, new_node, old, new))
     return changes
 
@@ -762,6 +799,126 @@ def _order_change(
     ]
 
 
+def _hierarchy_changes(
+    old_node: UANode, new_node: UANode, old: ModelIndex, new: ModelIndex
+) -> list[Change]:
+    """Where a node sits in its hierarchy: base type, type definition, parent, interfaces."""
+    changes: list[Change] = []
+    old_base = _base_type(old_node)
+    new_base = _base_type(new_node)
+    if old_base != new_base:
+        changes.append(
+            Change(
+                area="hierarchy",
+                kind="moved",
+                subject="HasSubtype",
+                old=_target_label(old, old_base, False) if old_base else None,
+                new=_target_label(new, new_base, False) if new_base else None,
+                verdict=verdict("hierarchy_move"),
+            )
+        )
+    for attribute, subject in (
+        ("type_definition", "HasTypeDefinition"),
+        ("parent_node_id", "ParentNodeId"),
+    ):
+        old_value = getattr(old_node, attribute, None)
+        new_value = getattr(new_node, attribute, None)
+        if old_value == new_value:
+            continue
+        changes.append(
+            Change(
+                area="hierarchy",
+                kind="moved",
+                subject=subject,
+                old=_reference_label(old, old_value),
+                new=_reference_label(new, new_value),
+                verdict=verdict("hierarchy_move"),
+            )
+        )
+    old_interfaces = _interface_targets(old_node)
+    new_interfaces = _interface_targets(new_node)
+    for target in sorted(old_interfaces - new_interfaces):
+        changes.append(
+            Change(
+                area="hierarchy",
+                kind="removed",
+                subject=f"HasInterface -> {_target_label(old, target, True)}",
+                old="HasInterface",
+                verdict=verdict("interface_removed"),
+            )
+        )
+    for target in sorted(new_interfaces - old_interfaces):
+        changes.append(
+            Change(
+                area="hierarchy",
+                kind="added",
+                subject=f"HasInterface -> {_target_label(new, target, True)}",
+                new="HasInterface",
+                verdict=verdict("interface_added"),
+            )
+        )
+    old_children = _subtype_children(old_node)
+    new_children = _subtype_children(new_node)
+    for target in sorted(old_children - new_children):
+        changes.append(
+            Change(
+                area="hierarchy",
+                kind="removed",
+                subject=f"HasSubtype -> {_target_label(old, target, True)}",
+                old="HasSubtype",
+                verdict=verdict("hierarchy_move"),
+            )
+        )
+    for target in sorted(new_children - old_children):
+        changes.append(
+            Change(
+                area="hierarchy",
+                kind="added",
+                subject=f"HasSubtype -> {_target_label(new, target, True)}",
+                new="HasSubtype",
+                verdict=verdict("subtype_inserted"),
+            )
+        )
+    return changes
+
+
+def _base_type(node: UANode) -> str | None:
+    """Identity text of the type a node inherits from; a subtype declares it as inverse."""
+    for ref in node.references:
+        if _reference_name(ref) == "HasSubtype" and not ref.is_forward:
+            return _identity_text(ref.target)
+    return None
+
+
+def _interface_targets(node: UANode) -> set[str]:
+    """Identity texts of the Interfaces a type implements."""
+    return {
+        _identity_text(ref.target)
+        for ref in node.references
+        if _reference_name(ref) == "HasInterface"
+    }
+
+
+def _subtype_children(node: UANode) -> set[str]:
+    """Identity texts of the subtypes a type declares forward (§3.2.9, §3.2.15)."""
+    return {
+        _identity_text(ref.target)
+        for ref in node.references
+        if _reference_name(ref) == "HasSubtype" and ref.is_forward
+    }
+
+
+def _reference_name(ref: Reference) -> str:
+    return _reference_key(ref)[0]
+
+
+def _reference_label(index: ModelIndex, node_id: ExpandedNodeId | None) -> str | None:
+    """The target of a hierarchy attribute, named the way the report names other targets."""
+    if node_id is None:
+        return None
+    return index.label(node_id)
+
+
 def _reference_changes(
     old_node: UANode, new_node: UANode, old: ModelIndex, new: ModelIndex
 ) -> list[Change]:
@@ -769,8 +926,9 @@ def _reference_changes(
     old_refs = {_reference_key(ref) for ref in old_node.references}
     new_refs = {_reference_key(ref) for ref in new_node.references}
     changes: list[Change] = []
-    for key in sorted(old_refs - new_refs):
-        name, target, is_forward = key
+    for name, target, is_forward in sorted(old_refs - new_refs):
+        if name in HIERARCHY_REFERENCES:
+            continue
         changes.append(
             Change(
                 area="reference",
@@ -782,8 +940,9 @@ def _reference_changes(
                 ),
             )
         )
-    for key in sorted(new_refs - old_refs):
-        name, target, is_forward = key
+    for name, target, is_forward in sorted(new_refs - old_refs):
+        if name in HIERARCHY_REFERENCES:
+            continue
         changes.append(
             Change(
                 area="reference",
@@ -961,12 +1120,32 @@ def _qualified_name(name: QualifiedName, index: ModelIndex) -> str:
 
 
 def _semantic_attributes(node: UANode) -> Mapping[str, str]:
-    """The leftover XML attributes that are not identity spellings."""
+    """The leftover XML attributes that are not identity spellings.
+
+    Symmetric is judged on its own (§3.2.14), so it never rides along with an attribute edit
+    that is only informational.
+    """
     return {
         key: value
         for key, value in node.attributes.items()
-        if key not in DOCUMENT_LOCAL_ATTRIBUTES
+        if key not in DOCUMENT_LOCAL_ATTRIBUTES and key != "Symmetric"
     }
+
+
+def _symmetric_change(old_node: UANode, new_node: UANode) -> Change | None:
+    """Symmetric of a ReferenceType shall not change (§3.2.14)."""
+    old_value = old_node.attributes.get("Symmetric")
+    new_value = new_node.attributes.get("Symmetric")
+    if old_value == new_value:
+        return None
+    return Change(
+        area="node",
+        kind="attributes",
+        subject="Symmetric",
+        old=old_value,
+        new=new_value,
+        verdict=verdict("attributes", RuleContext(symmetric_flip=True)),
+    )
 
 
 def _spell_attributes(attributes: Mapping[str, str]) -> str:

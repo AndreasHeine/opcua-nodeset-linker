@@ -129,16 +129,17 @@ _RULES: dict[str, RuleVerdict] = {
         "3.2.17",
     ),
     "symbolic_name": RuleVerdict(
-        Severity.BREAKING,
-        "SymbolicName identifies a node in generated code (§3.2.17 Remark); changing it "
-        "renames the symbol every generated client exposes.",
+        Severity.ADVISORY,
+        "SymbolicName changed (§2.1.2): BrowseName stays the identity, but generated code "
+        "and codenames are spelled after SymbolicName, so consumers keep the old symbol. "
+        "Regenerate the code and keep SymbolicName and BrowseName aligned.",
         "BP-SymbolicName-Identity",
-        "3.2.17",
+        "2.1.2",
     ),
     "inverse_name": RuleVerdict(
-        Severity.BREAKING,
-        "InverseName of a ReferenceType may change as long as the meaning stays the same "
-        "and it stays unique (§3.2.17).",
+        Severity.ADVISORY,
+        "InverseName may change as long as the meaning stays the same and it stays unique "
+        "in the namespace (§3.2.17); browse paths that read the inverse name show new text.",
         "BP-InverseName-Meaning",
         "3.2.17",
     ),
@@ -217,16 +218,17 @@ _RULES: dict[str, RuleVerdict] = {
         "3.2.17",
     ),
     "field_order": RuleVerdict(
-        Severity.BREAKING,
-        "The fields of a Structure were re-ordered; positional encodings read the wrong "
-        "field (§2.2 requires unique field names, not a stable order).",
+        Severity.ADVISORY,
+        "The fields of a Structure were re-ordered (§2.2): field names are the contract, but "
+        "an XML-based encoder reads fields by position, so check consumers that parse the "
+        "XML schema.",
         "BP-FieldOrder-Encoding",
         "2.2",
     ),
     "alternative_order": RuleVerdict(
-        Severity.BREAKING,
-        "The alternatives of a Union were re-ordered; positional encodings read the wrong "
-        "alternative (§3.2.6).",
+        Severity.ADVISORY,
+        "The alternatives of a Union were re-ordered (§3.2.6): each alternative keeps its "
+        "DataType, but a positional encoder reads the alternative at the old position.",
         "BP-AlternativeOrder-Encoding",
         "3.2.6",
     ),
@@ -238,10 +240,12 @@ _RULES: dict[str, RuleVerdict] = {
         "3.2.16",
     ),
     "node_removed_optional": RuleVerdict(
-        Severity.INFO,
-        "An optional declaration was removed (§3.2.2): consumers never had to expect it.",
+        Severity.BREAKING,
+        "An optional InstanceDeclaration was removed (§3.2.16): a consumer that browsed the "
+        "optional declaration now finds nothing, even though it was optional. Publish a new "
+        "namespace instead (§11.3).",
         "BP-Declaration-Removed-Optional",
-        "3.2.2",
+        "3.2.16",
     ),
     "node_removed_standard": RuleVerdict(
         Severity.INFO,
@@ -257,9 +261,11 @@ _RULES: dict[str, RuleVerdict] = {
         "3.2.2",
     ),
     "identifier_move": RuleVerdict(
-        Severity.ADVISORY,
-        "The identifier of a published node moved (§3.2.17): consumers that resolve it by "
-        "identifier lose the node. WP2 tightens this to a breaking change.",
+        Severity.BREAKING,
+        "The NodeId of a published node changed (§3.2.17): identifiers shall not change, and "
+        "a consumer that resolves the node by identifier now reaches nothing or the wrong "
+        "node. Add new identifiers instead of renumbering, and publish a new namespace for a "
+        "breaking change (§11.3).",
         "BP-NodeId-Immutable",
         "3.2.17",
     ),
@@ -273,9 +279,26 @@ _RULES: dict[str, RuleVerdict] = {
     "interface_added": RuleVerdict(
         Severity.ADVISORY,
         "An Interface was added to a published type (§3.2.3): the type now carries the "
-        "interface's mandatory declarations.",
+        "interface's mandatory declarations, so consumers that browse the type see more and "
+        "generated code gains the interface. Removing an Interface from a published type is "
+        "the breaking direction.",
         "BP-Interface-Added",
         "3.2.3",
+    ),
+    "interface_removed": RuleVerdict(
+        Severity.BREAKING,
+        "An Interface was removed from a published type (§3.2.3): consumers that expect the "
+        "interface and its mandatory declarations no longer find them on the type.",
+        "BP-Interface-Removed",
+        "3.2.3",
+    ),
+    "node_added_mandatory": RuleVerdict(
+        Severity.ADVISORY,
+        "A Mandatory declaration was added (§3.2.1): every instance of the type must now "
+        "carry it, so consumers that browsed the type before see a new required component. "
+        "Say so in the release notes.",
+        "BP-Declaration-Added-Mandatory",
+        "3.2.1",
     ),
     "subtype_inserted": RuleVerdict(
         Severity.ADVISORY,
@@ -319,10 +342,12 @@ _RULES: dict[str, RuleVerdict] = {
         "3.2.16",
     ),
     "reference_optional_child_removed": RuleVerdict(
-        Severity.INFO,
-        "An Optional component was detached (§3.2.2): consumers never had to expect it.",
+        Severity.BREAKING,
+        "An Optional component was detached (§3.2.16): detaching an InstanceDeclaration is a "
+        "breaking change even where it was optional, because consumers that browsed it now "
+        "find nothing.",
         "BP-Reference-OptionalChild-Removed",
-        "3.2.2",
+        "3.2.16",
     ),
     "reference_other_removed": RuleVerdict(
         Severity.BREAKING,
@@ -475,6 +500,14 @@ _MEMBER_KINDS: dict[tuple[str, str], str] = {
 }
 
 _MEMBER_VERDICTS: dict[str, RuleVerdict] = {
+    "field_added": RuleVerdict(
+        Severity.BREAKING,
+        "A field was added to a Structure (§3.2.5): the encoding of every value of this type "
+        "changes, so a consumer written against the old field list cannot read the new "
+        "values. Add a subtype or publish a new namespace (§3.3, §11.3).",
+        "BP-StructureField-Added",
+        "3.2.5",
+    ),
     "field_removed": RuleVerdict(
         Severity.BREAKING,
         "A field of a Structure was removed (§3.2.5): consumers that read it find nothing.",
@@ -487,6 +520,14 @@ _MEMBER_VERDICTS: dict[str, RuleVerdict] = {
         "changed for every consumer.",
         "BP-StructureField-Changed",
         "3.2.5",
+    ),
+    "enum_value_added": RuleVerdict(
+        Severity.BREAKING,
+        "An enum value was added (§3.2.4): the value range of the type changes, generated "
+        "code is incomplete, and a consumer that rejects unknown values refuses the new "
+        "ones. Use a new namespace (§11.3).",
+        "BP-EnumValue-Added",
+        "3.2.4",
     ),
     "enum_value_removed": RuleVerdict(
         Severity.BREAKING,
@@ -502,6 +543,14 @@ _MEMBER_VERDICTS: dict[str, RuleVerdict] = {
         "BP-EnumValue-Changed",
         "3.2.4",
     ),
+    "option_set_bit_added": RuleVerdict(
+        Severity.BREAKING,
+        "An OptionSet bit was added (§3.2.7, §3.2.8): the set of bits a consumer may receive "
+        "changes, and generated code does not know the new bit. Use a new namespace "
+        "(§11.3).",
+        "BP-OptionSetBit-Added",
+        "3.2.7",
+    ),
     "option_set_bit_removed": RuleVerdict(
         Severity.BREAKING,
         "An OptionSet bit was removed (§3.2.7, §3.2.8): a bit a consumer may have set is no "
@@ -515,6 +564,14 @@ _MEMBER_VERDICTS: dict[str, RuleVerdict] = {
         "now.",
         "BP-OptionSetBit-Changed",
         "3.2.7",
+    ),
+    "alternative_added": RuleVerdict(
+        Severity.BREAKING,
+        "An alternative was added to a Union (§3.2.6): the encoding gains a position, so a "
+        "consumer written against the old alternatives cannot decode the new value. Use a new "
+        "namespace (§11.3).",
+        "BP-UnionAlternative-Added",
+        "3.2.6",
     ),
     "alternative_removed": RuleVerdict(
         Severity.BREAKING,
@@ -533,19 +590,19 @@ _MEMBER_VERDICTS: dict[str, RuleVerdict] = {
 }
 _RULES.update(_MEMBER_VERDICTS)
 
-#: Member rules keyed by (member, kind); WP1 keeps the current behaviour for additions, WP2
-#: aligns every member change with the paper.
+#: Member rules keyed by (member, kind).  Every member change is a contract change (§3.2.4,
+#: §3.2.5, §3.2.6, §3.2.7); only member text is documentation.
 _MEMBER_RULES: dict[tuple[str, str], RuleVerdict] = {
-    ("field", "added"): _NEUTRAL,
+    ("field", "added"): _MEMBER_VERDICTS["field_added"],
     ("field", "removed"): _MEMBER_VERDICTS["field_removed"],
     ("field", "changed"): _MEMBER_VERDICTS["field_changed"],
-    ("enum_value", "added"): _NEUTRAL,
+    ("enum_value", "added"): _MEMBER_VERDICTS["enum_value_added"],
     ("enum_value", "removed"): _MEMBER_VERDICTS["enum_value_removed"],
     ("enum_value", "changed"): _MEMBER_VERDICTS["enum_value_changed"],
-    ("option_set_value", "added"): _NEUTRAL,
+    ("option_set_value", "added"): _MEMBER_VERDICTS["option_set_bit_added"],
     ("option_set_value", "removed"): _MEMBER_VERDICTS["option_set_bit_removed"],
     ("option_set_value", "changed"): _MEMBER_VERDICTS["option_set_bit_changed"],
-    ("union_alternative", "added"): _NEUTRAL,
+    ("union_alternative", "added"): _MEMBER_VERDICTS["alternative_added"],
     ("union_alternative", "removed"): _MEMBER_VERDICTS["alternative_removed"],
     ("union_alternative", "changed"): _MEMBER_VERDICTS["alternative_changed"],
     ("member_text", "changed"): _RULES["member_text"],

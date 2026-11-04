@@ -126,6 +126,15 @@ class NodeEntry:
         severities = {verdict.severity for verdict in self.verdicts}
         return next((severity for severity in order if severity in severities), Severity.INFO)
 
+    @property
+    def rule_id(self) -> str | None:
+        """The rule id of the strongest verdict this entry carries."""
+        for severity in (Severity.BREAKING, Severity.ADVISORY, Severity.INFO):
+            for entry_verdict in self.verdicts:
+                if entry_verdict.severity is severity:
+                    return entry_verdict.rule_id
+        return None
+
     def as_json(self) -> dict[str, Any]:
         return {
             "label": self.label,
@@ -171,6 +180,15 @@ class NodeModification:
 
     def breaking_changes(self) -> list[Change]:
         return [change for change in self.changes if change.breaking]
+
+    @property
+    def rule_id(self) -> str | None:
+        """The rule id of the strongest verdict that judged this entry."""
+        for severity in (Severity.BREAKING, Severity.ADVISORY, Severity.INFO):
+            for entry_verdict in self.all_verdicts():
+                if entry_verdict.severity is severity:
+                    return entry_verdict.rule_id
+        return None
 
     def all_verdicts(self) -> list[RuleVerdict]:
         """Every rule that judged this entry, entry-level verdicts first."""
@@ -229,6 +247,15 @@ class RenumberedNode:
             if severity in severities:
                 return severity
         return Severity.INFO
+
+    @property
+    def rule_id(self) -> str | None:
+        """The rule id of the strongest verdict that judged this entry."""
+        for severity in (Severity.BREAKING, Severity.ADVISORY, Severity.INFO):
+            for entry_verdict in self.all_verdicts():
+                if entry_verdict.severity is severity:
+                    return entry_verdict.rule_id
+        return None
 
     def all_verdicts(self) -> list[RuleVerdict]:
         return [*self.verdicts, *[change.verdict for change in self.changes if change.verdict]]

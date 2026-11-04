@@ -24,6 +24,7 @@ from tests.conftest import (
 from nodeset_linker.cli.main import main
 from nodeset_linker.diff import (
     PAPER,
+    Severity,
     apply_impact,
     console_text,
     dependents,
@@ -151,7 +152,7 @@ class TestAddedAndRemovedNodes:
 
 
 class TestDefinitionChanges:
-    def test_structure_field_added_is_not_breaking(self, tmp_path) -> None:
+    def test_structure_field_added_is_breaking(self, tmp_path) -> None:
         new = BASE.replace(
             '<Field Name="Progress" DataType="ns=1;i=2003" IsOptional="true" />',
             '<Field Name="Progress" DataType="ns=1;i=2003" IsOptional="true" />\n'
@@ -161,7 +162,9 @@ class TestDefinitionChanges:
         modified = {entry.label: entry for entry in diff.modified}
         assert "JobDataType" in modified
         assert any("ProgressPercentage" in change.subject for change in modified["JobDataType"].changes)
-        assert not diff.breaking
+        # §3.2.5: a new field changes the encoding of every value of the structure.
+        assert diff.breaking
+        assert "BP-StructureField-Added" in diff.breaking[0].rule_id
 
     def test_structure_field_datatype_change_is_breaking(self, tmp_path) -> None:
         new = BASE.replace('<Field Name="JobId" DataType="String" />', '<Field Name="JobId" DataType="Int32" />')
@@ -169,11 +172,13 @@ class TestDefinitionChanges:
         assert diff.breaking
         assert "JobId" in diff.breaking[0].reason
 
-    def test_enum_value_added_is_not_breaking(self, tmp_path) -> None:
+    def test_enum_value_added_is_breaking(self, tmp_path) -> None:
         new = BASE.replace('<Field Name="Done" Value="2" />', '<Field Name="Done" Value="2" />\n      <Field Name="Paused" Value="3" />')
         _, _, diff = diff_texts(tmp_path, BASE, new)
         assert labels(diff.modified) == {"JobStateEnum"}
-        assert not diff.breaking
+        # §3.2.4: a new enum value changes the value range a consumer may receive.
+        assert diff.breaking
+        assert "BP-EnumValue-Added" in diff.breaking[0].rule_id
 
     def test_enum_value_removed_is_breaking(self, tmp_path) -> None:
         new = BASE.replace('      <Field Name="Done" Value="2" />\n', "")
@@ -192,10 +197,11 @@ class TestReferenceChanges:
         _, _, diff = diff_texts(tmp_path, BASE, new)
         modified = {entry.label: entry for entry in diff.modified}
         areas = [change.area for change in modified["MSSControllerInstance"].changes]
-        assert areas == ["reference", "reference", "reference"]
+        # An Interface is judged as a hierarchy change (§3.2.3), components as references.
+        assert areas == ["hierarchy", "reference", "reference"]
         kinds = [change.kind for change in modified["MSSControllerInstance"].changes]
         assert sorted(kinds) == ["added", "removed", "removed"]
-        assert [change.label for change in diff.breaking] == ["MSSControllerInstance"]
+        assert {change.label for change in diff.breaking} == {"MSSControllerInstance"}
 
     def test_reference_removal_names_the_target(self, tmp_path) -> None:
         new = BASE.replace('      <Reference ReferenceType="HasInterface">ns=1;i=2100</Reference>\n', "")
@@ -233,11 +239,14 @@ class TestModellingRules:
         )
         assert diff_models(build_model([node]), build_model([])).breaking
 
-    def test_optional_placeholder_removal_is_not_breaking(self) -> None:
+    def test_optional_placeholder_removal_is_breaking(self) -> None:
         node = in_namespace(
             make_variable("SubMachine", 5001, rule=ModellingRule.OPTIONAL_PLACEHOLDER), Machinery_NS
         )
-        assert not diff_models(build_model([node]), build_model([])).breaking
+        # §3.2.16: removing an optional InstanceDeclaration is a breaking change too.
+        diff = diff_models(build_model([node]), build_model([]))
+        assert diff.breaking
+        assert "BP-Declaration-Removed-Optional" in diff.breaking[0].rule_id
 
 
 class TestIdentityNotXml:
@@ -262,7 +271,10 @@ class TestIdentityNotXml:
         assert not diff.added
         assert not diff.removed
         assert [entry.label for entry in diff.renumbered] == ["MachineType"]
-        assert not diff.breaking
+        # §3.2.17: a published identifier shall not move, so renumbering gates the build.
+        assert diff.breaking
+        assert diff.breaking[0].rule_id == "BP-NodeId-Immutable"
+        assert diff.renumbered[0].severity == Severity.BREAKING
 
     def test_renumbered_node_with_changed_content(self) -> None:
         old = build_model([make_object_type("MachineType", 4200)])
@@ -271,7 +283,11 @@ class TestIdentityNotXml:
         )
         diff = diff_models(old, new)
         assert labels(diff.renumbered) == {"MachineType"}
-        assert any(change.kind == "added" for change in diff.renumbered[0].changes)
+        # The base type is a hierarchy change (§3.2.9), not a plain reference change.
+        assert any(
+            (change.area, change.kind) == ("hierarchy", "added")
+            for change in diff.renumbered[0].changes
+        )
 
 
 class TestImpact:
@@ -331,6 +347,23 @@ class TestOutputFormats:
         assert added["severity"] == "info"
         assert added["verdicts"][0]["rule_id"] == "BP-Declaration-Added"
         assert added["verdicts"][0]["paper"] == PAPER
+
+    def test_advisory_section_is_reported_but_never_gates(self) -> None:
+        old_model = build_model([make_object_type("MachineType", 7940)])
+        new_model = build_model(
+            [
+                make_object_type(
+                    "MachineType", 7940, refs=(Reference(target=node_id(2100), type_name="HasInterface"),)
+                )
+            ]
+        )
+        diff = diff_models(old_model, new_model)
+        text = console_text(diff)
+        # Advisory findings are shown to a reader and never exit the build (§7 checklist).
+        assert "Advisory: 1" in text
+        assert "Best practices to review" in text
+        assert "BP-Interface-Added" in text
+        assert "Best practices to review" not in console_text(diff, breaking_only=True)
 
     def test_markdown(self, tmp_path) -> None:
         _, _, diff = diff_texts(tmp_path, BASE, BASE.replace("</UANodeSet>", ADDED_TYPE + "</UANodeSet>"))
@@ -396,10 +429,23 @@ class TestCli:
         new = write(
             tmp_path,
             "new.xml",
-            BASE.replace('<Field Name="Done" Value="2" />', '<Field Name="Done" Value="2" />\n      <Field Name="Paused" Value="3" />'),
+            BASE.replace("<DisplayName>JobDataType</DisplayName>", "<DisplayName>Job Data Type</DisplayName>"),
         )
+        # §3.2.17: DisplayName text may change, so an information-only edit never gates.
         result = CliRunner().invoke(main, ["diff", str(old), str(new), "--fail-on-breaking"])
         assert result.exit_code == 0, result.output
+
+    def test_fail_on_breaking_gates_an_enum_value_addition(self, tmp_path) -> None:
+        old = write(tmp_path, "old.xml", BASE)
+        new = write(
+            tmp_path,
+            "new.xml",
+            BASE.replace('<Field Name="Done" Value="2" />', '<Field Name="Done" Value="2" />\n      <Field Name="Paused" Value="3" />'),
+        )
+        # §3.2.4: the value range changed, which gates the build (§7 checklist).
+        result = CliRunner().invoke(main, ["diff", str(old), str(new), "--fail-on-breaking"])
+        assert result.exit_code == 1, result.output
+        assert "BP-EnumValue-Added" in result.output
 
     def test_impact_and_output_file(self, tmp_path) -> None:
         old = write(tmp_path, "old.xml", BASE)
@@ -469,7 +515,7 @@ def structure_of(*fields: StructureField) -> Definition:
 
 
 class TestUnionAndOptionSet:
-    def test_union_alternative_added_is_not_breaking(self) -> None:
+    def test_union_alternative_added_is_breaking(self) -> None:
         old_model = build_model(
             [make_data_type("ValueUnion", 9000, definition=union_definition((("Int", node_id(6)),)))]
         )
@@ -485,7 +531,9 @@ class TestUnionAndOptionSet:
             ]
         )
         diff = diff_models(old_model, new_model)
-        assert not diff.breaking
+        # §3.2.6: a new alternative gains an encoding position a consumer cannot decode.
+        assert diff.breaking
+        assert "BP-UnionAlternative-Added" in diff.breaking[0].rule_id
         assert any(change.kind == "added" for change in diff.modified[0].changes)
 
     def test_union_alternative_removed_is_breaking(self) -> None:
@@ -517,7 +565,7 @@ class TestUnionAndOptionSet:
         diff = diff_models(old_model, new_model)
         assert diff.breaking
 
-    def test_option_set_value_added_is_not_breaking(self) -> None:
+    def test_option_set_value_added_is_breaking(self) -> None:
         old_model = build_model(
             [make_data_type("Flags", 9100, definition=option_set_definition((("Idle", 0),)))]
         )
@@ -529,7 +577,9 @@ class TestUnionAndOptionSet:
             ]
         )
         diff = diff_models(old_model, new_model)
-        assert not diff.breaking
+        # §3.2.7 and §3.2.8: a new bit changes what a consumer may receive and what it knows.
+        assert diff.breaking
+        assert "BP-OptionSetBit-Added" in diff.breaking[0].rule_id
         assert labels(diff.modified) == {"Flags"}
 
     def test_option_set_value_removed_is_breaking(self) -> None:
@@ -596,15 +646,18 @@ class TestFieldMetadataAndText:
         assert diff.breaking
         assert "String (i=12) → UInt64 (i=9)" in diff.breaking[0].reason
 
-    def test_field_order_change_is_breaking(self) -> None:
+    def test_field_order_change_is_advisory(self) -> None:
         first = StructureField(name="First", data_type=node_id(12))
         second = StructureField(name="Second", data_type=node_id(12))
         diff = diff_models(
             build_model([make_data_type("Pair", 9500, definition=structure_of(first, second))]),
             build_model([make_data_type("Pair", 9500, definition=structure_of(second, first))]),
         )
-        assert diff.breaking
+        # §2.2: names are the contract; only a positional encoder reads the order.
+        assert not diff.breaking
+        assert {change.label for change in diff.advisory} == {"Pair"}
         assert any(change.kind == "field_order" for change in diff.modified[0].changes)
+        assert diff.modified[0].severity == Severity.ADVISORY
 
 
 class TestNodeAttributes:
@@ -693,19 +746,23 @@ class TestNodeAttributes:
         assert diff.breaking
         assert "BrowseName" in diff.breaking[0].reason
 
-    def test_symbolic_name_change_is_breaking(self) -> None:
+    def test_symbolic_name_change_is_advisory(self) -> None:
         old = make_object_type("Level", 7200)
         new = replace(old, symbolic_name="LevelType")
         diff = diff_models(build_model([old]), build_model([new]))
-        assert diff.breaking
-        assert "SymbolicName" in diff.breaking[0].reason
+        # §2.1.2: BrowseName stays the identity; the symbol in generated code needs a redo.
+        assert not diff.breaking
+        assert "SymbolicName" in diff.advisory[0].reason
+        assert diff.modified[0].rule_id == "BP-SymbolicName-Identity"
 
-    def test_inverse_name_change_is_breaking(self) -> None:
+    def test_inverse_name_change_is_advisory(self) -> None:
         old = make_reference_type("HasOwner", 7300)
         new = replace(old, inverse_name="Owns")
         diff = diff_models(build_model([old]), build_model([new]))
-        assert diff.breaking
-        assert "InverseName" in diff.breaking[0].reason
+        # §3.2.17: InverseName may change as long as its meaning stays the same.
+        assert not diff.breaking
+        assert "InverseName" in diff.advisory[0].reason
+        assert diff.modified[0].severity == Severity.ADVISORY
 
     def test_abstract_change_is_breaking(self) -> None:
         old = make_object_type("MachineType", 7400)
@@ -739,6 +796,138 @@ class TestNodeAttributes:
         assert not diff.breaking
 
 
+class TestBestPracticeRules:
+    """The release checklist of the plan: what gates a release and what only advises."""
+
+    def test_symmetric_change_is_breaking(self) -> None:
+        old = replace(make_reference_type("HasOwner", 7800), attributes={"Symmetric": "true"})
+        new = replace(old, attributes={"Symmetric": "false"})
+        diff = diff_models(build_model([old]), build_model([new]))
+        # §3.2.14: Symmetric shall not change; the meaning of the reference flips.
+        assert diff.breaking
+        assert diff.breaking[0].rule_id == "BP-ReferenceType-Symmetric-Immutable"
+        assert [(change.subject, change.kind) for change in diff.modified[0].changes] == [
+            ("Symmetric", "attributes")
+        ]
+
+    def test_access_level_change_is_information_only(self) -> None:
+        old = replace(
+            make_variable("Count", 7900, data_type=node_id(6)), attributes={"AccessLevel": "None|Input"}
+        )
+        new = replace(old, attributes={"AccessLevel": "None|Input|Output"})
+        diff = diff_models(build_model([old]), build_model([new]))
+        assert not diff.breaking
+        assert not diff.advisory
+        assert diff.modified[0].severity == Severity.INFO
+
+    def test_hierarchy_move_is_breaking(self) -> None:
+        base = Reference(target=node_id(58), type_name="HasSubtype", is_forward=False)
+        other = Reference(target=node_id(22), type_name="HasSubtype", is_forward=False)
+        diff = diff_models(
+            build_model([make_object_type("MachineType", 7910, refs=(base,))]),
+            build_model([make_object_type("MachineType", 7910, refs=(other,))]),
+        )
+        # §3.2.9 and §3.2.10: a type that moved inherits something else.
+        assert diff.breaking
+        assert diff.breaking[0].rule_id == "BP-Hierarchy-Move"
+        assert [change.area for change in diff.modified[0].changes] == ["hierarchy"]
+
+    def test_interface_addition_advises_without_gating(self) -> None:
+        old = make_object_type("MachineType", 7920)
+        new = make_object_type(
+            "MachineType", 7920, refs=(Reference(target=node_id(2100), type_name="HasInterface"),)
+        )
+        diff = diff_models(build_model([old]), build_model([new]))
+        # §3.2.3: the type now carries the interface's declarations; nothing disappeared.
+        assert not diff.breaking
+        assert {change.label for change in diff.advisory} == {"MachineType"}
+        assert diff.modified[0].rule_id == "BP-Interface-Added"
+
+    def test_interface_removal_is_breaking(self) -> None:
+        old = make_object_type(
+            "MachineType", 7930, refs=(Reference(target=node_id(2100), type_name="HasInterface"),)
+        )
+        new = make_object_type("MachineType", 7930)
+        diff = diff_models(build_model([old]), build_model([new]))
+        assert diff.breaking
+        assert diff.breaking[0].rule_id == "BP-Interface-Removed"
+
+    def test_optional_declaration_addition_is_information(self) -> None:
+        added = in_namespace(
+            replace(make_variable("Notes", 5100, rule=ModellingRule.OPTIONAL), parent_node_id=node_id(2200)),
+            Machinery_NS,
+        )
+        diff = diff_models(build_model([]), build_model([added]))
+        # §3.2.2: an optional addition widens what consumers may browse.
+        assert not diff.breaking
+        assert diff.added[0].severity == Severity.INFO
+        assert diff.added[0].rule_id == "BP-Declaration-Added"
+
+    def test_mandatory_declaration_addition_advises(self) -> None:
+        added = in_namespace(
+            replace(
+                make_variable("Status", 5101, rule=ModellingRule.MANDATORY), parent_node_id=node_id(2200)
+            ),
+            Machinery_NS,
+        )
+        diff = diff_models(build_model([]), build_model([added]))
+        # §3.2.1: every instance must now carry the declaration, so consumers see more.
+        assert not diff.breaking
+        assert diff.added[0].severity == Severity.ADVISORY
+        assert diff.added[0].rule_id == "BP-Declaration-Added-Mandatory"
+
+    def test_subtype_insertion_advises(self) -> None:
+        parent = in_namespace(make_object_type("MachineType", 2200), Machinery_NS)
+        child = in_namespace(
+            make_object_type(
+                "MachineHealthType",
+                2600,
+                refs=(
+                    Reference(target=parent.node_id, type_name="HasSubtype", is_forward=False),
+                ),
+            ),
+            Machinery_NS,
+        )
+        diff = diff_models(build_model([parent]), build_model([parent, child]))
+        # §3.2.9: a subtype appeared inside the published hierarchy.
+        assert not diff.breaking
+        assert diff.added[0].severity == Severity.ADVISORY
+        assert diff.added[0].rule_id == "BP-Subtype-Inserted"
+
+    def test_metadata_only_version_bump_is_green(self, tmp_path) -> None:
+        new = BASE.replace(
+            '<String xmlns="http://opcfoundation.org/UA/2008/02/Types.xsd">1.0.1</String>',
+            '<String xmlns="http://opcfoundation.org/UA/2008/02/Types.xsd">1.0.2</String>',
+        )
+        _, _, diff = diff_texts(tmp_path, BASE, new)
+        assert not diff.breaking
+        assert not diff.advisory
+        assert {entry.severity for entry in diff.modified} == {Severity.INFO}
+
+    def test_option_set_text_fix_is_information(self) -> None:
+        old = Definition(
+            kind="OptionSet",
+            option_set_values=(OptionSetValue(name="Idle", value=0, description="not running"),),
+        )
+        new = Definition(
+            kind="OptionSet",
+            option_set_values=(OptionSetValue(name="Idle", value=0, description="idle, nothing running"),),
+        )
+        diff = diff_models(
+            build_model([make_data_type("Flags", 9150, definition=old)]),
+            build_model([make_data_type("Flags", 9150, definition=new)]),
+        )
+        assert not diff.breaking
+        assert diff.modified[0].rule_id == "BP-Member-Text"
+
+    def test_optional_component_detach_is_breaking(self, tmp_path) -> None:
+        new = BASE.replace('      <Reference ReferenceType="HasComponent">ns=1;i=2201</Reference>\n', "")
+        _, _, diff = diff_texts(tmp_path, BASE, new)
+        # §3.2.16: detaching an optional declaration still breaks a consumer that browsed it.
+        assert diff.breaking
+        assert "BP-Reference-OptionalChild-Removed" in diff.breaking[0].rule_id
+
+
 class TestImpactHelper:
     def test_dependents_lists_the_consumers(self) -> None:
         model = build_model(
@@ -766,7 +955,9 @@ class TestRenumberedRendering:
         new_model = build_model([make_object_type("MachineType", 8001)])
         diff = diff_models(old_model, new_model, old_source="old.xml", new_source="new.xml")
         assert labels(diff.renumbered) == {"MachineType"}
-        assert not diff.breaking
+        # §3.2.17: the identifier moved, so a published consumer loses the node.
+        assert diff.breaking
+        assert diff.breaking[0].rule_id == "BP-NodeId-Immutable"
         assert "Renumbered: 1" in console_text(diff)
         assert "## Renumbered nodes" in markdown_text(diff)
         assert "<h2>Renumbered nodes</h2>" in html_text(diff)
