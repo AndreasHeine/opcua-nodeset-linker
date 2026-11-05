@@ -515,6 +515,7 @@ class TestCli:
         result = CliRunner().invoke(main, ["diff", str(old), str(new), "--fail-on-breaking"])
         assert result.exit_code == 1
         assert "JobId" in result.output
+        assert "Returning exit code 1: blocking breaking changes found." in result.stderr
 
     def test_fail_on_breaking_passes_without_breaking_changes(self, tmp_path) -> None:
         old = write(tmp_path, "old.xml", BASE)

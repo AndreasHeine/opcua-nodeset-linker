@@ -412,14 +412,17 @@ def diff(
     # WP 15: the gate reads unwaived findings only.  A waiver or --accept-breaking marks a
     # finding rather than deleting it, so the report keeps the fact and the reason.
     if fail_on_breaking and (result.blocking_breaking() or result.blocking_namespaces()):
+        click.echo("Returning exit code 1: blocking breaking changes found.", err=True)
         raise SystemExit(1)
     if fail_on_advisory and (
         result.blocking_advisory() or result.blocking_advisory_namespaces()
     ):
+        click.echo("Returning exit code 1: blocking advisory findings found.", err=True)
         raise SystemExit(1)
     if release is not None and not release.reusable:
         # The release question itself is the gate (§11.3): a published URI may not be extended
         # with breaking findings, so the release has to publish a versioned namespace.
+        click.echo("Returning exit code 1: the release verdict is not reusable.", err=True)
         raise SystemExit(1)
 
 

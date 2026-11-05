@@ -166,7 +166,8 @@ nodeset-linker diff examples\demo4\original.xml examples\demo4\modified.xml --im
 $LASTEXITCODE
 ```
 
-The last diff command returns **1**, as expected for a breaking change.
+The last diff command prints a gate message to stderr and returns **1**, as expected for a
+breaking change.
 
 ## Validation scope
 
