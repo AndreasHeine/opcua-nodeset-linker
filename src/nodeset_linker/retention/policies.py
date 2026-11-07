@@ -28,8 +28,9 @@ class StrictPolicy:
 class OptionalAwarePolicy(StrictPolicy):
     """OPTIONAL_AWARE — identical retention to STRICT, plus classification.
 
-    The classification is exposed through :meth:`classify`, which the reports use to
-    split mandatory and optional nodes in their output.
+    :meth:`classify` is the classification a caller can ask for; the reports classify with
+    :func:`nodeset_linker.models.node.mandatory_level_of` directly, because they classify in
+    every mode, not only in this one. Both are the same rule.
     """
 
     name = "OPTIONAL_AWARE"

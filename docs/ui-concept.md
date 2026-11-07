@@ -159,7 +159,7 @@ says *entfernt (nicht von einem Root erreichbar)*. Each hop is tappable → expl
 
 ### 3.7 Step 7 — Diff (the release-review flow)
 Drop zone for the new version (single file or bundle) plus *Demo-Diff laden*. Identity is
-`(namespaceUri, identifier)`, so XML order and index renumbering never produce noise.
+`(namespaceUri, identifier, serverUri)`, so XML order and index renumbering never produce noise.
 * **Headline banner**: `N brechende Änderungen` (red) / `kein semantischer Unterschied` (green),
   plus `Hinweis: N` and `Information: N` counts beside it.
 * **Three buckets** — **Brechend** (a consumer could fail; blocks the release), **Hinweis** (should
@@ -378,7 +378,8 @@ Two things must survive without the app:
 * No full address-space browser — the UI is about reduction, dependencies and release deltas, not
   runtime server browsing.
 * Namespace **indexes are never identity**: `ns=` is a document property; identity is
-  `(namespaceUri, identifier)`, and a `nodeid=` selector carrying a bare `ns=` index is rejected.
+  `(namespaceUri, identifier, serverUri)`, and a `nodeid=` selector carrying a bare `ns=` index
+  is rejected.
 * Client-side parsing is allowed **only** in the preview tier. The exported NodeSet and the CI
   verdict always come from the Python engine — this replaces the earlier blanket "no client-side
   parsing" rule.

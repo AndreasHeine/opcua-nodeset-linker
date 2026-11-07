@@ -13,11 +13,18 @@ Reference implementation: `src/nodeset_linker/diff/` (`engine.py`, `model.py`, `
 
 `nodeset-linker diff old.xml new.xml` answers the question *"what changed in the information
 model?"* — not *"what changed in the XML file"*. Both inputs are parsed into
-`SemanticModel` objects (repository layer) and compared on **semantic identity**:
+`SemanticModel` objects (repository layer) and compared on **semantic identity**; an input is a
+NodeSet file or a split-export bundle (a directory with `manifest.json`), whose namespace files
+are merged into the one model they stand for:
 
 ```
-Identity = (namespaceUri, identifier)
+Identity = (namespaceUri, identifier, serverUri)
 ```
+
+`serverUri` is the third part because OPC 10000-6 makes it part of the node's identity: an
+identifier qualified with a `ServerUri` points into *another server's address space*. An
+unqualified identifier is stored as `serverUri=None`, which is what a document written for its
+own server produces (`srv=0`), so re-exporting a file never invents a difference.
 
 Consequences of this design (tests in `tests/test_diff.py`, `TestIdentityNotXml`):
 
@@ -26,8 +33,10 @@ Consequences of this design (tests in `tests/test_diff.py`, `TestIdentityNotXml`
   namespace): **no change**;
 * `DataType="String"` vs `DataType="i=12"`: **no change** — datatype attributes are compared
   through resolved identifiers, not raw XML spellings;
-* a node whose identifier changed while namespace, BrowseName and NodeClass stayed equal is
-  reported as a **renumbered node**, not as an addition plus a removal.
+* a node whose identifier changed while namespace, server, BrowseName and NodeClass stayed equal
+  is reported as a **renumbered node**, not as an addition plus a removal;
+* a node that gains, loses or changes a `ServerUri`: **a removal plus an addition** — it is a
+  different node, not the same one spelled differently.
 
 Nothing in `diff/` looks at XML. The module sits above `repository/` and `graph/`; it consumes
 `SemanticModel` and `SemanticGraph` and never re-parses documents.
@@ -36,16 +45,15 @@ Nothing in `diff/` looks at XML. The module sits above `repository/` and `graph/
 
 ### 2.1 Indexing
 
-`ModelIndex.of(model)` builds a dictionary keyed by `(namespaceUri, identifier)`. Note that
-the repository keys nodes by full `ExpandedNodeId` (which also carries `ServerUri`); the diff
-deliberately drops `ServerUri` from identity, so the same node written with or without a
-server URI compares as identical.
+`ModelIndex.of(model)` builds a dictionary keyed by `(namespaceUri, identifier, serverUri)` —
+the same triple `ExpandedNodeId` compares on, so a model that contains both `srv=1;ns=1;i=5` and
+`srv=2;ns=1;i=5` keeps both nodes instead of letting the last one win.
 
 ### 2.2 Set algebra and renumbering pairing
 
 Three sets are computed: `gone` (old minus new), `fresh` (new minus old), `shared`
 (intersection). Then `_pair_renumbering()` groups `gone` and `fresh` by the *move key*
-`(namespace, BrowseName, NodeClass)` and pairs members of matching groups positionally
+`(namespace, serverUri, BrowseName, NodeClass)` and pairs members of matching groups positionally
 (`zip`, sorted by identifier). A paired node becomes a `RenumberedNode` carrying both
 identifiers plus its own content changes; unpaired members stay as plain removals/additions.
 
@@ -60,34 +68,45 @@ labels are mapped back to the old identifier so the report still names what the 
 
 For every shared (or paired renumbered) node the engine compares, in order:
 
-| Area | Compared | Breaking when |
+| Area | Compared | Severity when changed |
 | --- | --- | --- |
-| node | `NodeClass` | always |
-| node | `BrowseName` (namespace-qualified) | always |
-| node | `DisplayName`, `Description`, `Documentation` | never |
-| node | `SymbolicName`, `InverseName` | always |
-| node | `Categories` | never |
-| node | residual semantic XML attributes (`_semantic_attributes`, i.e. everything except the document-local identity spellings in `DOCUMENT_LOCAL_ATTRIBUTES`) | never |
-| node | `IsAbstract` | only when it becomes `true` |
-| node | Modelling rule (`Mandatory`/`Optional`/`MandatoryPlaceholder`/`OptionalPlaceholder`) | only when Optional → Mandatory |
-| node | Variable/VariableType `DataType`, `ValueRank`, `ArrayDimensions` | always |
-| node | serialized `<Value>` (whitespace-normalized) | never |
-| definition | Structure fields, Enum values, Union alternatives, OptionSet values | see §2.4 |
-| reference | added/removed `<Reference>` keyed by `(type name, target identity, direction)` | by category, see `_reference_category` below |
+| node | `NodeClass` | breaking (`BP-NodeClass-Immutable`, §3.2.17) |
+| node | `BrowseName` (namespace-qualified) | breaking (`BP-BrowseName-Immutable`, §3.2.17) |
+| node | `DisplayName`, `Description`, `Documentation` | information — text may change, its meaning may not (§3.2.17) |
+| node | `SymbolicName` | advisory (`BP-SymbolicName-Identity`, §2.1.2): generated code keeps the old symbol |
+| node | `InverseName` | advisory (`BP-InverseName-Meaning`, §3.2.17) |
+| node | `Categories` | information (`BP-Categories-Metadata`, §3.2.17) |
+| node | residual semantic XML attributes (`_semantic_attributes`, i.e. everything except the document-local identity spellings in `DOCUMENT_LOCAL_ATTRIBUTES`) | information (`BP-Attributes-ServerSpecific`, §3.2.17) |
+| node | `Symmetric` of a ReferenceType | breaking (`BP-ReferenceType-Symmetric-Immutable`, §3.2.14) — judged on its own, never as an attribute edit |
+| node | `IsAbstract` | breaking only when it becomes `true` (`BP-IsAbstract-Narrowing`); information when a type becomes concrete |
+| node | Modelling rule (`Mandatory`/`Optional`/`MandatoryPlaceholder`/`OptionalPlaceholder`) | breaking only when Optional → Mandatory (`BP-ModellingRule-Tightening`, §3.2.1); information the other way |
+| node | Variable/VariableType `DataType`, `ValueRank`, `ArrayDimensions` | breaking (§3.2.12) |
+| node | serialized `<Value>` (whitespace-normalized) | information (`BP-Value-InstanceData`, §3.2.17): instance data is not the contract |
+| node | `RolePermissions` | information (`BP-RolePermissions-Changed`): which role may access the node changed, the node itself stays (§3.2.17) |
+| node | `<Extensions>` content, normalized per extension so XML formatting is not payload | advisory (`BP-Extensions-Changed`): the payload travels with the node, so consumers reading it must be told (§3.2.17) |
+| node | identifiers a serialized `<Value>` points at (`value_dependencies`, resolved while parsing) | advisory (`BP-ValueDependency-Changed`): the value now means another node (§3.2.17, §3.2.12) |
+| definition | Structure fields, Enum values, Union alternatives, OptionSet values | see the list below |
+| reference | added/removed `<Reference>` keyed by `(reference-type identity, target identity, direction)`, counted by multiplicity | by category, see `_reference_category` below |
 
 Definition diffs (`_definition_changes`):
 
-* **Structure**: fields keyed by name — added field, removed field (an `IsOptional` one too)
-  and retyped field are all breaking (§3.2.16, §3.2.5); `IsOptional` → `false` tightens the
-  contract and is breaking; field metadata (`SymbolicName`, `ValueRank`, `ArrayDimensions`,
-  `MaxStringLength`, `AllowSubTypes`) is breaking except where a `MaxStringLength` limit only
-  grows (§3.2.5); member **order** of the common fields changed is breaking — it changes the
-  encoding.
-* **Union**: alternatives keyed by name — added, removed or retyped are breaking; alternative
-  order changed is breaking.
-* **Enum / OptionSet**: values keyed by name — added value, removed value and changed value
-  number are all breaking (§3.2.16: a consumer holding the old set cannot decode the new one).
-* Definition kind changed (e.g. Structure → Enum) or definition dropped: breaking.
+* **Structure**: fields keyed by name — an added field, a removed field (an `IsOptional` one
+  too) and a retyped field are all breaking (§3.2.5, §3.2.16); a renamed field is breaking
+  (`BP-Field-Renamed`), and a pairing that is only a guess is advisory
+  (`BP-Field-Rename-Guess`, §2.2); an `IsOptional` that changed is breaking (§3.2.5: the
+  encoded field list changes); field metadata (`SymbolicName`, `ValueRank`, `ArrayDimensions`)
+  is breaking, while `AllowSubTypes` and `MaxStringLength` are judged by direction — turning
+  `AllowSubTypes` off or shrinking a limit rejects values a consumer already sent (§3.2.5), the
+  other direction only widens and is information; the **order** of the common fields is
+  advisory (`BP-FieldOrder-Encoding`, §2.2): field names are the contract, a positional XML
+  encoder reads by position; two members carrying one name are advisory (`BP-Duplicate-Member`).
+  Text on a member (`DisplayName`, `Description`) is information (`BP-Member-Text`, §3.2.17).
+* **Union**: alternatives keyed by name — added, removed or retyped are breaking (§3.2.6);
+  re-ordered alternatives are advisory (`BP-AlternativeOrder-Encoding`, §3.2.6).
+* **Enum / OptionSet**: values keyed by name — an added value, a removed value and a changed
+  number are all breaking (§3.2.4, §3.2.7, §3.2.8): a consumer holding the old set cannot
+  decode the new one.
+* Definition kind changed (e.g. Structure → Enum) or definition dropped: breaking (§3.2.17).
 
 Reference severity (`_reference_category`, judged by `verdict`):
 
@@ -123,6 +142,19 @@ its metadata changed, so a release that only bumped a version still shows up. Th
 counts the nodes that carry an `IsDeprecated` reference (§14.2): a release that deprecates
 inside a NamespaceUri it keeps is advised, because that URI can never drop those nodes again
 (§14.3).
+
+Version claims are compared on their **numeric core**, not on their spelling. `Version` is a
+display string — Annex F.2 of OPC 10000-6 states it is "not intended for programmatic
+comparisons" — while `ModelVersion` is the `SemanticVersionString` consumers do compare (§12.41),
+so a companion spec spells one release twice: `Version="1.05.03"` beside `ModelVersion="1.5.3"`.
+A re-spelled release is therefore not a release move. Only two claims that describe *different*
+releases are reported, as `BP-Namespace-VersionDrift` (advisory, §11.1): it reads as a note to
+review by hand and never gates a release with `--fail-on-breaking`. A `ModelVersion` that is not
+a valid `SemanticVersionString` — leading zeros, missing segments — is a separate advisory,
+`BP-Namespace-ModelVersionSyntax` (§12.41), because it is the field the comparison depends on.
+A `RequiredModel` claim is read through its `ModelVersion`, falling back to the display `Version`
+only where a document states no SemVer (Annex F.2 states a minimum version as SemVer). Values
+nobody can parse stay compared as the strings they are.
 
 Namespace findings stay on the namespace entry, not in the flat breaking list (§2.5): they
 describe a release, not a node, and there is no node id to attribute them to.
@@ -175,19 +207,31 @@ CI. A run that used waiver flags inserts a *Waivers* section right after the sum
 `--accept-breaking` acknowledgement, how many findings were waived, and the waivers that were
 ignored because they named a breaking rule.
 
+HTML additionally folds the node sections (`Added`, `Removed`, `Modified`, `Renumbered`) into one
+collapsed `<details>` block per NamespaceUri, carrying the node count, and only when more than one
+namespace is involved. Console and Markdown stay flat. A report is not "empty" just because no
+node changed: advisory findings — a merge conflict, for instance — still produce a report, while
+`--no-advisory` hides them, including the advisory rule a namespace entry cites; that entry's
+totals and metadata deltas stay, because they are facts rather than findings.
+
 ## 3. CLI surface
 
 ```
 nodeset-linker diff old.xml new.xml [--json | --markdown | --html] [--impact]
                     [--impact-limit N] [--context FILE ...]
                     [--breaking] [--advisory/--no-advisory]
+                    [--namespace URI_OR_ALIAS ...] [--exclude-namespace URI_OR_ALIAS ...]
+                    [--node-class CLASS ...]
                     [--fail-on-breaking] [--fail-on-advisory] [--waive RULE_ID ...]
                     [--waiver-file FILE] [--accept-breaking]
                     [--release-verdict] [--baseline DIR|manifest.json] [-o FILE]
 ```
 
-* exactly **two files**; each is loaded as a single-node `SemanticModel` via
-  `load_nodesets([path])`;
+* exactly **two inputs**; each is a NodeSet file, or a split-export **bundle** — a directory
+  holding `manifest.json`, or that manifest itself — whose namespace files are merged into one
+  `SemanticModel` (`_bundle_files` + `load_nodesets(..., tolerate_duplicates=True)`);
+* an inconsistent re-declaration inside one side does not abort the run: the first declaration is
+  kept and the diff reports an advisory `BP-Merge-Conflict` naming both documents (§3.2.17);
 * impact is computed whenever `--impact`, `--breaking`, `--fail-on-breaking` or `--context` is
   given;
 * `--impact-limit N` (default 50) caps how many impacted nodes an entry *lists*; the reported
@@ -195,9 +239,15 @@ nodeset-linker diff old.xml new.xml [--json | --markdown | --html] [--impact]
 * `--context FILE` is opt-in and repeatable: each consumer model is loaded and its dependency
   edges join the impact walk, so externalized specs and sibling companion specs count instead of
   being silently undercounted. Without it, behaviour is exactly as before.
+* `--namespace` / `--exclude-namespace` (repeatable, URI or alias) and `--node-class` (repeatable)
+  scope *both* models, so a filtered namespace or class is never reported — and the release
+  metadata of a filtered namespace is filtered with it (§11.1). An unknown node class is a usage
+  error that exits 1, and so does a `--namespace` neither side declares — filtering both models
+  to nothing would print "No semantic differences found." and exit 0; an `--exclude-namespace`
+  that matches nothing drops nothing and is noted on stderr;
 * `--fail-on-breaking` exits 1 on a BREAKING finding only; `--fail-on-advisory` is a separate,
-  opt-in gate; advisory and info findings never gate by default; missing files and parse errors
-  exit 1;
+  opt-in gate; advisory and info findings never gate by default; missing files, a directory
+  without a manifest, a manifest naming files that are not there and parse errors exit 1;
 * `--waive RULE_ID` (repeatable) and `--waiver-file FILE` mark INFO/ADVISORY findings as waived —
   the file holds `{rule, namespace?, node?, reason}` entries, a JSON array or `{"waivers": [...]}`,
   and a bad file is a usage error that exits 1. A waiver naming a breaking rule is reported as
@@ -209,7 +259,7 @@ nodeset-linker diff old.xml new.xml [--json | --markdown | --html] [--impact]
   listing the published URIs — without it the verdict reports "baseline unknown" instead of
   guessing, and gating stays `--fail-on-breaking`'s job;
 * format flags are exclusive in practice (`--json` wins over `--markdown`/`--html`);
-* `-o` writes the report; parent directories are **not** created.
+* `-o` writes the report, creating the parent directory when it does not exist yet.
 
 The CI gate documented in README/usage guide:
 
@@ -222,6 +272,7 @@ The CI gate documented in README/usage guide:
 
 ```json
 {
+  "schema_version": "1.0",
   "old": "…", "new": "…",
   "summary": {"old_nodes": …, "new_nodes": …, "added_nodes": …, "removed_nodes": …,
               "modified_nodes": …, "renumbered_nodes": …, "breaking_changes": …,
@@ -256,8 +307,10 @@ verdict, the namespace metadata delta and the breaking entry — and `waived_cha
 the severity itself never changes, so a waived breaking finding still reads `severity: "breaking"`.
 The top-level `waivers` block appears **only** when `--waive`, `--waiver-file` or
 `--accept-breaking` was used, and `ignored` lists waivers that named a breaking rule, which cannot
-be waived. There is **no schema version field**; `impacted_nodes` and `impacted_labels` only appear
-after impact was applied.
+be waived. `schema_version` states which shape the payload is: keys are **added** only, so a
+consumer that does not know a key ignores it, and a CI job can pin the version it reads. The
+split-export `manifest.json` carries its own `schema_version` for the same reason.
+`impacted_nodes` and `impacted_labels` only appear after impact was applied.
 `impacted_nodes` lists XML identifiers (`nsu=http://opcfoundation.org/UA/Machinery/;i=2200`) and
 `impacted_labels` the human names; both are truncated to `impact_limit`, while `impact_count` is
 always the exact number of distinct impacted identifiers.
@@ -274,49 +327,63 @@ the `clause` it comes from, so the mapping lives in the report rather than in a 
 
 ### 5.1 Identity-level gaps
 
-1. **`ServerUri` is dropped from diff identity.** The architecture states model identity as
-   `(namespaceUri, identifier, serverUri)`, but the diff keys by `(namespaceUri, identifier)`
-   only. A node that moves between two servers (its identifier stays, `ServerUri` changes) is
-   reported as *no change* — even though it becomes a different semantic node.
-2. **Server-qualified nodes can collide inside one model.** `load_nodesets` keys nodes by full
-   `ExpandedNodeId`; the diff's identity index (`ModelIndex.nodes`) collapses different
-   `ServerUri`s onto the same key. The *last* node wins silently; a model containing
-   `srv=1;ns=1;i=5` and `srv=2;ns=1;i=5` cannot be diffed faithfully.
-3. **The renumbering heuristic pairs blindly.** Grouping by `(namespace, BrowseName, NodeClass)`
-   and `zip`-pairing sorted identifiers means:
-   * a node *renamed* **and** renumbered is reported as unrelated removal + addition (the move
-     key includes BrowseName);
-   * a genuine removal plus an unrelated new node that happens to share namespace, BrowseName
-     and class (typical when a companion spec replaces a type while adding a sibling) is
-     mis-paired as a "renumbering";
-   * group-size mismatches pair by position with no confidence signal.
-   Nothing marks the pairing as "best effort".
-4. **Renumbering is never breaking.** `_pair_renumbering` only inherits content changes; the
-   identifier move itself carries no `breaking` flag. Yet every external consumer, generated
-   client, or companion-spec cross-reference pointing at the *old* NodeId breaks. In practice
-   a release that renumbers NodeIds passes `--fail-on-breaking` — arguably the most important
-   gate for a spec release.
-5. **Reference additions are never breaking.** Adding a `HasTypeDefinition`, a `GeneratesEvent`
-   or a *mandatory* component tightens the contract of instances built against the old model,
-   but `_reference_changes` marks every addition `breaking=False` (mandatory-ness is only
-   checked on removal through the target's modelling rule, not on addition).
-6. **Reference identity uses the type *name*.** `_reference_key` keys by `type_name` (falling
-   back to the identifier only when the name is empty). If two documents resolve the same alias
-   to different reference-type identifiers (or a custom reference is renamed to a standard
-   alias), the change is invisible.
-7. **Reference multiplicity is invisible.** Keys go into a `set`, so a duplicated reference in
-   the old model that disappears in the new one reports nothing.
+1. **`ServerUri` is dropped from diff identity** *(closed)*. `identity()` keys by
+   `(namespaceUri, identifier, serverUri)`, so a node that gains, loses or changes a
+   `ServerUri` reads as a removal plus an addition, and the renumbering pairing no longer pairs
+   across servers.
+2. **Server-qualified nodes can collide inside one model** *(closed)*. `ModelIndex.nodes` is
+   keyed by the full triple, so a model containing `srv=1;ns=1;i=5` and `srv=2;ns=1;i=5` keeps
+   both nodes instead of letting the last one win.
+3. **The renumbering heuristic pairs blindly** *(partly closed)*. Grouping by
+   `(namespace, serverUri, BrowseName, NodeClass)` and `zip`-pairing sorted identifiers still
+   mis-pairs a genuine removal plus an unrelated new node that happens to share namespace,
+   BrowseName and class (typical when a companion spec replaces a type while adding a sibling).
+   What is closed: a node *renamed* **and** renumbered is no longer an unrelated removal plus
+   addition — `_pair_renames` pairs the pair that differs only in BrowseName, and only when
+   exactly one candidate matches, so an ambiguous group stays a removal plus an addition rather
+   than a guess. Every pairing states how sure it is: `confidence: "exact"` only when one
+   removed and one added node share the key, otherwise `"heuristic"` — the report says "paired
+   by guess" and JSON carries `confidence`, so a reader can check a guess by hand.
+4. **Renumbering is never breaking** *(closed)*. `_pair_renumbering` states the move itself as an
+   entry verdict (`identifier_move` → `BP-NodeId-Immutable`, §3.2.17), so a release that
+   renumbers NodeIds fails `--fail-on-breaking` with no extra flag — the change every external
+   consumer, generated client and companion-spec cross-reference pointing at the *old* NodeId
+   breaks on. Content changes ride along on the same entry, and references, hierarchy and
+   datatype targets resolve through the paired move instead of reading as detached children.
+5. **Reference additions are never breaking** *(closed)*. `_reference_changes` judges an addition
+   by its category, exactly like a removal: attaching an explicitly `Mandatory` component is
+   breaking (`BP-Reference-MandatoryChild-Added`, §3.2.1, §11.2.1), while an addition that only
+   widens the model is information (§3.2.2) — a contract reference (`HasTypeDefinition`,
+   `HasEncoding`, `GeneratesEvent`) or a navigation one (`Organizes`, `HasDescription`).
+6. **Reference identity uses the type *name*** *(closed)*. `_reference_key` keys by the
+   identifier of the reference type (`_identity_text(ref.reference_type)`), falling back to the
+   name only when the document gives no identifier. `HasEncoding` and `i=38` are therefore one
+   reference, and a renamed reference type declaration is reported on that declaration
+   (`BP-BrowseName-Immutable`) instead of as a removal plus an addition on every node that
+   points at it. The name is still what the report shows; when a document spells only an
+   identifier, the declaration supplies the name.
+7. **Reference multiplicity is invisible** *(closed)*. Keys go into a `Counter`, so a reference
+   declared twice in the old model and once in the new one is reported, with the count in the
+   subject (`HasComponent -> TaggedMember (2 -> 1)`).
 
 ### 5.2 Content-level gaps
 
-8. **`<Extensions>` and RolePermissions are not compared.** The parser keeps
-   `extensions_xml` and `role_permissions_xml` on the node, but `_node_changes` never reads
-   them. ExtensionObject values of nodes, role-permission declarations: silent.
-9. **`<Value>` is compared as whitespace-normalized text only.** A value that changes a
-   contained `Identifier` (`TypeId`/`DataType` inside an ExtensionObject) is caught only as raw
-   text noise, and `value_dependencies` (the *resolved* identifiers the parser extracted) are
-   not diffed semantically. Conversely a numeric enum default or encoding-relevant value edit
-   is reported as *non-breaking*, although clients may depend on it.
+8. **`<Extensions>` and RolePermissions are not compared** *(closed)*. `_node_changes` reads
+   both: `RolePermissions` as information (`BP-RolePermissions-Changed` — the access model
+   changed, the node itself stays) and `<Extensions>` content as advisory
+   (`BP-Extensions-Changed` — the payload travels with the node, so consumers reading it must be
+   told, §3.2.17). Extension content is normalized per extension, so indentation between tags is
+   spelling, not payload.
+9. **`<Value>` is compared as whitespace-normalized text only** *(partly closed)*. What is
+   closed: the identifiers a value points at — `TypeId` / `DataType` with an `<Identifier>`
+   inside an ExtensionObject — are extracted while parsing, an unresolvable spelling is a
+   `ParseError` instead of a silently dropped dependency, and they are diffed semantically as
+   `ValueDependencies` (`BP-ValueDependency-Changed`, advisory, §3.2.17, §3.2.12): the value now
+   means another node. Encoding-relevant edits are breaking where they are contract — an enum or
+   OptionSet number, a Structure field type, a Union alternative (§3.2.4 - §3.2.8). What stays:
+   the raw text of a `<Value>` is compared whitespace-normalized and reads as instance data
+   (`BP-Value-InstanceData`, §3.2.17), which is the paper's stance for instance values; nothing
+   yet checks a value against the `DataType` of its node (gap 11).
 10. **Method signatures had no dedicated diff** *(closed)*. `_method_changes` states one
     `BP-MethodSignature-Immutable` break per method when argument count, order, `DataType`,
     `ValueRank`, `ArrayDimensions`, the spelled argument list or `MethodDeclarationId` move
@@ -335,7 +402,13 @@ the `clause` it comes from, so the mapping lives in the report rather than in a 
     `ModelVersion` and alias (OPC 11030 §11.1, §11.2). A metadata-only release move — a version
     bump with no node change — now appears as an *information* entry, so a release note can name
     the fact without gating the release. A changed `NamespaceUri` is breaking (§11.3): consumers
-    resolve the model under the old URI and find nothing.
+    resolve the model under the old URI and find nothing. Version claims are compared on their
+    numeric core (§2.4): a padded display `Version` beside a SemVer `ModelVersion` is one release,
+    not a contradiction (OPC 10000-6 Annex F.2, §12.41), so `BP-Namespace-VersionDrift` only fires
+    on two claims that name different releases, and an invalid `ModelVersion` is reported as
+    `BP-Namespace-ModelVersionSyntax`. What stays open: a namespace that states no `ModelVersion`
+    at all is not judged, although Annex F.2 requires one for `UANodeSets` conforming to spec
+    1.05.03 or later.
 13. **Required-model dependencies and aliases are visible.** The `RequiredModel` set and the
     version each dependency claims are compared per namespace, and an alias change is reported
     as document-local information (namespaces are addressed by URI, not by alias). A namespace
@@ -347,11 +420,15 @@ the `clause` it comes from, so the mapping lives in the report rather than in a 
     declarations when two loaded documents disagree on namespace metadata, or when a namespace
     carries `Model` entries in more than one document — the merge keeps one spelling, so the
     published file can state a version no document claimed on its own (§11.2).
-15. **Duplicate detection is only partial.** `SemanticModel.add` tolerates "same semantics"
-    re-declarations based on `node_class`, `browse_name`, `is_abstract` and `HasSubtype`
-    targets only. Two companion specs that re-declare a shared UA base node with *different*
-    descriptions, datatype fields or references merge silently; differing in class/name/subtype
-    raises `DuplicateNodeError` and **kills the whole diff**, with no partial report.
+15. **Duplicate detection is only partial** *(partly closed)*. `SemanticModel.add` tolerates
+    "same semantics" re-declarations based on `node_class`, `browse_name`, `is_abstract` and
+    `HasSubtype` targets only, so two companion specs that re-declare a shared UA base node with
+    different descriptions or datatype fields still merge into one declaration. What is closed: a
+    diff no longer dies on the conflict. `load_nodesets(..., tolerate_duplicates=True)` — the form
+    the diff uses — keeps the first declaration, records a `MergeConflict` naming both documents,
+    and the report states it as `BP-Merge-Conflict` (§3.2.17). A reduction keeps raising
+    `DuplicateNodeError`, because exporting a model that dropped a declaration publishes a contract
+    nobody declared.
 
 ### 5.4 Impact-level gaps
 
@@ -384,32 +461,45 @@ the `clause` it comes from, so the mapping lives in the report rather than in a 
 21. **The breaking verdict was computed but never justified per rule** *(closed)*. Every finding
     reports `rule_id`, `rationale` and `clause`, so a CI dashboard groups by rule and a waiver
     references a stable identifier. `BreakingChange.reason` is still the rendered text beside it.
-22. **`--breaking` hides additions completely** (added nodes are never breaking), so a report
-    with `--breaking` silently omits contract-tightening additions (see gap 5).
+22. **`--breaking` hides additions completely** *(closed)*. Additions can carry breaking verdicts
+    now, and they reach the Breaking changes section, which `--breaking` keeps: a new
+    ReferenceType placed inside the existing hierarchy (§3.2.15, `BP-RT-NewInHierarchy`), a
+    Mandatory component attached to an existing parent (§3.2.1, §11.2.1), a supertype that does
+    not carry what its subtypes already promised (§3.2.10), an Interface that brings new
+    mandatory declarations (§3.2.3). What `--breaking` still leaves out is the *Added nodes*
+    section itself, on purpose: an addition nothing can break on is exactly what the flag means
+    by "not interesting", and the tightening is stated on the node it tightens rather than on the
+    node that appeared.
 
 ### 5.6 Scaling with a growing number of companion specs
 
-23. **Diff is two files only.** Real companion-spec work involves multi-file inputs: split
-    export produces one XML per namespace plus `manifest.json`; a spec release is typically a
-    *bundle*. There is no bundle/manifest-aware diff, no directory-vs-directory diff, no
-    multi-file-vs-multi-file diff — users must merge the bundle manually first.
-24. **Manual merging of two release trees can fail wholesale.** Loading the old tree may merge
-    fine (identical UA re-declarations tolerated), but any inconsistent re-declaration raises
-    `DuplicateNodeError` and aborts before a single change is reported. As the number of loaded
-    specs grows, the chance of one conflicting declaration growing, the whole diff becomes
-    unusable — there is no per-file or per-namespace fallback.
-25. **No per-spec/per-namespace scoping.** With dozens of namespaces, `diff` reports everything
-    at once. There is no filter (`--namespace`, browse-name globs), and namespace totals do not
-    reveal *what* changed inside a namespace unless the nodes changed too.
+23. **Diff is two files only** *(closed)*. Each side is a NodeSet file **or a bundle**: a
+    directory holding `manifest.json`, or that manifest itself. Its namespace files are loaded in
+    manifest order into one model, so directory-vs-directory, bundle-vs-file and
+    bundle-vs-bundle all compare the models they stand for; a manifest naming files that are not
+    there is an explicit failure.
+24. **Manual merging of two release trees can fail wholesale** *(closed)*. A diff loads its sides
+    with `tolerate_duplicates=True`: an inconsistent re-declaration keeps the first declaration and
+    becomes an advisory `BP-Merge-Conflict` finding naming both documents (§3.2.17), so loading
+    more specs cannot make the comparison unusable. Reduction still aborts on a conflict by design.
+25. **No per-spec/per-namespace scoping** *(partly closed)*. `--namespace`, `--exclude-namespace`
+    and `--node-class` filter both models — a namespace or class left out is not reported, and a
+    filtered namespace's release metadata is filtered with it (§11.1). A namespace filter also
+    matches the declared `Alias` when it differs from the URI tail, and a `--namespace` neither
+    side declares exits 1 instead of reporting nothing. Browse-name globs,
+    `--ua-baseline off` and a drill-down of what changed inside a namespace whose totals moved are
+    still open.
 26. **Performance scales poorly.** Parsing both models is O(total nodes); impact is
     O(changed nodes × graph). For a registry-scale comparison (UA.xml ~5k nodes plus many
     companion specs, thousands of changed nodes between releases), the repeated graph builds
     and per-node BFS dominate runtime and memory; there is no incremental/cached mode.
-27. **Report output does not scale.** Impact lists truncate at `--impact-limit` names per entry
-    (default 50) and say how many more there are; the flat
-    breaking list grows linearly; there is no grouping by namespace, no paging, no summary
-    drill-down. HTML has no anchors/collapsing; Markdown release notes become unreadable for
-    large diffs.
+27. **Report output does not scale** *(partly closed)*. Impact lists truncate at
+    `--impact-limit` names per entry (default 50) and say how many more there are; the flat
+    breaking list grows linearly; there is no paging, no per-node drill-down and no CSV export.
+    What is closed: the HTML report groups each node section into one collapsible
+    `<details>` block per namespace (flat when only one namespace is involved), so a release
+    spanning dozens of namespaces stays readable. Console and Markdown stay flat on purpose —
+    a terminal and a PR comment have no fold to open.
 
 ### 5.7 Release-workflow gaps
 
@@ -418,11 +508,18 @@ the `clause` it comes from, so the mapping lives in the report rather than in a 
     itself (§11.1), and answers whether each NamespaceUri may be reused (§3.3, §11.3). It does
     *not* store a previous model or fingerprint: every comparison still re-parses both full
     models, and there is no multi-release aggregation (v1.3 → v1.4 → v1.5) or history yet.
-29. **Diff does not validate.** Neither side is semantically validated before comparison; a
-    malformed new model can be diffed and even reported "identical" where parsing silently
-    degraded (e.g. unresolvable identifiers stay unresolved and compare as unresolved).
-30. **JSON has no versioning.** The CI contract shape is unversioned; adding fields later
-    (severity, rule ids, NodeIds in impact) breaks consumers with no negotiation.
+29. **Diff does not validate** *(partly closed)*. Neither side is semantically validated before
+    comparison, so a malformed new model can still be diffed and read as identical. What is
+    closed: parsing is strict about identifiers a document spells out — a `DataType`,
+    `ParentNodeId`, `MethodDeclarationId` or an identifier inside a `<Value>` that neither the
+    `Aliases` table nor a standard OPC UA name resolves is a `ParseError`, not an invented
+    default, so a degraded model cannot silently compare equal. What stays open: a `<Reference>`
+    target that names nothing remains an unresolved vertex, and no validator runs before the
+    comparison (`--validate`, §7.4 item 19).
+30. **JSON has no versioning** *(closed)*. The payload carries `"schema_version": "1.0"`, and
+    keys are additive only — a consumer ignores keys it does not know and can pin the version.
+    The split-export manifest got its own `schema_version` for the same reason. A published JSON
+    schema for CI to validate against is still open.
 31. **Label resolution is offline-limited.** Standard namespace-0 datatypes fall back to the
     built-in table (`STANDARD_DATA_TYPE_NAMES`); everything else shows bare identifiers when the
     provider model is externalized. For companion specs referencing many external models,
@@ -434,9 +531,12 @@ the `clause` it comes from, so the mapping lives in the report rather than in a 
     `i=10`); ordering is stable but not intuitive for NodeId ranges.
 33. `--json --impact` is supported, but `--json` alone never carries impact; there is no flag
     that says "JSON with impact" explicitly.
-34. `-o` does not create parent directories; a wrong path fails late.
-35. `total_impact` merges impact across *all* entries via label deduplication, so a namespace
-    with colliding names lowers the apparent total.
+34. `-o` did not create parent directories *(closed)*: a report written to `dist/diff.html`
+    creates the directory instead of failing late.
+35. `total_impact` merged impact across *all* entries via label deduplication *(closed)*. Impact
+    is held as `impact_ids` (`ExpandedNodeId`s) and `total_impact` deduplicates identifiers, so one
+    BrowseName used in two namespaces is two impacted nodes again; labels stay report-only (§5.4
+    gap 16), and every entry's `impact_count` stays exact regardless of what a report lists.
 
 ---
 
@@ -445,19 +545,24 @@ the `clause` it comes from, so the mapping lives in the report rather than in a 
 A concrete projection of the gaps above onto the realistic workflow (many specs, registry-wide
 release comparison):
 
-* **Noise grows linearly**: UA-namespace nodes are ~5k; a registry-wide release diff will list
-  thousands of entries in one flat report unless scoping exists.
-* **Impact becomes both over- and under-counting**: over-counting through deep subtype forests
-  inside the loaded tree, under-counting across unloaded sibling specs — the numbers lose
-  meaning at scale.
+* **Noise grows with the number of namespaces** *(partly addressed)*: UA-namespace nodes are
+  ~5k, so a registry-wide release diff still lists thousands of entries. `--namespace`,
+  `--exclude-namespace` and `--node-class` cut the report down, and the HTML report folds each
+  node section into one collapsible block per namespace — console and Markdown stay flat.
+* **Impact stays exact but stays expensive** *(partly closed)*: impact is counted by identifier,
+  `--context` loads the provider models of externalized specs so sibling consumers count instead of
+  being undercounted, and reverse inheritance edges stop after 3 hops instead of walking the whole
+  subtype forest. What grows with the input is still the walk itself — two graph builds plus a BFS
+  per changed node (gaps 19, 26).
 * **Renumbered releases now fail the CI gate** (gap 4 closed) — the move is reported once as
   `BP-NodeId-Immutable`, and references, hierarchy and datatype resolve through it, so the
   riskiest release change reads as one finding rather than as detached-child noise.
 * **Version metadata moves now reach the report** (gap 12 closed), and `--release-verdict` says
   whether a NamespaceUri may be reused (gap 28 partly closed) — but only when a baseline states
   what was published; without one the report names the fact rather than judging the release.
-* **One inconsistent declaration aborts everything** (gap 24) — the more specs loaded, the
-  higher the chance the diff cannot run at all.
+* **One inconsistent declaration no longer aborts everything** (gap 24 closed) — the diff keeps
+  the first declaration and reports the lost one as `BP-Merge-Conflict`, so loading more specs
+  cannot make the comparison fail.
 * **Runtime grows quadratically-ish** (gap 26) — impact per changed node over a growing graph.
 
 ## 7. Suggested improvements
@@ -466,20 +571,29 @@ release comparison):
 
 1. **Make identifier moves breaking by default** *(implemented)*: a paired move is breaking
    through `BP-NodeId-Immutable`, so a renumbered release fails the gate with no extra flag and
-   no opt-in. Rename-with-same-id is reported as a BrowseName change; a rename *plus* renumber
-   still reads as unrelated removal and addition, because pairing requires the identifier to be
-   the only difference.
-2. **Classify contract-tightening additions.** Adding a mandatory component, a
-   `HasTypeDefinition`, `HasInterface` or `GeneratesEvent` should be breaking; keep purely
-   optional/navigation additions non-breaking.
-3. **Key references by identifier, not alias.** Use `reference_type` identifier as primary key
-   (name only as label), so alias-resolution differences are visible.
-4. **Bring `ServerUri` into identity** (or add an explicit `--ignore-server-uri` mode) and
-   detect server-qualified re-parenting as a change. Report identity collisions inside one
-   model instead of last-one-wins.
-5. **Diff `<Extensions>`, RolePermissions and `value_dependencies` semantically**, and add a
-   value-vs-datatype consistency finding (demo3's mismatch would surface as
-   `VALUE_TYPE_MISMATCH`).
+   no opt-in. A rename on the same identifier is a BrowseName change (§3.2.17); a rename *plus*
+   a renumber is paired by `_pair_renames` and reported as one renamed node when exactly one
+   candidate matches, and left as a removal plus an addition when the pairing would be a guess.
+2. **Classify contract-tightening additions** *(implemented)*: attaching an explicitly Mandatory
+   component is breaking (§3.2.1, §11.2.1), a new ReferenceType inside the existing hierarchy is
+   breaking (§3.2.15), a supertype that promises less than its subtypes already did is breaking
+   (§3.2.10), and an Interface that brings new mandatory declarations is breaking (§3.2.3).
+   Additions that only widen stay information (§3.2.2) — `HasTypeDefinition`, `HasEncoding`,
+   `GeneratesEvent`, `Organizes` — because nothing that existed disappeared.
+3. **Key references by identifier, not alias** *(implemented)*: `_reference_key` and
+   `_resolved_key` use the identifier of the reference type, with the name only as a label and
+   only as a fallback when a document names a type without giving its identifier.
+4. **Bring `ServerUri` into identity** *(implemented)*: identity and the renumbering key are
+   `(namespaceUri, identifier, serverUri)`, so re-qualifying a node against another server reads
+   as a removal plus an addition; `ModelIndex.nodes` is keyed by the full triple, so two
+   server-qualified nodes of one identifier no longer overwrite each other. An
+   `--ignore-server-uri` mode is unnecessary — the server belongs to the identity.
+5. **Diff `<Extensions>`, RolePermissions and `value_dependencies` semantically** *(implemented)*:
+   extensions are compared content-normalized (advisory), role permissions as information, and
+   the identifiers a serialized value points at as resolved dependencies (advisory, §3.2.17).
+   Still open: a value-vs-datatype consistency finding — a `DataType` move that leaves a `<Value>`
+   carrying the old type (demo3's intentional mismatch) should surface as its own rule rather than
+   as two separate information changes.
 6. **Add a method-signature diff area** *(implemented)*: one change per method when argument
    count, order, datatype, rank, array dimensions or `MethodDeclarationId` change, attributed
    to the method node (§3.2.11).
@@ -489,9 +603,13 @@ release comparison):
 7. **Report version and dependency metadata changes** *(implemented)*: per namespace, `Version`,
    `PublicationDate`, `XmlSchemaUri`, `ModelVersion`, alias, and the set (and versions) of
    `RequiredModel` entries — old → new, one severity per attribute. This is what a companion-spec
-   release note needs.
+   release note needs. Version claims are compared on their numeric core (§2.4): a release that
+   only re-spells its `Version` is not a release move, and a `RequiredModel` minimum version is
+   read as the `ModelVersion` that Annex F.2 defines it to be.
 8. **Warn on conflicting namespace metadata across documents** *(implemented)*: the richer-value
-   merge stays, and the conflict is reported as an advisory finding in the diff.
+   merge stays, and the conflict is reported as an advisory finding in the diff — deduplicated per
+   release rather than per spelling, so documents that only spell `1.04.0` and `1.4.0` declare the
+   same claim (§11.2).
 9. **Compare model-level conformance metadata** *(implemented for ConformanceUnits and Profiles,
    §12.1/§12.2)*: the declarations are found by BrowseName in the companion namespace, never by
    hardcoded identifiers, so an added unit or profile is information, a removed one is an advisory
@@ -502,12 +620,19 @@ release comparison):
 
 ### 7.3 Scaling for many companion specs
 
-10. **Bundle-aware diff**: accept multi-file inputs (`--old-dir`, `--new-dir`, manifest.json
-    aware), directory-vs-directory, and per-file merging with **graceful degradation** — a
-    duplicate-conflict should become a reported `MERGE_CONFLICT` finding and the rest of the
-    diff should still run, not abort.
-11. **Scoping filters**: `--namespace <uri-or-glob>`, `--exclude-namespace`, browse-name globs,
-    `--node-class`, `--ua-baseline off` (drop namespace-0 noise in registry-wide diffs).
+10. **Bundle-aware diff** *(implemented)*: each side is a NodeSet file or a split-export bundle —
+    a directory with `manifest.json`, or that manifest itself — whose namespace files are merged
+    into one model in manifest order, so directory-vs-directory, bundle-vs-file and bundle-vs-bundle
+    all work. A duplicate-conflict inside a side became a reported `BP-Merge-Conflict` advisory
+    instead of aborting the run. A `--old-dir`/`--new-dir` spelling is unnecessary: a directory path
+    is the bundle.
+11. **Scoping filters** *(partly implemented)*: `--namespace <uri-or-alias>`,
+    `--exclude-namespace <uri-or-alias>` and `--node-class <class>` filter both models, repeatable.
+    An alias is the declared `Alias` or the URI tail, whichever the report shows; a `--namespace`
+    neither side declares exits 1 rather than printing an empty report, and an
+    `--exclude-namespace` that matches nothing only notes on stderr.
+    Still open: browse-name globs and `--ua-baseline off` (drop namespace-0 noise in registry-wide
+    diffs).
 12. **Impact by identifier + context** *(implemented)*: JSON impact emits `ExpandedNodeId`s
     (`impacted_nodes`) and keeps labels for humans (`impacted_labels`); `--context <paths…>` loads
     context models — the providers of externalized specs — so consumers in sibling specs are
@@ -518,9 +643,10 @@ release comparison):
     multi-source BFS; cache parsed models and graphs (e.g. content-hash keyed) for repeated
     release comparisons; optionally fingerprint namespaces and skip unchanged ones before
     node-level comparison.
-14. **Grouped, scalable reports**: group changes by namespace with counts, add HTML anchors +
-    collapsible sections, Markdown release-note mode (breaking first, non-breaking collapsed),
-    CSV export, and a `--summary-only` mode.
+14. **Grouped, scalable reports** *(partly implemented)*: the HTML report groups each node section
+    by namespace inside a collapsible `<details>` block carrying the node count, so a release
+    spanning many namespaces stays readable. Still open: HTML anchors, Markdown release-note mode
+    (breaking first, non-breaking collapsed), CSV export and a `--summary-only` mode.
 
 ### 7.4 Classification and CI usability
 
@@ -538,8 +664,9 @@ release comparison):
 17. **Exit-code semantics**: distinct codes for "no change" (0), "non-breaking change" (0 with
     `--fail-on-change` → 1), "breaking" (1), "could not compare" (2) — so pipelines can tell
     "identical" from "could not load".
-18. **JSON schema version field** (`"schema_version": 1`) plus a published schema so CI
-    consumers can pin it.
+18. **JSON schema version field** *(implemented)*: the payload states `"schema_version": "1.0"`
+    and keys are additive only, so CI can pin the version it reads. Publishing a JSON schema CI can
+    validate against remains open.
 19. **Optional pre-diff validation** (`--validate`): run the semantic validator on both models
     first; a malformed new model is a clear failure, not a degraded "identical" result.
 

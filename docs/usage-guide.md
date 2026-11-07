@@ -150,6 +150,7 @@ The manifest has this shape:
 
 ```json
 {
+  "schema_version": "1.0",
   "export_mode": "split",
   "namespaces": [
     {
@@ -165,6 +166,13 @@ The manifest has this shape:
   "external_models": ["http://opcfoundation.org/UA/"]
 }
 ```
+
+`schema_version` versions this shape: keys are added over time, never renamed or dropped, so a
+reader ignores keys it does not know. A namespace entry also carries the release metadata the
+namespace declared — `alias`, `version`, `publication_date`, `model_version`, `xml_schema_uri` —
+which is what `diff --release-verdict --baseline <bundle>` reads back to tell whether a URI was
+already published (§11.1, §11.3). The same bundle is a `diff` input: `diff old.xml out/split/`
+compares a release against the namespace-split export that replaced it.
 
 Dependencies are direct uses of other namespaces in retained references, reference types,
 typed attributes, datatype fields, tracked value identifiers, or qualified BrowseNames.
@@ -251,9 +259,17 @@ nodeset-linker diff out/reduced.xml tests\data\machinery.xml --impact
 nodeset-linker diff release-1.4.xml release-1.5.xml --json --fail-on-breaking
 ```
 
-Because identity is `(namespaceUri, identifier)`, reordering the file, re-exporting it, or letting
-the exporter reassign `NamespaceIndex` values reports `No semantic differences found.`; a node
-whose identifier changed alone appears under *Renumbered nodes*.
+Because identity is `(namespaceUri, identifier, serverUri)`, reordering the file, re-exporting it,
+or letting the exporter reassign `NamespaceIndex` values reports `No semantic differences found.`;
+a node whose identifier changed alone appears under *Renumbered nodes*, and a node that gains or
+loses a `ServerUri` — an identifier pointing into another server's address space — appears as a
+removal plus an addition, because it is a different node.
+
+Either side can be a **split-export bundle** instead of a single file: a directory holding
+`manifest.json`, or that manifest itself. Its namespace files are loaded as one model, so
+`diff release-1.4.xml out/split/` compares a vendor release against the namespace-split export
+that replaced it. A directory without a manifest, or a manifest naming files that are not there,
+fails with a message instead of guessing.
 
 Datatype changes show readable names with identifiers, for example
 `DataType: String (i=12) -> Double (i=11)`. Loaded BrowseNames (or DisplayNames) take
@@ -296,8 +312,33 @@ JSON reports those dependents as identifiers (`impacted_nodes`) and keeps the re
 nodes this release externalized — so dependents outside the two compared files are counted too; it
 is opt-in and repeatable. Subtype inheritance is followed for three generations only, since removing
 a base type would otherwise list its entire subtype forest. `--breaking` prints only the changes a
-consumer could fail on. `--markdown` and `--html` render
-the same report for a pull request or a release note, and `-o <file>` writes it.
+consumer could fail on; breaking findings that are additions appear in the Breaking list only, not
+under *Added nodes*. `--no-advisory` hides the advisory findings from the report (they are still
+counted in the summary and can gate with `--fail-on-advisory`) — including the advisory rule a
+namespace entry cites, while that namespace's totals and metadata deltas stay, because those are
+facts a release note states. `--reduced-export` states that the
+new file is a Linker export: nodes whose namespace the export declares as a `RequiredModel` were
+externalized, so they are reported as information, not as removals.
+
+`--namespace <uri>`, `--exclude-namespace <uri>` and `--node-class <class>` scope the comparison.
+They filter **both** models, so what is left out is not reported at all rather than looking like a
+removal, and the release metadata of a filtered namespace is filtered with it (§11.1). A namespace
+filter accepts the NamespaceUri or the alias the report shows — the declared `Alias` when the
+document carries one, else the tail of the URI, so `http://opcfoundation.org/UA/DI/` and `DI` are
+the same filter; a node class is one of `Object`, `Variable`, `ObjectType`, `VariableType`,
+`DataType`, `Method`, `ReferenceType`, `View`, `Interface`. An unknown class is an explicit error,
+and so is a `--namespace` neither side declares — filtering both models to nothing would otherwise
+read as a clean release. An `--exclude-namespace` that matches nothing only notes on stderr.
+
+Two input documents that declare the same identifier with different semantics do not abort the
+diff: the merge keeps the first declaration and the report states the loss as an advisory
+`BP-Merge-Conflict` finding naming both documents (§3.2.17). A reduction never tolerates such a
+conflict, because exporting a model that silently dropped a declaration would publish a contract
+nobody declared.
+
+`--markdown` and `--html` render the same report for a pull request or a release note, and
+`-o <file>` writes it — creating the parent directory when it does not exist yet. The HTML report
+folds each node section into one collapsible block per namespace; console and Markdown stay flat.
 
 Every finding carries a severity and a rule id: **BREAKING** means a consumer could fail,
 **ADVISORY** is worth reviewing, **INFO** is a fact with nothing to fix.
@@ -324,6 +365,12 @@ id and a `[waived]` marker plus a *Waivers* block; only the gate reads the marke
 nodeset-linker diff old.xml new.xml --waive BP-Namespace-VersionDrift
 nodeset-linker diff old.xml new.xml --waiver-file waivers.json --fail-on-advisory
 ```
+
+`BP-Namespace-VersionDrift` only fires when the display `Version` and the comparable `ModelVersion`
+name *different* releases. One release spelled twice — `Version="1.04.0"` beside
+`ModelVersion="1.4.0"` — is what OPC companion specs publish on purpose (OPC 10000-6 Annex F.2), and
+it reports nothing. A `ModelVersion` that is not valid SemVer is a separate advisory,
+`BP-Namespace-ModelVersionSyntax`.
 
 `waivers.json` is a JSON array, or `{"waivers": [...]}`, of `{rule, namespace?, node?, reason}`:
 
@@ -372,7 +419,7 @@ external:
 Only externalize models that the consumer really supplies. The linker does not invent a
 missing `RequiredModel` declaration when the source metadata does not contain one; check the
 external-dependency diagnostics and confirm the exported file works with the consuming stack.
-See [Dependency Resolution](dependency-resolution.md#6-externalized-dependencies-external) for details.
+See [Dependency Resolution](dependency-resolution.md#external-dependencies) for details.
 
 ## Retention modes
 
@@ -388,4 +435,6 @@ rules. See [the README](../README.md#retention-modes) for their behavior and con
 - [Dependency Resolution](dependency-resolution.md) describes selectors, traversal rules,
   retention, validation, and external models.
 - [Architecture](architecture.md) documents the implementation layers and data model.
+- [Best-Practices Alignment](best-practices-alignment.md) reconciles each OPC 11030 clause with
+  the rule the code actually applies.
 - [the README](../README.md#semantic-diff-diff) lists which diff changes count as breaking.

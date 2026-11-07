@@ -72,6 +72,13 @@ RequiredModel entries are preserved with known metadata when their namespace rem
 requirements for completely unused namespaces are omitted rather than falsely externalized.
 The importing application must provide external models.
 
+A dependency is configured by its stable NamespaceUri — never by a document-local namespace
+index, which means nothing once the exporter re-numbers namespaces. The URI is stored in the
+spelling OPC 10000-5 uses, with the trailing `/`, so `http://opcfoundation.org/UA/DI` and
+`http://opcfoundation.org/UA/DI/` are the same dependency and both match what a document
+declares; a URI nothing declares stays as written, because a dependency can be externalized
+without being loaded.
+
 ## Evidence and limitations
 
 Tests cover directional inheritance, shared-type/datatype isolation, inverse-only ownership,

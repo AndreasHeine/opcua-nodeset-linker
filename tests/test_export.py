@@ -12,9 +12,12 @@ from nodeset_linker.exporter.nodeset import (
     export,
     export_closure,
 )
+from nodeset_linker.models.identifiers import QualifiedName
 from nodeset_linker.models.namespace import Namespace
 from nodeset_linker.models.namespace_metadata import TYPES_XML_NAMESPACE
-from nodeset_linker.repository.model import load_nodesets
+from nodeset_linker.models.node import Reference, UAObject
+from nodeset_linker.models.node_class import NodeClass, NodeRole
+from nodeset_linker.repository.model import build_model, load_nodesets
 from nodeset_linker.utils.errors import ExportError
 
 FULL = {n.node_id for n in load_nodesets([DATA / "ua_base.xml", DATA / "machinery.xml"]).iter_nodes()}
@@ -149,6 +152,27 @@ class TestExport:
         keep = {n.node_id for n in model.iter_nodes() if n.browse_name.name == "UnrelatedMachineType"}
         with pytest.raises(ExportError, match="export blocked"):
             export(model, keep - {node_id(1000)}, tmp_path / "broken.xml")
+
+    def test_reference_without_type_is_not_invented_as_has_component(self, tmp_path) -> None:
+        """A reference that names no type is refused, not written as `ReferenceType="i=47"`."""
+        target = UAObject(
+            node_id=node_id(2200, Machinery_NS),
+            browse_name=QualifiedName(name="Controller"),
+            node_class=NodeClass.OBJECT,
+            role=NodeRole.INSTANCE,
+        )
+        source = UAObject(
+            node_id=node_id(2500, Machinery_NS),
+            browse_name=QualifiedName(name="TypelessThing"),
+            node_class=NodeClass.OBJECT,
+            role=NodeRole.INSTANCE,
+            references=[Reference(target=target.node_id)],
+        )
+        model = build_model([source, target])
+        out = tmp_path / "typeless.xml"
+        with pytest.raises(ExportError, match="no reference type"):
+            export(model, {source.node_id, target.node_id}, out, validate=False)
+        assert not out.exists()
 
     def test_exported_nodeids_use_new_indexes(self, tmp_path) -> None:
         model = load_nodesets([DATA / "ua_base.xml", DATA / "machinery.xml"])

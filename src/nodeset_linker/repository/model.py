@@ -29,6 +29,36 @@ class DuplicateNodeError(ParseError):
         self.paths = paths
 
 
+@dataclass(frozen=True, slots=True)
+class MergeConflict:
+    """Two documents declare the same identifier with *different* semantics.
+
+    A merge that tolerates the conflict keeps the first declaration and records what was
+    dropped, so a run can report the fact instead of aborting: the retained model is
+    incomplete on purpose, and the reader has to know which document lost.
+    """
+
+    node_id: ExpandedNodeId
+    #: The two documents whose declarations disagree, sorted.  Documents that declared the
+    #: same semantics as the kept one are not named: they did not conflict.
+    paths: tuple[str, ...]
+    #: The document whose declaration was kept.
+    kept_source: str
+    #: The document whose declaration was dropped.
+    rejected_source: str
+    browse_name: str
+    node_class: str
+
+    def describe(self) -> str:
+        """One line naming the node, both documents, and which one won."""
+        label = self.browse_name or self.node_id.identifier.as_xml()
+        return (
+            f"{label} [{self.node_class}, {self.node_id.identifier.as_xml()}] is declared "
+            f"inconsistent in {' and '.join(self.paths)}; kept {self.kept_source}, "
+            f"dropped {self.rejected_source}"
+        )
+
+
 @dataclass(slots=True)
 class SemanticModel:
     """The merged semantic information model — the single modelling truth."""
@@ -37,20 +67,58 @@ class SemanticModel:
     namespaces: dict[str, Namespace] = field(default_factory=dict)
     documents: list[DocumentInfo] = field(default_factory=list)
     models: dict[str, ModelInfo] = field(default_factory=dict)
+    #: Which document contributed each node — a merge conflict names these two paths.
+    sources: dict[ExpandedNodeId, str] = field(default_factory=dict)
+    #: Every document that declared each identifier, in the order they were read.  A tolerated
+    #: re-declaration of the same semantics counts here too; only the conflicting pair is named
+    #: in a :class:`MergeConflict`.
+    declarations: dict[ExpandedNodeId, list[str]] = field(default_factory=dict)
+    #: Conflicts a tolerant merge kept going through (`load_nodesets(tolerate_duplicates=True)`).
+    conflicts: list[MergeConflict] = field(default_factory=list)
 
-    def add(self, node: UANode, source: str) -> None:
+    def _declared_by(self, node_id: ExpandedNodeId, source: str) -> None:
+        """Record that ``source`` declares ``node_id`` — including tolerated duplicates."""
+        declared = self.declarations.setdefault(node_id, [])
+        if source not in declared:
+            declared.append(source)
+
+    def add(self, node: UANode, source: str, *, tolerate: bool = False) -> None:
         """Add a node; the same identifier in two documents is a merge conflict.
 
         Repeated *identical* definitions are tolerated (a companion specification may
-        re-declare an OPC UA base node), because they describe the same semantics.
+        re-declare an OPC UA base node), because they describe the same semantics.  A
+        *different* declaration raises :class:`DuplicateNodeError` unless ``tolerate`` is set,
+        which keeps the first declaration and records a :class:`MergeConflict` instead — a
+        release review should still see the conflict, it must not lose the whole diff to it.
+        Both names report exactly the documents that declared this identifier, never a document
+        that merely took part in the same merge.
         """
         existing = self.nodes.get(node.node_id)
         if existing is not None:
+            self._declared_by(node.node_id, source)
             if _same_semantics(existing, node):
                 return
-            paths = sorted({source, *(doc.source_path for doc in self.documents)})
-            raise DuplicateNodeError(node.node_id, paths)
+            declared = self.declarations[node.node_id]
+            kept_source = self.sources.get(node.node_id) or next(
+                (path for path in declared if path != source), source
+            )
+            paths = tuple(sorted({kept_source, source}))
+            if tolerate:
+                self.conflicts.append(
+                    MergeConflict(
+                        node_id=node.node_id,
+                        paths=paths,
+                        kept_source=kept_source,
+                        rejected_source=source,
+                        browse_name=existing.browse_name.name,
+                        node_class=existing.node_class.value,
+                    )
+                )
+                return
+            raise DuplicateNodeError(node.node_id, list(paths))
         self.nodes[node.node_id] = node
+        self.sources[node.node_id] = source
+        self.declarations[node.node_id] = [source]
 
     def iter_nodes(self) -> Iterator[UANode]:
         """Iterate every node of the merged model."""
@@ -109,8 +177,15 @@ class SemanticModel:
         return {uri: sorted(used) for uri, used in sorted(dependencies.items())}
 
 
-def load_nodesets(paths: list[Path | str]) -> SemanticModel:
-    """Load and merge NodeSet files into one semantic model."""
+def load_nodesets(paths: list[Path | str], *, tolerate_duplicates: bool = False) -> SemanticModel:
+    """Load and merge NodeSet files into one semantic model.
+
+    ``tolerate_duplicates`` is the graceful form a release review needs: an inconsistent
+    re-declaration of one identifier no longer aborts the whole run, it keeps the first
+    declaration and lands in :attr:`SemanticModel.conflicts`, which the diff reports as an
+    advisory finding.  A reduction does *not* use it — exporting from a model that silently
+    dropped a declaration would publish a model nobody declared.
+    """
     model = SemanticModel()
     for path in paths:
         nodes, info = parse_nodeset(path)
@@ -121,7 +196,7 @@ def load_nodesets(paths: list[Path | str]) -> SemanticModel:
             else:
                 model.namespaces[namespace.uri] = _merge_namespace(known, namespace)
         for node in nodes:
-            model.add(node, info.source_path)
+            model.add(node, info.source_path, tolerate=tolerate_duplicates)
         for declared in info.models:
             known_model = model.models.get(declared.namespace_uri)
             if known_model is None or declared.version:

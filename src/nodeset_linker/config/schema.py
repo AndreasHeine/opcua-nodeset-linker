@@ -84,7 +84,14 @@ class LinkerConfig(BaseModel):
     @field_validator("external")
     @classmethod
     def _external_are_model_uris(cls, value: list[str]) -> list[str]:
-        """Only URIs count as dependencies; identifiers and indexes do not."""
+        """Only URIs count as dependencies; identifiers and indexes do not.
+
+        The URI is stored in its canonical spelling: OPC 10000-5 writes a namespace URI with a
+        trailing ``/``, so ``http://opcfoundation.org/UA/DI`` and ``http://opcfoundation.org/UA/DI/``
+        mean the same model.  Normalising here is what makes a dependency actually match the
+        namespace a document declares — a spelling that matches nothing would silently externalize
+        nothing.
+        """
         uris: list[str] = []
         for entry in value:
             stripped = entry.strip()
@@ -103,7 +110,7 @@ class LinkerConfig(BaseModel):
                     f"external dependency {stripped!r} is not a namespace URI "
                     "(e.g. http://opcfoundation.org/UA/DI/)"
                 )
-            uris.append(stripped)
+            uris.append(stripped if stripped.endswith("/") else f"{stripped}/")
         return list(dict.fromkeys(uris))
 
     def custom_rules(self) -> list[CustomRule]:

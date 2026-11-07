@@ -10,12 +10,16 @@ from click.testing import CliRunner
 from tests.conftest import MACHINERY
 
 from nodeset_linker.cli.main import main
+from nodeset_linker.diff import SCHEMA_VERSION
 
 BASE = MACHINERY.read_text(encoding="utf-8")
 
 #: The keys `diff --json` has always produced. Adding a key is allowed; dropping one is not.
 TOP_LEVEL = frozenset(
     {
+        # The shape is versioned: keys only ever get added, so a consumer that does not know
+        # a key ignores it and can still tell which version it is reading.
+        "schema_version",
         "old",
         "new",
         "paper",
@@ -110,6 +114,7 @@ def test_report_keeps_every_top_level_key(tmp_path: Path, rich_pair: tuple[str, 
     old, new = rich_pair
     document = payload(tmp_path, old, new)
     assert frozenset(document) == TOP_LEVEL
+    assert document["schema_version"] == SCHEMA_VERSION
     assert frozenset(document["summary"]) == SUMMARY
     for key in ("added_nodes", "removed_nodes", "modified_nodes", "renumbered_nodes"):
         assert document[key], key

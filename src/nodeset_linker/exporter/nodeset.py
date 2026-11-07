@@ -551,7 +551,12 @@ class NodeSetExporter:
         """The ``ReferenceType`` attribute: an alias when one exists, else an identifier."""
         reference_type = ref.reference_type
         if reference_type is None:
-            return ref.type_name or "i=47"
+            if not ref.type_name:
+                raise ExportError(
+                    f"reference to {ref.target.as_xml()} has no reference type; "
+                    "nothing is invented here — declare the ReferenceType or name the reference"
+                )
+            return ref.type_name
         if reference_type.namespace == UA_NAMESPACE:
             if reference_type.identifier.kind is IdentifierKind.NUMERIC:
                 number = int(reference_type.identifier.value)

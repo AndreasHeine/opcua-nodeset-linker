@@ -42,6 +42,65 @@ class TestLoading:
         with pytest.raises(DuplicateNodeError) as excinfo:
             load_nodesets([first, second])
         assert excinfo.value.node_id == ExpandedNodeId.parse("i=99")
+        assert excinfo.value.paths == [str(first), str(second)]
+
+    def test_conflict_names_only_the_documents_that_declared_the_identifier(self, tmp_path) -> None:
+        # A bundle of namespace files merges many documents; only the two that declared the
+        # identifier may be named, or the report blames an innocent file.
+        first = tmp_path / "a.xml"
+        second = tmp_path / "b.xml"
+        innocent = tmp_path / "c.xml"
+        first.write_text(
+            '<UANodeSet xmlns="http://opcfoundation.org/UA/">'
+            '<UAObject NodeId="i=99" BrowseName="A"/></UANodeSet>',
+            encoding="utf-8",
+        )
+        second.write_text(
+            '<UANodeSet xmlns="http://opcfoundation.org/UA/">'
+            '<UAVariable NodeId="i=99" BrowseName="B"/></UANodeSet>',
+            encoding="utf-8",
+        )
+        innocent.write_text(
+            '<UANodeSet xmlns="http://opcfoundation.org/UA/">'
+            '<UAObject NodeId="i=100" BrowseName="C"/></UANodeSet>',
+            encoding="utf-8",
+        )
+        model = load_nodesets([first, second, innocent], tolerate_duplicates=True)
+        assert len(model.conflicts) == 1
+        conflict = model.conflicts[0]
+        assert conflict.paths == (str(first), str(second))
+        assert str(innocent) not in conflict.describe()
+
+    def test_tolerant_merge_keeps_the_first_declaration_and_records_the_conflict(
+        self, tmp_path
+    ) -> None:
+        # A release review needs the diff, not a crash: the conflict becomes a finding later.
+        first = tmp_path / "a.xml"
+        second = tmp_path / "b.xml"
+        first.write_text(
+            '<UANodeSet xmlns="http://opcfoundation.org/UA/">'
+            '<UAObject NodeId="i=99" BrowseName="A"/></UANodeSet>',
+            encoding="utf-8",
+        )
+        second.write_text(
+            '<UANodeSet xmlns="http://opcfoundation.org/UA/">'
+            '<UAVariable NodeId="i=99" BrowseName="B"/></UANodeSet>',
+            encoding="utf-8",
+        )
+        model = load_nodesets([first, second], tolerate_duplicates=True)
+        assert model.node_count() == 1
+        assert model.nodes[ExpandedNodeId.parse("i=99")].browse_name.name == "A"
+        assert len(model.conflicts) == 1
+        conflict = model.conflicts[0]
+        assert conflict.kept_source == str(first)
+        assert conflict.rejected_source == str(second)
+        assert "kept" in conflict.describe() and "dropped" in conflict.describe()
+
+    def test_sources_record_which_document_contributed_a_node(self, ua_base, machinery) -> None:
+        model = load_nodesets([ua_base, machinery])
+        assert model.sources[ExpandedNodeId.parse("i=1002")] == str(ua_base)
+        job_type = model.find_by_browse_name("JobDataType")[0]
+        assert model.sources[job_type.node_id] == str(machinery)
 
     def test_unresolved_targets_are_reported(self, tmp_path) -> None:
         doc = tmp_path / "a.xml"
@@ -82,6 +141,12 @@ class TestBuildModel:
         model = build_model([make_object("A", 1)])
         with pytest.raises(DuplicateNodeError):
             model.add(make_object_type("T", 1), "extra.xml")
+
+    def test_add_tolerates_conflict_when_asked(self) -> None:
+        model = build_model([make_object("A", 1)])
+        model.add(make_object_type("T", 1), "extra.xml", tolerate=True)
+        assert model.node_count() == 1
+        assert [conflict.rejected_source for conflict in model.conflicts] == ["extra.xml"]
 
     def test_identity_never_uses_namespace_index(self) -> None:
         node_a = make_object("A", 5)

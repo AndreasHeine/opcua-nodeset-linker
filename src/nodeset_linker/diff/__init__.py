@@ -5,7 +5,7 @@ what changed in the *information model*: added and removed nodes, changed refere
 changed type definitions, namespace totals and namespace release metadata (§11.1, §11.2,
 §11.3), dependency impact and whether a change is breaking.  XML ordering, formatting,
 whitespace and ``NamespaceIndex`` never reach the comparison — identity is
-``(namespaceUri, identifier)``.
+``(namespaceUri, identifier, serverUri)``.
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ from nodeset_linker.diff.impact import (
 )
 from nodeset_linker.diff.model import (
     DEFAULT_IMPACT_LIMIT,
+    SCHEMA_VERSION,
     BreakingChange,
     Change,
     MetadataDelta,
@@ -53,6 +54,7 @@ __all__ = [
     "DEFAULT_IMPACT_LIMIT",
     "INHERITANCE_DEPTH_LIMIT",
     "PAPER",
+    "SCHEMA_VERSION",
     "Baseline",
     "BreakingChange",
     "Change",

@@ -7,15 +7,22 @@ nodeset-linker stats output.xml
 nodeset-linker validate output.xml [--schema tests/data/schema/UANodeSet.xsd] [--best-practices]
 nodeset-linker diff old.xml new.xml [--json | --markdown | --html] [--impact] [--breaking]
     [--advisory/--no-advisory] [--impact-limit N] [--context <file>...] [--breaking]
+    [--namespace <uri>...] [--exclude-namespace <uri>...] [--node-class <class>...]
     [--fail-on-breaking] [--fail-on-advisory]
     [--waive <rule-id>] [--waiver-file <path>] [--accept-breaking]
     [--release-verdict] [--baseline <dir-or-manifest.json>]
+
+Each diff side is a NodeSet file or a split-export bundle (a directory with ``manifest.json``).
+``--namespace`` and ``--exclude-namespace`` take a NamespaceUri or the alias the report shows; a
+name neither side declares is an error rather than an empty report.
 """
 
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from pathlib import Path
+from typing import NoReturn
 
 import click
 from lxml.etree import XMLSchema, parse
@@ -42,9 +49,11 @@ from nodeset_linker.diff import (
 )
 from nodeset_linker.explain.explainer import Explainer
 from nodeset_linker.lint import LintReport, lint_model
+from nodeset_linker.models.namespace import alias_from_uri
+from nodeset_linker.models.node_class import NodeClass
 from nodeset_linker.pipeline import LinkerPipeline
 from nodeset_linker.reports.data import DependencyReportData, Statistics
-from nodeset_linker.repository.model import load_nodesets
+from nodeset_linker.repository.model import SemanticModel, load_nodesets
 from nodeset_linker.utils.errors import LinkerError
 from nodeset_linker.validator.semantic import (
     ValidationReport,
@@ -278,6 +287,32 @@ def validate(output: Path, schema: Path | None, best_practices: bool) -> None:
     help="The new file is a Linker export: nodes whose namespace it declares as a RequiredModel "
     "were externalized (§11.2), not removed (§3.2.16), so they are information.",
 )
+@click.option(
+    "--namespace",
+    "include_namespaces",
+    multiple=True,
+    metavar="URI_OR_ALIAS",
+    help="Report only this NamespaceUri (or its alias, the declared ``Alias`` or the URI tail); "
+    "repeatable. Filtering applies to both sides, so a filtered namespace reports nothing "
+    "instead of looking like a removal. A name neither side declares is an error, not an "
+    "empty report.",
+)
+@click.option(
+    "--exclude-namespace",
+    "exclude_namespaces",
+    multiple=True,
+    metavar="URI_OR_ALIAS",
+    help="Drop this NamespaceUri (or its alias) from both sides; repeatable. A name neither "
+    "side declares is noted on stderr.",
+)
+@click.option(
+    "--node-class",
+    "node_classes",
+    multiple=True,
+    metavar="CLASS",
+    help="Report only this NodeClass (Variable, ObjectType, DataType, Method, Object, "
+    "ReferenceType, View, VariableType, Interface); repeatable.",
+)
 @click.option("--output", "-o", type=Path, default=None, help="Write the report to a file.")
 def diff(
     old: Path,
@@ -298,16 +333,33 @@ def diff(
     show_release: bool,
     baseline: Path | None,
     reduced_export: bool,
+    include_namespaces: tuple[str, ...],
+    exclude_namespaces: tuple[str, ...],
+    node_classes: tuple[str, ...],
     output: Path | None,
 ) -> None:
     """Compare two semantic OPC UA models.
 
     The comparison is on the parsed semantic models, never on XML: document order,
     whitespace and ``NamespaceIndex`` reassignment are not differences, because a node is
-    identified by ``(namespaceUri, identifier)``.  It reports added and removed nodes,
-    reference changes, type-definition changes, BrowseName and DisplayName changes,
+    identified by ``(namespaceUri, identifier, serverUri)``.  It reports added and removed
+    nodes, reference changes, type-definition changes, BrowseName and DisplayName changes,
     modelling-rule changes, DataType definition changes (Structure fields, Enum values,
     Union alternatives, OptionSets), namespace totals and namespace release metadata.
+
+    Each side may be one NodeSet file *or a split-export bundle* — a directory holding
+    ``manifest.json`` (or that manifest itself): its namespace files are merged into one
+    model, so a namespace-split release compares as the model it replaced.
+
+    ``--namespace``, ``--exclude-namespace`` and ``--node-class`` scope the comparison. They
+    filter *both* models, so a namespace or node class left out is simply not reported, and
+    the release metadata of a filtered namespace is filtered with it (§11.1).  A namespace
+    filter names the URI or the alias the report shows; a name neither side declares fails
+    instead of printing an empty report.
+
+    An inconsistent re-declaration of one identifier in the inputs does not abort the diff:
+    the merge keeps the first declaration and the report states the conflict as an advisory
+    ``BP-Merge-Conflict`` finding — a release review needs the diff, not a crash.
 
     ``--release-verdict`` answers the question the best-practices paper actually asks (§3.3,
     §11.3): may this NamespaceUri be reused, or must the release publish a versioned one?  It
@@ -324,11 +376,11 @@ def diff(
     for path in (old, new):
         if not path.exists():
             _fail(f"no nodeset file at {path}")
-    try:
-        old_model = load_nodesets([old])
-        new_model = load_nodesets([new])
-    except LinkerError as exc:
-        _fail(str(exc))
+    old_model = _load_model(_bundle_files(old, "old"), "old")
+    new_model = _load_model(_bundle_files(new, "new"), "new")
+    _validate_namespace_filters([old_model, new_model], include_namespaces, exclude_namespaces)
+    old_model = _scoped(old_model, include_namespaces, exclude_namespaces, node_classes)
+    new_model = _scoped(new_model, include_namespaces, exclude_namespaces, node_classes)
 
     result = diff_models(
         old_model,
@@ -342,10 +394,7 @@ def diff(
         for path in context_paths:
             if not path.exists():
                 _fail(f"no nodeset file at {path}")
-        try:
-            context = [load_nodesets([path]) for path in context_paths]
-        except LinkerError as exc:
-            _fail(str(exc))
+        context = [_load_model(_bundle_files(path, "context"), "context") for path in context_paths]
     else:
         context = []
     if impact or breaking_only or fail_on_breaking or context:
@@ -402,6 +451,10 @@ def diff(
         )
 
     if output is not None:
+        # A report written into a report directory: the directory is created, so a CI job
+        # that asks for `dist/diff.html` does not fail on a path that does not exist yet.
+        if output.parent and not output.parent.exists():
+            output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(f"{text}\n", encoding="utf-8")
         console.print(f"[green]wrote[/] {output}")
     elif as_json or markdown or html:
@@ -424,6 +477,175 @@ def diff(
         # with breaking findings, so the release has to publish a versioned namespace.
         click.echo("Returning exit code 1: the release verdict is not reusable.", err=True)
         raise SystemExit(1)
+
+
+def _bundle_files(path: Path, label: str) -> list[Path]:
+    """The NodeSet files one diff input stands for.
+
+    A file is itself; a directory (or a ``manifest.json``) is a split-export bundle, whose
+    namespace files together are the model.  Manifest order is used, so a bundle compares as
+    the same model its merged form would be.
+    """
+    manifest = (
+        path / "manifest.json"
+        if path.is_dir()
+        else path if path.name == "manifest.json"
+        else None
+    )
+    if manifest is None:
+        return [path]
+    if not manifest.is_file():
+        _fail(f"{label}: {path} is a directory without manifest.json — a bundle needs one")
+    try:
+        payload = json.loads(manifest.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        _fail(f"{label}: {manifest} is not valid JSON: {exc}")
+    entries = payload.get("namespaces", []) if isinstance(payload, dict) else []
+    files = [
+        manifest.parent / str(entry["output_file"])
+        for entry in entries
+        if isinstance(entry, dict) and entry.get("output_file")
+    ]
+    if not files:
+        _fail(f"{label}: {manifest} lists no namespace files")
+    missing = [str(file) for file in files if not file.is_file()]
+    if missing:
+        _fail(f"{label}: {manifest} names files that are not there: {', '.join(missing)}")
+    return files
+
+
+def _load_model(paths: Sequence[Path], label: str) -> SemanticModel:
+    """Load one diff side, tolerating an inconsistent re-declaration.
+
+    A duplicate identifier with different semantics would otherwise abort the whole diff
+    (`DuplicateNodeError`).  The tolerant merge keeps the first declaration and records the
+    conflict, which the diff reports as an advisory finding — the review keeps its diff.
+    """
+    try:
+        return load_nodesets(list(paths), tolerate_duplicates=True)
+    except LinkerError as exc:
+        _fail(f"{label}: {exc}")
+
+
+def _scoped(
+    model: SemanticModel,
+    include_namespaces: tuple[str, ...],
+    exclude_namespaces: tuple[str, ...],
+    node_classes: tuple[str, ...],
+) -> SemanticModel:
+    """A copy of the model limited to what the reviewer asked to see.
+
+    Namespace filters accept a NamespaceUri or the alias the report shows.  Excluding a
+    namespace removes its release metadata too, so a scoped report cannot state a version of a
+    namespace it does not show (§11.1).  Filters that address nothing are rejected by
+    :func:`_validate_namespace_filters` before this runs, so a scoped model is never empty
+    because of a typo.
+    """
+    wanted = {_spelling(name) for name in include_namespaces}
+    unwanted = {_spelling(name) for name in exclude_namespaces}
+    classes = _node_class_filter(node_classes)
+    kept: set[str] = set()
+    for uri in _namespace_uris(model):
+        spellings = _namespace_spellings(model, uri)
+        if wanted and not spellings & wanted:
+            continue
+        if spellings & unwanted:
+            continue
+        kept.add(uri)
+    nodes = {
+        node_id: node
+        for node_id, node in model.nodes.items()
+        if node_id.namespace in kept and (classes is None or node.node_class in classes)
+    }
+    return SemanticModel(
+        nodes=nodes,
+        namespaces={uri: info for uri, info in model.namespaces.items() if uri in kept},
+        documents=list(model.documents),
+        models={uri: info for uri, info in model.models.items() if uri in kept},
+        sources={node_id: source for node_id, source in model.sources.items() if node_id in nodes},
+        declarations={
+            node_id: declared
+            for node_id, declared in model.declarations.items()
+            if node_id in nodes
+        },
+        conflicts=[conflict for conflict in model.conflicts if conflict.node_id in nodes],
+    )
+
+
+def _namespace_uris(model: SemanticModel) -> set[str]:
+    """The namespaces a filter can address: the declared ones plus those nodes live in."""
+    return {*model.namespaces, *(node.node_id.namespace for node in model.iter_nodes())}
+
+
+def _namespace_spellings(model: SemanticModel, uri: str) -> set[str]:
+    """Every name a namespace filter matches for this URI.
+
+    The report names a namespace by its declared ``Alias`` when the document carries one and by
+    the URI tail otherwise (:meth:`nodeset_linker.diff.engine.ModelIndex.alias`), so both
+    spellings filter — a declared alias that differs from the URI tail is otherwise invisible
+    to ``--namespace``.
+    """
+    spellings = {_spelling(uri), _spelling(alias_from_uri(uri) or "")}
+    declared = model.namespaces.get(uri)
+    if declared is not None and declared.alias:
+        spellings.add(_spelling(declared.alias))
+    return spellings
+
+
+def _validate_namespace_filters(
+    models: Sequence[SemanticModel],
+    include_namespaces: tuple[str, ...],
+    exclude_namespaces: tuple[str, ...],
+) -> None:
+    """Reject a namespace filter that addresses nothing on either side.
+
+    Filters apply to both models, so a name nothing declares scopes *both* to an empty model:
+    the report would say "No semantic differences found." and exit 0, which reads as a clean
+    release even under ``--fail-on-breaking``.  An include filter is therefore a hard error; an
+    exclude filter that matches nothing drops nothing, so it is only a notice on stderr.
+    """
+    if not include_namespaces and not exclude_namespaces:
+        return
+    names = {
+        spelling
+        for model in models
+        for uri in _namespace_uris(model)
+        for spelling in _namespace_spellings(model, uri)
+    }
+    unmatched = [name for name in include_namespaces if _spelling(name) not in names]
+    if unmatched:
+        _fail(
+            f"--namespace matches no namespace in either side: {', '.join(unmatched)}; "
+            "a filter that matches nothing would report nothing"
+        )
+    stray = sorted({name for name in exclude_namespaces if _spelling(name) not in names})
+    if stray:
+        click.echo(
+            f"--exclude-namespace matches no namespace in either side: {', '.join(stray)}",
+            err=True,
+        )
+
+
+def _spelling(name: str) -> str:
+    """A namespace name as a filter compares it: case-insensitive, trimmed."""
+    return name.strip().casefold()
+
+
+def _node_class_filter(names: tuple[str, ...]) -> frozenset[NodeClass] | None:
+    """The node classes a filter keeps, or ``None`` when no filter was given."""
+    if not names:
+        return None
+    valid = {member.value.lower(): member for member in NodeClass}
+    classes: set[NodeClass] = set()
+    for name in names:
+        member = valid.get(_spelling(name))
+        if member is None:
+            _fail(
+                f"unknown node class {name!r}; known classes: "
+                f"{', '.join(sorted(valid))}"
+            )
+        classes.add(member)
+    return frozenset(classes)
 
 
 def _validate_schema(output: Path, schema: Path) -> int:
@@ -508,7 +730,7 @@ def _render_lint(report: LintReport) -> None:
         console.print("[green]no best-practice findings[/]")
 
 
-def _fail(message: str) -> None:
+def _fail(message: str) -> NoReturn:
     """Report a failure and exit with code 1."""
     console.print(f"[bold red]error:[/] {message}")
     raise SystemExit(1)

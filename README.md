@@ -21,7 +21,9 @@ Install the published package from PyPI:
 python -m pip install opcua-nodeset-linker
 ```
 
-To also install the optional `asyncua` integration:
+The optional `asyncua` extra installs the OPC UA stack used by the demo server
+(`examples/demo1/server.py`), which serves a reduced NodeSet so you can check the result against a
+real server. The library itself does not depend on it:
 
 ```bash
 python -m pip install "opcua-nodeset-linker[asyncua]"
@@ -274,7 +276,9 @@ The written document is a plain `UANodeSet` in
   the OPC UA namespace and is never listed), and `<ServerUris><Uri>` when a retained identifier is
   qualified against another server
 * `<Models>` with `ModelUri`, `XmlSchemaUri`, `Version`, `PublicationDate`, `ModelVersion` for the
-  namespaces still present, and the `<RequiredModel>` children as they were loaded
+  namespaces still present, and `<RequiredModel>` children only for dependencies the written file
+  actually uses: a requirement whose namespace is neither shipped nor referenced is omitted rather
+  than presented as a dependency nothing in the document resolves
 * `<Aliases>` for the UA reference types the file refers to by name, sorted by identifier
 * node ids of namespace 0 bare (`i=24`), others as `ns=1;i=2001`, server-qualified as
   `srv=1;ns=1;i=2001`
@@ -354,20 +358,40 @@ OPC UA conformance: it says the XML matches `UANodeSet.xsd`, nothing more.
 ```bash
 nodeset-linker diff old.xml new.xml                    # human-readable report on stdout
 nodeset-linker diff old.xml new.xml --impact           # which nodes depend on the changes
+nodeset-linker diff old.xml new.xml --impact-limit 20  # how many impacted nodes to list
+nodeset-linker diff old.xml new.xml --context consumer.xml  # count consumers outside these files
 nodeset-linker diff old.xml new.xml --breaking         # only what a consumer could break on
+nodeset-linker diff old.xml new.xml --no-advisory      # drop advisory findings from the report
+nodeset-linker diff old.xml new.xml --reduced-export   # the new file is a Linker export
+nodeset-linker diff old.xml new-dir/                   # a split-export bundle is one model
+nodeset-linker diff old.xml new.xml --namespace Machinery      # report one namespace only
+nodeset-linker diff old.xml new.xml --exclude-namespace UA     # drop a namespace from both sides
+nodeset-linker diff old.xml new.xml --node-class ObjectType    # report one node class only
 nodeset-linker diff old.xml new.xml --json             # machine-readable
 nodeset-linker diff old.xml new.xml --markdown         # PR comment
 nodeset-linker diff old.xml new.xml --html -o diff.html
 nodeset-linker diff old.xml new.xml --fail-on-breaking # exit 1 when a breaking change exists
 nodeset-linker diff old.xml new.xml --fail-on-advisory # gate advisory findings too
 nodeset-linker diff old.xml new.xml --waive BP-Namespace-VersionDrift  # accept one finding
+nodeset-linker diff old.xml new.xml --waiver-file waivers.json         # accept findings in bulk
 nodeset-linker diff old.xml new.xml --release-verdict --baseline manifest.json
 ```
 
 The comparison runs on the **semantic models**, never on XML. Node identity is
-`(namespaceUri, identifier)`, so reordered documents, re-formatted output, comments, and a
-reassigned `NamespaceIndex` produce `No semantic differences found.` — a node that only lost its
-identifier is reported separately as a *renumbered* node, not as add plus remove.
+`(namespaceUri, identifier, serverUri)`, so reordered documents, re-formatted output, comments,
+and a reassigned `NamespaceIndex` produce `No semantic differences found.` — a node that only lost
+its identifier is reported separately as a *renumbered* node, not as add plus remove, while a node
+that gains or loses a `ServerUri` is a different node and reports as add plus remove.
+
+Each side is either one NodeSet file or a **split-export bundle**: a directory holding
+`manifest.json` (or that manifest itself). Its namespace files are merged into one model, so a
+namespace-split release compares against the model it replaced without being merged by hand first.
+
+`--namespace`, `--exclude-namespace` and `--node-class` scope the report. They filter *both*
+sides, so a namespace or node class left out is simply not reported rather than looking like a
+removal, and the release metadata of a filtered namespace is filtered with it (§11.1). A
+namespace filter takes the NamespaceUri or the alias the report shows (the declared `Alias`, or
+the tail of the URI); a name neither side declares fails instead of printing an empty report.
 
 The report lists added nodes, removed nodes, and per-node modifications: BrowseName, DisplayName
 and localization, Description, references (`HasSubtype`, `HasComponent`, `HasInterface`,
@@ -384,9 +408,20 @@ Machinery (http://opcfoundation.org/UA/Machinery/)
   DataTypes: 6 → 6
 ```
 
+An inconsistent re-declaration of one identifier inside one input does not abort the run: the
+merge keeps the first declaration and the report names both documents as an advisory
+`BP-Merge-Conflict` finding (§3.2.17 — one identifier is one declaration). A reduction never
+tolerates a conflict; only a diff does, because a review needs the comparison, not a crash.
+
+The HTML report folds each node section into one collapsible block per namespace, so a release
+spanning dozens of namespaces stays readable; console and Markdown stay flat.
+
 `--impact` walks the dependency graph backwards over the structural edges — the same graph the
 linker uses, so folders and `Organizes` navigation are excluded — and prints the dependent nodes
-plus a total:
+plus a total. Removed nodes are measured in the old model, where their consumers still exist;
+modified and renumbered nodes are measured in the new model. Added nodes report no impact: nothing
+depends on them yet. `--context <file>` adds consumer models whose dependencies are counted too —
+the spec whose nodes this release externalized, or a sibling companion spec.
 
 ```
 Removed nodes
@@ -427,12 +462,14 @@ that is already published carrying breaking findings (`BP-BreakingInReleasedName
 subtype or hierarchy insertion (`BP-Subtype-Inserted`, `BP-Hierarchy-Insertion`), an interface
 added without new mandatory declarations (`BP-Interface-Added`), member order relative to an
 encoding (`BP-FieldOrder-Encoding`, `BP-AlternativeOrder-Encoding`), a replaced type
-(`BP-Type-Replaced`), namespace metadata drift (`BP-Namespace-VersionDrift`,
-`BP-Namespace-MetadataConflict`, `BP-Namespace-ModelPrecedence`), naming and file-name
+(`BP-Type-Replaced`), namespace metadata drift (`BP-Namespace-VersionDrift` on two version
+claims that name *different* releases, `BP-Namespace-ModelVersionSyntax` on a `ModelVersion` that
+is not valid SemVer, `BP-Namespace-MetadataConflict`, `BP-Namespace-ModelPrecedence`), naming and
+file-name
 conventions (`BP-Naming-PascalCase`, `BP-Filename-Convention`), Conformance Unit and profile
 changes (`BP-CU-*`, `BP-Profile-Removed`), deprecation without a new namespace, a guessed field
 rename (`BP-Field-Rename-Guess`), a duplicate member, `InverseName`, extensions and value
-dependencies.
+dependencies, and an identifier two documents declare inconsistently (`BP-Merge-Conflict`).
 
 **INFO** — text a consumer reads but never parses (`BP-DisplayName-Meaning`,
 `BP-Description-Meaning`, `BP-Documentation-Meaning`, `BP-Member-Text`), a SymbolicName that only
@@ -454,6 +491,7 @@ applied, how many nodes depend on it:
 
 ```json
 {
+  "schema_version": "1.0",
   "old": "old.xml", "new": "new.xml",
   "summary": {"old_nodes": 18, "new_nodes": 18, "added_nodes": 1, "removed_nodes": 1,
               "modified_nodes": 0, "renumbered_nodes": 0, "breaking_changes": 1,
@@ -465,7 +503,9 @@ applied, how many nodes depend on it:
 }
 ```
 
-Keys are only ever added, never dropped or renamed. A waived finding gains `"waived": true` and
+Keys are only ever added, never dropped or renamed, and `"schema_version"` says which shape a
+consumer is reading. A split-export bundle's `manifest.json` carries its own `"schema_version"`
+for the same reason. A waived finding gains `"waived": true` and
 `"waived_by"`; a run that used waiver flags adds the top-level `"waivers"` block
 (`accepted_breaking`, `waived_changes`, `ignored`). Without waiver flags nothing extra appears.
 
@@ -507,6 +547,11 @@ Changes to how the tool reports, compared with earlier releases:
   children stay attached; a renumbered release now fails `--fail-on-breaking`.
 - Namespace metadata findings (`BP-Namespace-Version`, `BP-Namespace-VersionDrift`, …) are reported
   on the namespace entry; a metadata-only version bump is INFO.
+- Version claims are compared on their numeric core, not their spelling: OPC spells one release
+  twice (`Version="1.04.0"` display, `ModelVersion="1.4.0"` SemVer — OPC 10000-6 Annex F.2, OPC
+  10000-5 §12.41), so a re-spelled release reports nothing and `BP-Namespace-VersionDrift` only
+  fires on two claims naming different releases. It stays a manual-review hint and never gates
+  `--fail-on-breaking`.
 - JSON keys are additive only: new severity counts, `waived`/`waived_by` and the `waivers` block.
 - `--waive`, `--waiver-file` and `--accept-breaking` mark findings without removing them.
 
@@ -521,6 +566,8 @@ roadmap) and `docs/ui-concept.md` (proposed browser-driven, guided, mobile-first
 preview tier in JS, exported artifact and CI verdict from the Python engine).
 The diff's breaking-change rules derive from the OPC UA best-practices whitepaper (OPC 11030,
 source text in `docs/OPC-11030-v1.03.03.md`); each finding cites its clause, and
+`docs/best-practices-alignment.md` reconciles every clause of that paper against the implemented
+verdict (aligned / stricter / looser / not checked), while
 `docs/best-practices-implementation-plan.md` is the work-plan for closing the gaps it found. A
 clickable mockup of that interface: `docs/ui-mockup-browser.html` (a wizard you can drive entirely
 in the browser: import real `UANodeSet` files, configure roots/mode/external models, analyse,

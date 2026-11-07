@@ -22,7 +22,13 @@ from tests.test_external_dependencies import (
 
 from nodeset_linker.cli.main import console, main
 from nodeset_linker.config.schema import ExportConfig, LinkerConfig
-from nodeset_linker.exporter import NodeSetExporter, export, export_split, split_output_files
+from nodeset_linker.exporter import (
+    MANIFEST_SCHEMA_VERSION,
+    NodeSetExporter,
+    export,
+    export_split,
+    split_output_files,
+)
 from nodeset_linker.models.identifiers import QualifiedName
 from nodeset_linker.models.node import UANode, referenced_identifiers
 from nodeset_linker.pipeline import LinkerPipeline
@@ -112,6 +118,7 @@ def test_pipeline_partition_equivalence(tmp_path, mode, external) -> None:
     assert load_nodesets([*result.output_files.values(), *providers]).unresolved_targets() == []
 
     manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+    assert manifest["schema_version"] == MANIFEST_SCHEMA_VERSION
     assert manifest["dependencies"] == result.namespace_report.namespace_dependencies
     assert {entry["uri"]: entry["output_file"] for entry in manifest["namespaces"]} == (
         result.namespace_report.output_files

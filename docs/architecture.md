@@ -25,7 +25,7 @@ Indexes do appear twice, in ways that are worth knowing about:
   server URI on the identifier (`srv=0` means "the server this document was written for" and is
   stored unqualified);
 * a root selector `ns=<index>` is resolved against the **merged** namespace table, not
-  against one document — see *Dependency Resolution*, §1, for the load-order trap this creates.
+  against one document — see *Dependency Resolution*, "Roots", for the load-order trap this creates.
 
 Consequences:
 
@@ -69,7 +69,7 @@ objects and returns domain objects.
 | `models/` | Fully typed domain objects: `UANode`, subclasses, `ExpandedNodeId`, `QualifiedName`, `FieldMetadata` (the per-field attributes of a datatype definition), `NodeClass`, `NodeRole`, `ModellingRule`, `DependencyKind`, `MandatoryLevel`, namespace/model metadata including the `ServerUris` table of a document, namespace-metadata helpers. | No |
 | `utils/` | Glob matching, file reading, the error hierarchy (`ParseError`, `ResolutionError`, `ExportError`, `ValidationError`). | File IO only |
 | `parser/` | Reads `UANodeSet` XML into domain objects; resolves `nsu=`/`ns=`/bare ids and `srv=` ids to URIs, resolves a qualified `BrowseName` against the document's own namespace table, and reads every `DataTypeField` attribute (`SymbolicName`, `ValueRank`, `ArrayDimensions`, `MaxStringLength`, `AllowSubTypes`, `Value`, `IsOptional`). Undeclared `ns=`/`srv=` indexes are `ParseError`s. The *only* place XML is interpreted. | Yes (read) |
-| `repository/` | Merged `SemanticModel`: node registry keyed by URI identity, namespace/model metadata, duplicate detection, lookup helpers, unresolved-target detection, reference-type name/id completion. | No |
+| `repository/` | Merged `SemanticModel`: node registry keyed by URI identity, namespace/model metadata, duplicate detection (strict for a reduction, tolerant for a diff — a conflict keeps the first declaration and is recorded as a `MergeConflict` naming both documents), which document contributed each node, lookup helpers, unresolved-target detection, reference-type name/id completion. | No |
 | `graph/` | `networkx.MultiDiGraph` over `ExpandedNodeId`, edge metadata `{reference_type, dependency_kind, is_forward, mandatory}`, implicit semantic edges, induced subgraphs. | No |
 | `resolver/` | Root selectors and directional dependency closure with per-node reasons, CUSTOM-retain seeds, and navigation-only ancestor context. | No |
 | `retention/` | Retention engine + policies (STRICT / OPTIONAL_AWARE / RUNTIME / CUSTOM), custom rules, repair of policy-dropped targets. `repair()` returns the brought-back nodes; the pipeline discards that list. | No |
@@ -78,9 +78,9 @@ objects and returns domain objects.
 | `exporter/` | Writes the retained subset as a self-contained `UANodeSet`; assigns namespace indexes and the `ServerUris` table here and nowhere else, re-indexes qualified browse names from the URI of the name, writes the `DataTypeField` attributes it kept, and runs the validator again when `export(validate=True)` is called directly. | Yes (write) |
 | `reports/` | Statistics, dependency report, namespace report, validation text. | No |
 | `explain/` | Answers "why is this node retained" with the concrete dependency path. | No |
-| `diff/` | Compares two `SemanticModel`s by URI identity: added/removed/modified/renumbered nodes, reference, definition and modelling-rule changes, namespace totals, breaking classification, impact through the dependency graph, and console/markdown/HTML/JSON rendering. XML is never compared. | No |
+| `diff/` | Compares two `SemanticModel`s by URI identity — namespace, identifier and server qualification: added/removed/modified/renumbered nodes, reference, definition and modelling-rule changes, namespace totals, breaking classification, merge conflicts a tolerant merge carried through, impact through the dependency graph, and console/markdown/HTML/JSON rendering (HTML folds node sections into one collapsible block per namespace). XML is never compared. | No |
 | `config/` | Pydantic-validated YAML configuration; custom rule translation. | File IO only |
-| `cli/` | Click commands `analyze`, `link`, `explain`, `stats`, `validate`, `diff`; rich rendering. | No |
+| `cli/` | Click commands `analyze`, `link`, `explain`, `stats`, `validate`, `diff`; rich rendering. `diff` reads a NodeSet file or a split-export bundle as each side and scopes a report with `--namespace`, `--exclude-namespace` and `--node-class`. | No |
 | `pipeline.py` | The single ordered composition of all layers. | No |
 
 ### Split export
@@ -116,29 +116,34 @@ exporter's check; the pipeline's check is unconditional.
 ## Domain model
 
 Nodes are frozen `@dataclass(slots=True)` objects — immutable, but **not hashable**. The base
-node carries `attributes: Mapping[str, str]` (`models/node.py:127`), and the parser fills it
-with a plain `dict` (`parser/nodeset.py:456`), so `hash(node)` on a loaded node raises
+node carries `attributes: Mapping[str, str]` (`models/node.py`, `UANode.attributes`), and the
+parser fills it with a plain `dict` (`parser/nodeset.py`, `_parse_node`), so `hash(node)` on a
+loaded node raises
 `unhashable type: 'dict'`. Nothing needs hashed nodes: every registry, graph vertex and keep
 set is keyed by the `ExpandedNodeId` identity, which *is* hashable.
 Custom constructors use two-argument `super(Class, self)` because zero-argument `super()`
 is incompatible with slotted dataclasses on Python 3.12.
 
 * `UANode` — base for objects; subclasses `UAObject`, `UAVariable`, `UAMethod`, `UAObjectType`,
-  `UAVariableType`, `UADataType`, `UAReferenceType`, `UAView`, `UAInterface` carry only the
-  attributes their node class actually has (`DataType`/`ValueRank`/`ArrayDimensions` for
-  variables, `Definition` for datatypes).
+  `UAVariableType`, `UADataType`, `UAReferenceType`, `UAView`, `UAInterface` add the attributes
+  their node class actually needs (`DataType`/`ValueRank`/`ArrayDimensions` for variables and
+  variable types, `Definition`/`is_encoding` for datatypes). Class fields the class does not use
+  stay at their defaults rather than being removed: the shared base keeps `value_xml`,
+  `extensions_xml`, `role_permissions_xml`, `parent_node_id` and `method_declaration_id` for
+  every node, which keeps diff and export able to read one shape.
 * `NodeRole` classifies *semantic meaning*: base type, abstract type, structure, enum, union,
   option set, encoding, interface, type definition, placeholder, argument, instance, method,
   view, and `NAMESPACE_METADATA`. The parser derives `NAMESPACE_METADATA` from a
   `HasTypeDefinition` pointing at `NamespaceMetadataType` (i=11616), a `SymbolicName` ending in
   `NamespaceMetadata`, or a `UA_NamespaceMetadata*` browse name
-  (`parser/nodeset.py:679-685`); the subset-marker logic and the `NAMESPACE_METADATA_MISSING`
+  (`parser/nodeset.py`, `_derive_role`); the subset-marker logic and the `NAMESPACE_METADATA_MISSING`
   warning depend on it.
   `is_hard_dependency` lists the roles that may never be dropped (abstract type, base type,
   structure, enum, union, option set, encoding, interface, type definition, placeholder).
-  `is_droppable` exists (`models/node_class.py:76`) but the implementation never calls it — it
+  `is_droppable` exists (`models/node_class.py`, `NodeRole.is_droppable`) but the implementation never
+  calls it — it
   has exactly one occurrence in the repo, its own definition. Retention decides with
-  `is_hard_dependency` plus the modelling rule instead (`retention/engine.py:156-168`).
+  `is_hard_dependency` plus the modelling rule instead (`retention/engine.py`, `RetentionEngine.decide`).
 * `ModellingRule` covers Mandatory (i=78), Optional (i=80), MandatoryPlaceholder (i=462),
   OptionalPlaceholder (i=463) and `NO_RULE`; the pre-schema ids 290/387 are still read as the
   same two rules. In XML a rule is a reference, not an attribute:
@@ -188,36 +193,48 @@ namespace would silently re-point its ids there. Even a subset that retains no O
 numbers its namespaces from 1, and the OPC UA URI is absent from `NamespaceUris` only because
 nothing in the document refers to it. Servers are collected the same way: every identifier that
 carries a server URI (node id, reference target or reference type) goes into a `ServerUris` table
-in URI order, and `srv=<index>` is written from that table (`exporter/nodeset.py:278,347-353`).
+in URI order, and `srv=<index>` is written from that table (`exporter/nodeset.py`,
+`NodeSetExporter._server_table`).
 
 Nodes are emitted sorted by assigned id, references and definitions in declaration order, and
 no `LastModified` is written: the same keep set yields byte-identical XML.
 
 The writer produces the schema form of OPC 10000-6 and nothing else — `NamespaceUris` and
 `ServerUris` with plain `<Uri>` entries (indexes are the table positions, index 0 never listed),
-`Models` with `ModelUri`, `XmlSchemaUri`, `Version`, `PublicationDate`, `ModelVersion`, `Aliases`
+`Models` with `ModelUri`, `XmlSchemaUri`, `Version` (display string, OPC 10000-6 Annex F.2),
+`PublicationDate`, `ModelVersion` (a `SemanticVersionString` per §12.41), `Aliases`
 for the UA reference types referenced by name, ids of namespace 0 written bare, browse names
-qualified with the index of *the namespace the name belongs to* (`exporter/nodeset.py:393-405`),
+qualified with the index of *the namespace the name belongs to* (`exporter/nodeset.py`,
+`NodeSetExporter._browse_name`),
 and interfaces as `UAObjectType` (the schema has no `UAInterface` element). Three details are worth
 stating exactly:
 
-* a **`Model` entry** is written only for a namespace the retained nodes actually use, but its
-  **declared `RequiredModel` children are emitted as loaded** — a required model whose namespace
-  is not in `NamespaceUris` still appears (`exporter/nodeset.py:241-262`). Verified: loading A
-  (whose source metadata requires B) and B and keeping only A writes `<Uri>…/A/</Uri>` and a
-  `<RequiredModel ModelUri="…/B/">` that nothing in the document resolves. The linker does not
-  invent a `RequiredModel` when the source metadata lacks it.
+* a **`Model` entry** is written only for a namespace the retained nodes actually use: a
+  namespace that contributed no node contributes no `Model` entry, and an externalized model
+  contributes none either (`exporter/nodeset.py`, `NodeSetExporter.build_document`). Its
+  **`RequiredModel` children are filtered the same way** — a requirement pointing at a namespace
+  that is not in the document's `NamespaceUris` is *omitted*, not written, because a dependency
+  nothing in the file resolves would claim a model the export does not ship and does not externalize
+  (`exporter/nodeset.py`, `build_document`; asserted by
+  `tests/test_precise_reduction.py::test_unused_required_model_is_not_misrepresentation_as_external`).
+  For a single-namespace export (`exporter/split.py`) the dependency edges the reduction actually
+  created are added to the declared requirements, so the header states what that file really uses.
+  The linker never invents a `RequiredModel` when the source metadata lacks it.
 * an **externalized model** (`external:`) contributes no nodes and no `Model` entry of its own; its
   URI is written to `NamespaceUris` only because something references it, and its dependency is
   preserved as a `<RequiredModel>` child only when existing model metadata declares that
   requirement, with the version metadata the source declared
-  (`exporter/nodeset.py:310-331`). An identifier pointing at it is written through the index that
+  (`exporter/nodeset.py`, `build_document` and `_required_attrs`). An identifier pointing at it is
+  written through the index that
   namespace got — everywhere an identifier appears, not only in `<Reference>`: `DataType`,
   `ParentNodeId`, `MethodDeclarationId`, the `ReferenceType` attribute, and the `DataType` of
-  structure fields and union alternatives (`exporter/nodeset.py:334-354`). Silently dropping such an
+  structure fields and union alternatives (`exporter/nodeset.py`, `_id_of` and `_serialise`).
+  Silently dropping such an
   identifier would leave the file relying on a model it never mentions. Namespace 0 keeps index 0,
   so externalizing the OPC UA namespace writes no `<Uri>` entry and bare ids (`i=11715`).
-* `IsAbstract` is written **only when the source declared it** (`exporter/nodeset.py:407`). An
+* `IsAbstract` is written **only when it is `true`** (`exporter/nodeset.py`, `NodeSetExporter._serialise`).
+  The parser normalizes an explicit `IsAbstract="false"` and an absent attribute to the same
+  value, so a declared `false` cannot be re-echoed; the schema default is `false` either way. An
   interface that did not say so is exported as `<UAObjectType … BrowseName="1:ILegacy">` with
   no `IsAbstract` attribute — as `tests/data/legacy_namespace.xml` does.
 
@@ -228,7 +245,10 @@ a `<ModellingRule Id="…">` element, attribute-form references (`ReferenceType`
 `DefinitionType`/`EnumeratedValues` in definitions, a `<UAInterface>` element, and a `srv=` part
 that is a URI rather than a table index (`srv=http://…;ns=1;i=5`) — the written form always uses
 the index. A `ns=` or `srv=` index the document does not declare is *not* accepted silently: it
-raises `ParseError`.
+raises `ParseError`. A `DataType` spelling that neither the document's `Aliases` table nor a
+standard OPC UA name resolves raises `ParseError` too — guessing a datatype would silently
+retype a variable or a structure field. Only a field that declares *no* `DataType` takes the
+schema default, `BaseDataType`.
 
 Reduced namespaces are marked by rewriting the `IsNamespaceSubset` property of their
 `NamespaceMetadataType` object (OPC 10000-5) to `true`; for a namespace not reduced by this run,
@@ -237,8 +257,8 @@ retained nothing is invented — the
 validator warns and the namespace report says the marker is missing. **A reduced namespace is
 exactly what gets exported**; nothing blocks on incompleteness as such. What blocks is a
 validation **error**: `pipeline.run()` raises `ValidationError` before the exporter runs
-(`pipeline.py:121-125`), and `ExportError` comes only from `exporter/nodeset.py` when
-`export(validate=True)` is called directly (`exporter/nodeset.py:656-659`). A namespace whose
+(`pipeline.py`, `LinkerPipeline.run`), and `ExportError` comes only from `exporter/nodeset.py`
+when `export(validate=True)` is called directly (`exporter/nodeset.py`, `export`). A namespace whose
 metadata object was dropped is a warning and exports fine — `out/reduced.xml` marks both
 namespaces `IsNamespaceSubset=true` and validates with no findings.
 

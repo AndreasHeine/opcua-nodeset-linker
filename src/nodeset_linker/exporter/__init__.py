@@ -6,9 +6,14 @@ from nodeset_linker.exporter.nodeset import (
     export,
     export_closure,
 )
-from nodeset_linker.exporter.split import export_split, split_output_files
+from nodeset_linker.exporter.split import (
+    MANIFEST_SCHEMA_VERSION,
+    export_split,
+    split_output_files,
+)
 
 __all__ = [
+    "MANIFEST_SCHEMA_VERSION",
     "NamespaceIndexAssigner",
     "NodeSetExporter",
     "export",

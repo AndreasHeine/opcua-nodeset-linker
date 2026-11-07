@@ -22,6 +22,10 @@ _RESERVED_NAMES = {
     *(f"LPT{number}" for number in range(1, 10)),
 }
 
+#: Version of `manifest.json`.  Keys are additive only; a reader that sees a key it does not
+#: know ignores it, and this tells it when the shape grew.
+MANIFEST_SCHEMA_VERSION = "1.0"
+
 
 def split_output_files(
     model: SemanticModel, retained: set[ExpandedNodeId]
@@ -116,6 +120,7 @@ def export_split(
                     document_namespace=uri,
                 ).write(bundle / filename)
             manifest = {
+                "schema_version": MANIFEST_SCHEMA_VERSION,
                 "export_mode": "split",
                 "namespaces": [
                     _manifest_entry(model, uri, filename) for uri, filename in files.items()

@@ -75,4 +75,6 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "--cov=nodeset_linker --cov-report=term-missing"
+# Branch coverage is measured, not only line coverage: a branch no test exercises is where a
+# silent fallback survives, so the uncovered half of an if/else counts as untested.
+addopts = "--cov=nodeset_linker --cov-branch --cov-report=term-missing"

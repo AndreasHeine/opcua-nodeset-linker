@@ -19,6 +19,10 @@ from nodeset_linker.models.identifiers import ExpandedNodeId
 #: How many impacted nodes a report and the JSON payload list; the count stays exact.
 DEFAULT_IMPACT_LIMIT = 50
 
+#: Version of the JSON payload this module writes.  Keys are additive only, so a consumer
+#: must ignore keys it does not know; the version tells it when the shape grew.
+SCHEMA_VERSION = "1.0"
+
 
 def _impacted(ids: Sequence[ExpandedNodeId], limit: int | None) -> list[str]:
     """Impacted identifiers as XML, truncated to what a report shows."""
@@ -644,6 +648,7 @@ class SemanticDiff:
     def as_json(self) -> str:
         limit = self.impact_limit
         payload = {
+            "schema_version": SCHEMA_VERSION,
             "old": self.old_source,
             "new": self.new_source,
             "paper": PAPER,

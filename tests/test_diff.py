@@ -38,7 +38,7 @@ from nodeset_linker.diff import (
     total_impact,
 )
 from nodeset_linker.diff.model import NamespaceChange, SemanticDiff
-from nodeset_linker.models.identifiers import ExpandedNodeId, QualifiedName
+from nodeset_linker.models.identifiers import ExpandedNodeId, NodeId, QualifiedName
 from nodeset_linker.models.node import (
     Definition,
     EnumValue,
@@ -66,6 +66,18 @@ def replace(node, **changes):
 def in_namespace(node, uri: str):
     """A copy of a model node in a project namespace rather than the OPC UA namespace."""
     return replace(node, node_id=node_id(int(node.node_id.identifier.value), uri))
+
+
+def qualified(node, server_uri: str):
+    """A copy of a model node whose identifier points into another server's address space."""
+    return replace(
+        node,
+        node_id=ExpandedNodeId(
+            identifier=node.node_id.identifier,
+            namespace_uri=node.node_id.namespace_uri,
+            server_uri=server_uri,
+        ),
+    )
 
 
 def write(tmp_path: Path, name: str, text: str) -> Path:
@@ -279,6 +291,57 @@ class TestReferenceChanges:
         assert diff.modified[0].severity == Severity.ADVISORY
         assert diff.modified[0].rule_id == "BP-Deprecation-Removed"
 
+    def test_identifier_spelling_of_a_reference_type_is_no_change(self, tmp_path) -> None:
+        # The reference type is an identifier, not a name: `HasEncoding` and `i=38` are the
+        # same reference, so a document that spells it differently changed nothing.
+        new = BASE.replace('ReferenceType="HasEncoding"', 'ReferenceType="i=38"')
+        _, _, diff = diff_texts(tmp_path, BASE, new)
+        assert diff.is_empty
+
+    def test_reference_type_rename_is_a_change_on_the_declaration(self) -> None:
+        old_tag = make_reference_type(
+            "HasTag", 3000, refs=(Reference(target=node_id(44), type_name="HasChild", is_forward=False),)
+        )
+        new_tag = make_reference_type(
+            "HasTagged", 3000, refs=(Reference(target=node_id(44), type_name="HasChild", is_forward=False),)
+        )
+        member = in_namespace(make_object_type("TaggedMember", 7912), Machinery_NS)
+        holder = in_namespace(make_object_type("MachineType", 7913), Machinery_NS)
+        attached = replace(
+            holder,
+            references=(
+                Reference(target=member.node_id, reference_type=node_id(3000), type_name="HasTag"),
+            ),
+        )
+        retagged = replace(
+            holder,
+            references=(
+                Reference(target=member.node_id, reference_type=node_id(3000), type_name="HasTagged"),
+            ),
+        )
+        diff = diff_models(build_model([old_tag, member, attached]), build_model([new_tag, member, retagged]))
+        # The reference still points at the same type, so the holder changed nothing; the
+        # renamed declaration is the finding (§3.2.17).
+        assert labels(diff.modified) == {"HasTagged"}
+        assert diff.breaking[0].rule_id == "BP-BrowseName-Immutable"
+
+    def test_duplicated_reference_that_disappears_is_reported(self) -> None:
+        member = in_namespace(make_object_type("TaggedMember", 7914), Machinery_NS)
+        holder = in_namespace(make_object_type("MachineType", 7915), Machinery_NS)
+        twice = replace(
+            holder,
+            references=(
+                Reference(target=member.node_id, type_name="HasComponent"),
+                Reference(target=member.node_id, type_name="HasComponent"),
+            ),
+        )
+        once = replace(holder, references=(Reference(target=member.node_id, type_name="HasComponent"),))
+        diff = diff_models(build_model([twice, member]), build_model([once, member]))
+        # A `set` used to hide this: one declaration fewer is a change a consumer can see.
+        assert labels(diff.modified) == {"MachineType"}
+        subjects = [change.subject for change in diff.modified[0].changes]
+        assert any(subject.endswith("(2 -> 1)") for subject in subjects)
+
 
 class TestModellingRules:
     def test_optional_to_mandatory_is_breaking(self) -> None:
@@ -372,6 +435,33 @@ class TestIdentityNotXml:
         payload = json.loads(json_text(diff))
         assert {entry["confidence"] for entry in payload["renumbered_nodes"]} == {"heuristic"}
 
+    def test_a_server_qualified_node_is_not_the_unqualified_one(self) -> None:
+        # OPC 10000-6: a `ServerUri` on the identifier points into another server's address
+        # space, so re-qualifying a node is a different node, not a spelling of the same one.
+        old = build_model([make_object_type("MachineType", 4200)])
+        new = build_model([qualified(make_object_type("MachineType", 4200), "http://example.org/UA/srv")])
+        diff = diff_models(old, new)
+        assert labels(diff.removed) == {"MachineType"}
+        assert labels(diff.added) == {"MachineType"}
+        assert not diff.renumbered
+        assert not diff.is_empty
+
+    def test_renumbering_does_not_pair_across_servers(self) -> None:
+        # A move that also changes the server qualification is not a renumbering: the node
+        # that moved is gone from this address space and a foreign one appeared.
+        old = build_model([make_object_type("MachineType", 4200)])
+        new = build_model([qualified(make_object_type("MachineType", 4201), "http://example.org/UA/srv")])
+        diff = diff_models(old, new)
+        assert not diff.renumbered
+        assert labels(diff.added) == {"MachineType"}
+        assert labels(diff.removed) == {"MachineType"}
+
+    def test_server_qualification_that_stays_is_no_change(self) -> None:
+        server = "http://example.org/UA/srv"
+        old = build_model([qualified(make_object_type("MachineType", 4200), server)])
+        new = build_model([qualified(make_object_type("MachineType", 4200), server)])
+        assert diff_models(old, new).is_empty
+
 
 class TestImpact:
     def test_impact_counts_dependent_nodes(self, tmp_path) -> None:
@@ -409,7 +499,7 @@ class TestOutputFormats:
         assert payload["removed_nodes"][0]["label"] == "LegacyMachineType"
         assert payload["breaking_changes"][0]["reason"] == "ObjectType removed"
         # The severity model only adds keys; nothing a previous consumer read is gone.
-        assert set(payload) - legacy_keys == {"paper", "advisory_changes"}
+        assert set(payload) - legacy_keys == {"paper", "advisory_changes", "schema_version"}
         assert payload["paper"] == PAPER
         breaking = payload["breaking_changes"][0]
         assert breaking["severity"] == "breaking"
@@ -459,6 +549,35 @@ class TestOutputFormats:
         text = html_text(diff)
         assert "<h2>Breaking changes</h2>" in text
         assert '<strong class="breaking">' in text
+
+    def test_html_collapses_node_sections_per_namespace(self) -> None:
+        # A release spanning several namespaces is folded namespace by namespace (§WP 16).
+        other = "http://example.org/Other/"
+        third = "http://example.org/Third/"
+        old = build_model([in_namespace(make_object_type("MachineType", 4200), Machinery_NS)])
+        new = build_model(
+            [
+                in_namespace(make_object_type("MachineType", 4200), Machinery_NS),
+                in_namespace(make_object_type("OtherType", 4201), other),
+                in_namespace(make_object_type("ThirdType", 4202), third),
+            ]
+        )
+        text = html_text(diff_models(old, new))
+        assert "<details>" in text and "open" not in text
+        assert "Other (http://example.org/Other/)" in text
+        assert "Third (http://example.org/Third/)" in text
+        assert text.count("<h2>Added nodes</h2>") == 1
+        # The flat formats stay flat: a terminal reader has no fold to open.
+        assert "<details>" not in markdown_text(diff_models(old, new))
+        lines = console_text(diff_models(old, new)).splitlines()
+        assert any(line.startswith("  OtherType") for line in lines)
+        assert any(line.startswith("  ThirdType") for line in lines)
+
+    def test_html_stays_flat_for_one_namespace(self, tmp_path) -> None:
+        _, _, diff = diff_texts(tmp_path, BASE, BASE.replace("</UANodeSet>", ADDED_TYPE + "</UANodeSet>"))
+        text = html_text(diff)
+        assert "<details>" not in text
+        assert "MachineHealthType" in text
 
     def test_empty_report(self, tmp_path) -> None:
         _, _, diff = diff_texts(tmp_path, BASE, BASE)
@@ -576,6 +695,87 @@ class TestCli:
         assert "BP-Interface-Added" not in result.output
         assert "Advisory:" not in result.output
 
+    def test_no_advisory_keeps_namespace_facts_and_hides_the_namespace_rule(self, tmp_path) -> None:
+        # A namespace whose only finding is advisory: totals and the metadata delta are facts a
+        # release note states, the rule behind them is a finding and --no-advisory hides it.
+        old = write(tmp_path, "old.xml", BASE)
+        new = write(
+            tmp_path,
+            "new.xml",
+            BASE.replace(
+                'Version="1.0.1" PublicationDate="2024-01-01T00:00:00Z" ModelVersion="1.0.1"',
+                'Version="1.0.2" PublicationDate="2024-06-01T00:00:00Z" ModelVersion="1.0.1"',
+            ),
+        )
+        shown = CliRunner().invoke(main, ["diff", str(old), str(new)])
+        assert shown.exit_code == 0, shown.output
+        assert "BP-Namespace-VersionDrift" in shown.output
+
+        hidden = CliRunner().invoke(main, ["diff", str(old), str(new), "--no-advisory"])
+        assert hidden.exit_code == 0, hidden.output
+        assert "BP-Namespace-VersionDrift" not in hidden.output
+        assert "Advisory:" not in hidden.output
+        assert "Namespace changes" in hidden.output
+        assert "Nodes: 18 → 18" in hidden.output
+
+    def test_version_drift_never_gates_a_release(self, tmp_path) -> None:
+        # Version is display-only (Annex F.2), so a drift is a manual-review note: it can gate
+        # with --fail-on-advisory, but never turn into a breaking verdict.
+        old = write(tmp_path, "old.xml", BASE)
+        new = write(
+            tmp_path,
+            "new.xml",
+            BASE.replace(
+                'Version="1.0.1" PublicationDate="2024-01-01T00:00:00Z" ModelVersion="1.0.1"',
+                'Version="1.0.2" PublicationDate="2024-01-01T00:00:00Z" ModelVersion="1.0.1"',
+            ),
+        )
+        breaking_gate = CliRunner().invoke(main, ["diff", str(old), str(new), "--fail-on-breaking"])
+        assert breaking_gate.exit_code == 0, breaking_gate.output
+        assert "BP-Namespace-VersionDrift" in breaking_gate.output
+
+        advisory_gate = CliRunner().invoke(main, ["diff", str(old), str(new), "--fail-on-advisory"])
+        assert advisory_gate.exit_code == 1, advisory_gate.output
+
+    def test_a_padded_version_beside_a_semantic_model_version_reports_nothing(
+        self, tmp_path
+    ) -> None:
+        # OPC spells one release twice: the display Version pads its segments, the ModelVersion
+        # is SemVer (Annex F.2, §12.41).  1.00.1 and 1.0.1 are one release, so nothing is reported.
+        old = write(tmp_path, "old.xml", BASE)
+        new = write(
+            tmp_path,
+            "new.xml",
+            BASE.replace(
+                'Version="1.0.1" PublicationDate="2024-01-01T00:00:00Z" ModelVersion="1.0.1"',
+                'Version="1.00.1" PublicationDate="2024-01-01T00:00:00Z" ModelVersion="1.0.1"',
+            ),
+        )
+        result = CliRunner().invoke(main, ["diff", str(old), str(new)])
+        assert result.exit_code == 0, result.output
+        assert "BP-Namespace-VersionDrift" not in result.output
+        assert "BP-Namespace-ModelVersionSyntax" not in result.output
+        assert "Namespace changes" not in result.output
+
+    def test_a_model_version_that_is_not_semver_is_a_hidden_advisory(self, tmp_path) -> None:
+        # §12.41 forbids leading zeros in the field consumers compare, so a padded ModelVersion
+        # is a finding even though it states the same release as the display Version.
+        old = write(tmp_path, "old.xml", BASE)
+        new = write(
+            tmp_path,
+            "new.xml",
+            BASE.replace('ModelVersion="1.0.1"', 'ModelVersion="1.00.1"'),
+        )
+        shown = CliRunner().invoke(main, ["diff", str(old), str(new)])
+        assert shown.exit_code == 0, shown.output
+        assert "BP-Namespace-ModelVersionSyntax" in shown.output
+        assert "BP-Namespace-VersionDrift" not in shown.output
+
+        hidden = CliRunner().invoke(main, ["diff", str(old), str(new), "--no-advisory"])
+        assert "BP-Namespace-ModelVersionSyntax" not in hidden.output
+        assert "Advisory:" not in hidden.output
+        assert "Namespace changes" in hidden.output
+
     def test_breaking_report_still_shows_an_identifier_move(self, tmp_path) -> None:
         old = write(tmp_path, "old.xml", BASE)
         new = write(tmp_path, "new.xml", BASE.replace('NodeId="ns=1;i=2500"', 'NodeId="ns=1;i=2510"'))
@@ -683,6 +883,268 @@ class TestCli:
         result = CliRunner().invoke(main, ["diff", str(tmp_path / "nope.xml"), str(MACHINERY)])
         assert result.exit_code == 1
         assert "nope.xml" in result.output
+
+    def test_output_file_creates_the_directory_it_lives_in(self, tmp_path) -> None:
+        old = write(tmp_path, "old.xml", BASE)
+        new = write(tmp_path, "new.xml", BASE.replace("</UANodeSet>", ADDED_TYPE + "</UANodeSet>"))
+        out = tmp_path / "dist" / "reports" / "diff.html"
+        result = CliRunner().invoke(main, ["diff", str(old), str(new), "--html", "-o", str(out)])
+        assert result.exit_code == 0, result.output
+        assert out.read_text(encoding="utf-8").startswith("<!DOCTYPE html>")
+
+
+class TestBundleInput:
+    """A diff side may be a split-export bundle: its namespace files are one model."""
+
+    def bundle(self, tmp_path: Path, files: dict[str, str]) -> Path:
+        """A split-export bundle: namespace files plus the manifest that names them."""
+        directory = tmp_path / "bundle"
+        directory.mkdir()
+        for name, text in files.items():
+            (directory / name).write_text(text, encoding="utf-8")
+        (directory / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "export_mode": "split",
+                    "namespaces": [{"output_file": name} for name in files],
+                }
+            ),
+            encoding="utf-8",
+        )
+        return directory
+
+    def test_diff_of_a_bundle_is_the_model_its_merged_form_would_be(self, tmp_path) -> None:
+        bundle = self.bundle(tmp_path, {"Machinery.xml": BASE})
+        old = write(tmp_path, "old.xml", BASE.replace("</UANodeSet>", REMOVED_TYPE + "</UANodeSet>"))
+        for side in (bundle, bundle / "manifest.json"):
+            result = CliRunner().invoke(main, ["diff", str(old), str(side)])
+            assert result.exit_code == 0, result.output
+            assert "LegacyMachineType" in result.output
+
+    def test_a_bundle_that_spells_one_release_twice_reports_nothing(self, tmp_path) -> None:
+        # A split-export bundle whose display Version is padded and whose ModelVersion is SemVer
+        # describes one release: comparing the bundle with itself must find nothing (gap: the
+        # release drift rule read spellings, not releases).
+        spelling = BASE.replace(
+            'Version="1.0.1" PublicationDate="2024-01-01T00:00:00Z" ModelVersion="1.0.1"',
+            'Version="1.04.0" PublicationDate="2024-01-01T00:00:00Z" ModelVersion="1.4.0"',
+        )
+        bundle = self.bundle(tmp_path, {"Machinery.xml": spelling})
+        result = CliRunner().invoke(main, ["diff", str(bundle), str(bundle)])
+        assert result.exit_code == 0, result.output
+        assert "No semantic differences found" in result.output
+        assert "Advisory" not in result.output
+
+    def test_a_bundle_without_a_manifest_is_an_explicit_failure(self, tmp_path) -> None:
+        directory = tmp_path / "bundle"
+        directory.mkdir()
+        (directory / "Machinery.xml").write_text(BASE, encoding="utf-8")
+        old = write(tmp_path, "old.xml", BASE)
+        result = CliRunner().invoke(main, ["diff", str(old), str(directory)])
+        assert result.exit_code == 1
+        assert "without manifest.json" in result.output
+
+    def test_a_manifest_naming_files_that_are_not_there_is_an_explicit_failure(
+        self, tmp_path
+    ) -> None:
+        bundle = self.bundle(tmp_path, {"Machinery.xml": BASE})
+        (bundle / "Machinery.xml").unlink()
+        old = write(tmp_path, "old.xml", BASE)
+        result = CliRunner().invoke(main, ["diff", str(old), str(bundle)])
+        assert result.exit_code == 1
+        assert "names files that are not there" in result.output
+
+    def test_a_conflicting_bundle_reports_a_merge_conflict_instead_of_aborting(
+        self, tmp_path
+    ) -> None:
+        # Two files of one bundle declare the same identifier differently (§3.2.17).  The
+        # review needs the diff, so the merge keeps the first declaration and names the loss.
+        kept = (
+            '<UANodeSet xmlns="http://opcfoundation.org/UA/">'
+            '<UAObject NodeId="i=99" BrowseName="A"/></UANodeSet>'
+        )
+        dropped = (
+            '<UANodeSet xmlns="http://opcfoundation.org/UA/">'
+            '<UAVariable NodeId="i=99" BrowseName="B"/></UANodeSet>'
+        )
+        bundle = self.bundle(tmp_path, {"one.xml": kept, "two.xml": dropped})
+        old = write(tmp_path, "old.xml", kept)
+        result = CliRunner().invoke(main, ["diff", str(old), str(bundle)])
+        assert result.exit_code == 0, result.output
+        assert "No semantic differences found." not in result.output
+        assert "Advisory: 1" in result.output
+        assert "BP-Merge-Conflict" in result.output
+        assert "one.xml" in result.output and "two.xml" in result.output
+
+        gated = CliRunner().invoke(main, ["diff", str(old), str(bundle), "--fail-on-advisory"])
+        assert gated.exit_code == 1, gated.output
+
+        waived = CliRunner().invoke(
+            main, ["diff", str(old), str(bundle), "--fail-on-advisory", "--waive", "BP-Merge-Conflict"]
+        )
+        assert waived.exit_code == 0, waived.output
+        assert "BP-Merge-Conflict" in waived.output and "waived" in waived.output
+
+        hidden = CliRunner().invoke(main, ["diff", str(old), str(bundle), "--no-advisory"])
+        assert hidden.exit_code == 0, hidden.output
+        assert "BP-Merge-Conflict" not in hidden.output
+
+        payload = json.loads(
+            CliRunner().invoke(main, ["diff", str(old), str(bundle), "--json"]).output
+        )
+        conflict = next(entry for entry in payload["advisory_changes"] if entry["rule_id"] == "BP-Merge-Conflict")
+        assert conflict["severity"] == "advisory"
+        assert conflict["clause"] == "3.2.17"
+
+
+class TestScoping:
+    """`--namespace`, `--exclude-namespace` and `--node-class` filter both sides."""
+
+    FOREIGN = "http://example.org/Other/"
+    ISA_URI = "http://example.org/ISA95-JOBCONTROL_V2/"
+    ISA_ALIAS = "ISA95-JOBCONTROL"
+
+    def pair(self, tmp_path: Path) -> tuple[Path, Path]:
+        """Old and new that differ by one added DataType and one added Object in another namespace."""
+        foreign = '  <UAObject NodeId="nsu=http://example.org/Other/;i=1" BrowseName="OtherThing"/>\n'
+        old = write(tmp_path, "old.xml", BASE)
+        new = write(
+            tmp_path,
+            "new.xml",
+            BASE.replace("</UANodeSet>", ADDED_TYPE + foreign + "</UANodeSet>"),
+        )
+        return old, new
+
+    def aliased_pair(self, tmp_path: Path) -> tuple[Path, Path]:
+        """New declares a namespace whose ``Alias`` is *not* the tail of its URI."""
+        entry = f'    <Uri Alias="{self.ISA_ALIAS}">{self.ISA_URI}</Uri>\n'
+        node = f'  <UAObject NodeId="nsu={self.ISA_URI};i=1" BrowseName="JobControlType"/>\n'
+        old = write(tmp_path, "old.xml", BASE)
+        new = write(
+            tmp_path,
+            "new.xml",
+            BASE.replace("</NamespaceUris>", entry + "  </NamespaceUris>").replace(
+                "</UANodeSet>", node + "</UANodeSet>"
+            ),
+        )
+        return old, new
+
+    def test_unscoped_report_shows_every_namespace_and_class(self, tmp_path) -> None:
+        old, new = self.pair(tmp_path)
+        result = CliRunner().invoke(main, ["diff", str(old), str(new)])
+        assert result.exit_code == 0, result.output
+        assert "MachineHealthType" in result.output
+        assert "OtherThing" in result.output
+
+    def test_namespace_filter_accepts_a_uri_and_its_alias(self, tmp_path) -> None:
+        old, new = self.pair(tmp_path)
+        for spelling in (Machinery_NS, "Machinery", "machinery"):
+            result = CliRunner().invoke(main, ["diff", str(old), str(new), "--namespace", spelling])
+            assert result.exit_code == 0, result.output
+            assert "MachineHealthType" in result.output, spelling
+            assert "OtherThing" not in result.output, spelling
+
+        result = CliRunner().invoke(main, ["diff", str(old), str(new), "--namespace", self.FOREIGN])
+        assert result.exit_code == 0, result.output
+        assert "OtherThing" in result.output
+        assert "MachineHealthType" not in result.output
+
+    def test_declared_alias_is_a_filter_spelling(self, tmp_path) -> None:
+        # The report names a namespace by its declared Alias, so that spelling must filter too.
+        old, new = self.aliased_pair(tmp_path)
+        for spelling in (self.ISA_ALIAS, "isa95-jobcontrol", "ISA95-JOBCONTROL_V2", self.ISA_URI):
+            scoped = CliRunner().invoke(main, ["diff", str(old), str(new), "--namespace", spelling])
+            assert scoped.exit_code == 0, scoped.output
+            assert "JobControlType" in scoped.output, spelling
+            assert "MachineHealthType" not in scoped.output, spelling
+
+    def test_namespace_filter_naming_nothing_fails(self, tmp_path) -> None:
+        # Filtering both sides to nothing would print "No semantic differences found." and exit 0.
+        old, new = self.pair(tmp_path)
+        result = CliRunner().invoke(main, ["diff", str(old), str(new), "--namespace", "NoSuchModel"])
+        assert result.exit_code == 1
+        assert "matches no namespace in either side" in result.output
+        assert "NoSuchModel" in result.output
+
+    def test_excluding_a_namespace_nothing_declares_is_only_a_notice(self, tmp_path) -> None:
+        # Dropping a namespace that is not there changes nothing; the run must still report.
+        old, new = self.pair(tmp_path)
+        result = CliRunner().invoke(main, ["diff", str(old), str(new), "--exclude-namespace", "Nope"])
+        assert result.exit_code == 0, result.output
+        assert "MachineHealthType" in result.output
+        assert "matches no namespace in either side" in result.output
+
+    def test_excluded_namespace_is_reported_nowhere(self, tmp_path) -> None:
+        old, new = self.pair(tmp_path)
+        result = CliRunner().invoke(main, ["diff", str(old), str(new), "--exclude-namespace", "Other"])
+        assert result.exit_code == 0, result.output
+        assert "OtherThing" not in result.output
+        assert "http://example.org/Other/" not in result.output
+
+    def test_a_filtered_namespace_cannot_state_release_metadata(self, tmp_path) -> None:
+        old = write(tmp_path, "old.xml", BASE)
+        new = write(
+            tmp_path,
+            "new.xml",
+            BASE.replace(
+                'Version="1.0.1" PublicationDate="2024-01-01T00:00:00Z" ModelVersion="1.0.1"',
+                'Version="1.0.2" PublicationDate="2024-06-01T00:00:00Z" ModelVersion="1.0.2"',
+            ),
+        )
+        scoped = CliRunner().invoke(main, ["diff", str(old), str(new), "--exclude-namespace", "Machinery"])
+        assert scoped.exit_code == 0, scoped.output
+        assert "No semantic differences found." in scoped.output
+        assert "Namespace changes" not in scoped.output
+
+    def test_node_class_filter_keeps_only_that_class(self, tmp_path) -> None:
+        old, new = self.pair(tmp_path)
+        objects = CliRunner().invoke(main, ["diff", str(old), str(new), "--node-class", "Object"])
+        assert objects.exit_code == 0, objects.output
+        assert "MachineHealthType" not in objects.output
+        assert "OtherThing" in objects.output
+
+        types = CliRunner().invoke(main, ["diff", str(old), str(new), "--node-class", "objecttype"])
+        assert types.exit_code == 0, types.output
+        assert "MachineHealthType" in types.output
+        assert "OtherThing" not in types.output
+
+    def test_unknown_node_class_is_an_explicit_failure(self, tmp_path) -> None:
+        old, new = self.pair(tmp_path)
+        result = CliRunner().invoke(main, ["diff", str(old), str(new), "--node-class", "Nope"])
+        assert result.exit_code == 1
+        assert "unknown node class" in result.output
+        assert "objecttype" in result.output
+
+
+def test_server_qualified_identifier_containing_a_pipe_survives_the_diff() -> None:
+    """``|`` is legal inside a string identifier, so the identity key must not split on it.
+
+    The engine keys nodes by ``(namespaceUri, identifier, serverUri)`` and hands that key to
+    target lookups as text.  A ``srv=`` identifier whose string value contains ``|`` used to be
+    read back as a different identifier — the report then named a target that is not in the
+    model.
+    """
+    vendor = "urn:vendor/"
+    server = "urn:server/"
+    first = replace(
+        make_object("Part|Axis", 9001),
+        node_id=ExpandedNodeId(NodeId.parse("s=part|axis"), vendor, server),
+    )
+    second = replace(
+        make_object("Other|Axis", 9002),
+        node_id=ExpandedNodeId(NodeId.parse("s=other|axis"), vendor, server),
+    )
+    holder = make_object("Holder", 9003, refs=(Reference(target=first.node_id, type_name="HasComponent"),))
+    moved = replace(holder, references=(Reference(target=second.node_id, type_name="HasComponent"),))
+
+    old = diff_models(build_model([first, second, holder]), build_model([first, second, moved]))
+    entry = {item.label: item for item in old.modified}["Holder"]
+    removed = next(item for item in entry.changes if item.kind == "removed")
+    added = next(item for item in entry.changes if item.kind == "added")
+    assert "Part|Axis" in removed.subject
+    assert "srv=urn:server/" in removed.subject
+    assert "s=part|axis" in removed.subject
+    assert "Other|Axis" in added.subject
 
 
 def test_synthetic_structure_field_removal_is_breaking() -> None:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pathlib
+
 import pytest
 
 from nodeset_linker.models.identifiers import ExpandedNodeId
@@ -150,6 +152,112 @@ class TestParsing:
         )
         with pytest.raises(ParseError, match="NamespaceUri"):
             parse_nodeset(bad)
+
+
+class TestStrictIdentifiers:
+    """An identifier a document states explicitly has to resolve — nothing is guessed."""
+
+    def write(self, tmp_path, body: str) -> pathlib.Path:  # type: ignore[no-untyped-def]
+        path = tmp_path / "strict.xml"
+        path.write_text(
+            '<UANodeSet xmlns="http://opcfoundation.org/UA/2011/03/UANodeSet.xsd">'
+            f"{body}</UANodeSet>",
+            encoding="utf-8",
+        )
+        return path
+
+    def test_unknown_variable_datatype_name_is_rejected(self, tmp_path) -> None:
+        # A fallback to BaseDataType would retype the variable and make two different
+        # unknown datatypes compare as identical.
+        path = self.write(tmp_path, '<UAVariable NodeId="i=1" BrowseName="Tag" DataType="Temperature"/>')
+        with pytest.raises(ParseError, match="Temperature"):
+            parse_nodeset(path)
+
+    def test_unknown_field_datatype_is_rejected(self, tmp_path) -> None:
+        path = self.write(
+            tmp_path,
+            '<UADataType NodeId="i=2" BrowseName="Pair"><Definition Name="Pair">'
+            '<Field Name="Value" DataType="Temperature"/></Definition></UADataType>',
+        )
+        with pytest.raises(ParseError, match="field 'Value'"):
+            parse_nodeset(path)
+
+    def test_unknown_union_alternative_datatype_is_rejected(self, tmp_path) -> None:
+        path = self.write(
+            tmp_path,
+            '<UADataType NodeId="i=2" BrowseName="Choice"><Definition Name="Choice" IsUnion="true">'
+            '<Field Name="Number" DataType="Int32"/><Field Name="Text" DataType="Temperature"/>'
+            "</Definition></UADataType>",
+        )
+        with pytest.raises(ParseError, match="alternative 'Text'"):
+            parse_nodeset(path)
+
+    def test_field_without_datatype_is_the_schema_default(self, tmp_path) -> None:
+        # Declaring no DataType is not a typo: the schema default is BaseDataType (i=24).
+        path = self.write(
+            tmp_path,
+            '<UADataType NodeId="i=2" BrowseName="Pair"><Definition Name="Pair">'
+            '<Field Name="Value"/></Definition></UADataType>',
+        )
+        nodes, _ = parse_nodeset(path)
+        assert nodes[0].definition is not None
+        assert nodes[0].definition.fields[0].data_type == ExpandedNodeId.parse("i=24")
+
+    def test_unknown_parent_node_id_is_rejected(self, tmp_path) -> None:
+        path = self.write(
+            tmp_path, '<UAVariable NodeId="i=1" BrowseName="Tag" ParentNodeId="Folder"/>'
+        )
+        with pytest.raises(ParseError, match="ParentNodeId"):
+            parse_nodeset(path)
+
+    def test_unknown_value_identifier_is_rejected(self, tmp_path) -> None:
+        # The value names the datatype it is encoded with; skipping it would drop the
+        # dependency and let a reduction remove the datatype the value still names.
+        path = self.write(
+            tmp_path,
+            '<UAVariable NodeId="i=1" BrowseName="Tag"><Value><Any><TypeId><Identifier>'
+            "Temperature</Identifier></TypeId></Any></Value></UAVariable>",
+        )
+        with pytest.raises(ParseError, match="Temperature"):
+            parse_nodeset(path)
+
+    def test_ua_namespace_keeps_index_zero_when_listed_later(self, tmp_path) -> None:
+        path = self.write(
+            tmp_path,
+            "<NamespaceUris>"
+            '<Uri>http://example.org/UA/X/</Uri>'
+            '<Uri>http://opcfoundation.org/UA/</Uri>'
+            "</NamespaceUris>"
+            '<UAVariable NodeId="ns=1;i=1" BrowseName="Tag"/>',
+        )
+        _, info = parse_nodeset(path)
+        indexes = {ns.uri: ns.index_in_document for ns in info.namespaces}
+        assert indexes == {"http://example.org/UA/X/": 1, "http://opcfoundation.org/UA/": 0}
+
+    def test_standard_encoding_objects_are_encodings(self, tmp_path) -> None:
+        path = self.write(
+            tmp_path,
+            '<UADataType NodeId="i=2" BrowseName="Pair"/><UAObject NodeId="i=3" BrowseName="Default Binary"'
+            ' SymbolicName="DefaultBinary"/><UADataType NodeId="i=4" BrowseName="Default XML"/>'
+            '<UAObject NodeId="i=5" BrowseName="Default JSON"/>',
+        )
+        nodes, _ = parse_nodeset(path)
+        assert {n.node_id.identifier.value for n in nodes if n.role is NodeRole.ENCODING} == {
+            "3",
+            "4",
+            "5",
+        }
+
+    def test_an_object_naming_a_format_is_not_an_encoding(self, tmp_path) -> None:
+        # "OPC Binary" is the schema dictionary of the base specification, not the encoding
+        # of a datatype; a suffix rule would make it an undroppable hard dependency.
+        path = self.write(
+            tmp_path,
+            '<UAObject NodeId="i=3" BrowseName="OPC Binary" SymbolicName="OPCBinarySchema_TypeSystem"/>'
+            '<UAObject NodeId="i=4" BrowseName="PayloadXml"/>',
+        )
+        nodes, _ = parse_nodeset(path)
+        assert {n.role for n in nodes} == {NodeRole.INSTANCE}
 
 
 class TestLegacySpelling:

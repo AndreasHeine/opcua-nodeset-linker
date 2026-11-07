@@ -111,6 +111,10 @@ STANDARD_DATA_TYPE_IDS: Mapping[str, int] = {
     "Message": 332,
 }
 
+#: The datatype a structure field or union alternative takes when it declares none: i=24 is
+#: BaseDataType (OPC 10000-5), not String and not ExtensionObject.
+BASE_DATA_TYPE_ID = 24
+
 
 def _local(tag: object) -> str:
     """Strip the XML namespace, so both namespace spellings of a UANodeSet read alike.
@@ -123,17 +127,29 @@ def _local(tag: object) -> str:
     return tag.rsplit("}", 1)[-1]
 
 
-#: Names that mark an encoding node: a datatype ``…Encoding`` or a standard
-#: ``Default Binary``/``Default XML``/``Default JSON`` object.
-ENCODING_NAME_SUFFIXES = ("Encoding", "Binary", "Xml", "XML", "Json", "JSON")
+#: An encoding declaration is named after what it encodes: ``<DataType> Binary Encoding``.
+#: The standard spellings of the encoding objects of OPC 10000-5 are exact names, not suffixes,
+#: so a suffix like ``Binary`` would also classify unrelated objects — ``OPC Binary`` is a
+#: schema dictionary, not an encoding of a datatype.
+ENCODING_NAME_SUFFIX = "Encoding"
+STANDARD_ENCODING_OBJECT_NAMES = frozenset(
+    {
+        "Default Binary",
+        "DefaultBinary",
+        "Default XML",
+        "DefaultXml",
+        "Default JSON",
+        "DefaultJson",
+    }
+)
 
 
 def _is_encoding_name(*names: str | None) -> bool:
-    """Whether any of a node's names spells an encoding."""
+    """Whether any of a node's names spells an encoding declaration."""
     return any(
-        name is not None and name.endswith(suffix)
+        name is not None
+        and (name.endswith(ENCODING_NAME_SUFFIX) or name in STANDARD_ENCODING_OBJECT_NAMES)
         for name in names
-        for suffix in ENCODING_NAME_SUFFIXES
     )
 
 
@@ -287,10 +303,13 @@ class NodeSetParser:
                     continue
                 uri = (child.text or "").strip()
                 raw_index = child.get("UriIndex")
+                # Index 0 is the OPC UA namespace wherever it appears in the table: an
+                # identifier without an ns= prefix means namespace 0 to every importer, so a
+                # listed UA URI must not take another position's index.
                 index = (
                     int(raw_index)
                     if raw_index is not None
-                    else (position if position == 0 and uri == UA_NAMESPACE else position + 1)
+                    else (0 if uri == UA_NAMESPACE else position + 1)
                 )
                 entries.append(
                     Namespace(uri=uri, alias=child.get("Alias"), index_in_document=index)
@@ -451,8 +470,12 @@ class NodeSetParser:
             "is_abstract": (element.get("IsAbstract") or "false").lower() == "true",
             "attributes": {key: (value or "") for key, value in element.attrib.items()},
             "symbolic_name": element.get("SymbolicName"),
-            "parent_node_id": self._optional_id(element.get("ParentNodeId")),
-            "method_declaration_id": self._optional_id(element.get("MethodDeclarationId")),
+            "parent_node_id": self._required_id(
+                element.get("ParentNodeId"), context="ParentNodeId"
+            ),
+            "method_declaration_id": self._required_id(
+                element.get("MethodDeclarationId"), context="MethodDeclarationId"
+            ),
             "categories": tuple(
                 text for text in (self._text(el) for el in _children(element, "Category")) if text
             ),
@@ -625,8 +648,22 @@ class NodeSetParser:
             return None
         return RULE_IDS.get(target.identifier.value)
 
-    def _optional_id(self, raw: str | None) -> ExpandedNodeId | None:
-        return self._resolve_id(raw) if raw else None
+    def _required_id(self, raw: str | None, *, context: str) -> ExpandedNodeId | None:
+        """Resolve an identifier the document states explicitly.
+
+        A spelling that neither the ``Aliases`` table nor a standard OPC UA name resolves is a
+        ``ParseError``. Falling back would invent a datatype or a reference type: a variable
+        would silently become ``BaseDataType``, two different unknown datatypes would compare
+        as identical, and the reduced file would claim a contract its source never stated.
+        """
+        if not raw:
+            return None
+        resolved = self._resolve_id(raw)
+        if resolved is None:
+            raise ParseError(
+                f"{context} {raw!r} is neither an alias of this document nor a standard OPC UA name"
+            )
+        return resolved
 
     def _resolve_id(self, raw: str | None) -> ExpandedNodeId | None:
         """Resolve an identifier that may be an alias name (``DataType="String"``)."""
@@ -655,7 +692,9 @@ class NodeSetParser:
         rank_raw = element.get("ValueRank")
         dims_raw = element.get("ArrayDimensions")
         return {
-            "data_type": self._resolve_id(element.get("DataType")),
+            "data_type": self._required_id(
+                element.get("DataType"), context=f"DataType of {element.get('NodeId')}"
+            ),
             "value_rank": int(rank_raw) if rank_raw is not None else None,
             "array_dimensions": tuple(part for part in (dims_raw or "").split(",") if part),
         }
@@ -687,11 +726,14 @@ class NodeSetParser:
             element.get("SymbolicName"),
             self._text(_child(element, "DisplayName")),
         ):
-            # Encoding nodes come in two spellings: a datatype named "…Encoding" and the
-            # standard "Default Binary"/"Default XML" objects newer files point at.
+            # Encoding nodes come in two spellings: a declaration named "…Encoding" and the
+            # standard "Default Binary"/"Default XML"/"Default JSON" objects newer files point at.
+            # Only those two shapes count: a bare "…Binary" suffix would also classify objects
+            # that merely carry a binary format in their name, e.g. the OPC Binary schema
+            # dictionary, as an undroppable encoding of some datatype.
             return NodeRole.ENCODING
         if node_class is NodeClass.DATA_TYPE:
-            if browse_name.name.endswith("Encoding"):
+            if browse_name.name.endswith(ENCODING_NAME_SUFFIX):
                 return NodeRole.ENCODING
             if definition is not None:
                 return {
@@ -742,10 +784,18 @@ class NodeSetParser:
             if is_option_set
             else "Union" if is_union else "Enum" if enum_only else "Structure"
         )
+        # A union states its alternatives as fields; naming them alternatives in an error
+        # tells the reader which definition shape they wrote.
+        member_label = "union alternative" if kind == "Union" else "field"
         fields = tuple(
             StructureField(
                 name=el.get("Name") or "",
-                data_type=self._resolve_id(el.get("DataType")) or ua_number(24),
+                # A field that declares no DataType takes the schema default, BaseDataType; a
+                # spelling that cannot be resolved is an error, never a silent retyping.
+                data_type=self._required_id(
+                    el.get("DataType"), context=f"DataType of {member_label} {el.get('Name')!r}"
+                )
+                or ua_number(BASE_DATA_TYPE_ID),
                 description=self._text(_child(el, "Description")),
                 display_name=self._text(_child(el, "DisplayName")),
                 is_optional=(el.get("IsOptional") or "false").lower() == "true",
@@ -794,7 +844,13 @@ class NodeSetParser:
             tuple(
                 UnionAlternative(
                     name=el.get("Name") or "",
-                    data_type=self._resolve_id(el.get("DataType")) or ua_number(24),
+                    # Same rule as a structure field: no DataType means the schema default, an
+                    # unresolvable spelling is a parse error.
+                    data_type=self._required_id(
+                        el.get("DataType"),
+                        context=f"DataType of union alternative {el.get('Name')!r}",
+                    )
+                    or ua_number(BASE_DATA_TYPE_ID),
                     description=self._text(_child(el, "Description")),
                     display_name=self._text(_child(el, "DisplayName")),
                     metadata=self._field_metadata(el),
@@ -821,6 +877,12 @@ class NodeSetParser:
     def _value_dependencies(
         self, value: _Element | None
     ) -> tuple[tuple[str, ExpandedNodeId], ...]:
+        """Identifiers a serialised ``<Value>`` points at, resolved while reading.
+
+        A value names the encoding or the argument datatype it is encoded with, so an
+        identifier that cannot be resolved is an error: silently skipping it would drop the
+        dependency and let the reduction remove a datatype the value still names.
+        """
         dependencies: dict[str, ExpandedNodeId] = {}
         if value is not None:
             for element in value.iter():
@@ -828,10 +890,12 @@ class NodeSetParser:
                     continue
                 identifier = _child(element, "Identifier")
                 text = self._text(identifier)
-                if text is not None:
-                    resolved = self._resolve_id(text)
-                    if resolved is not None:
-                        dependencies[text] = resolved
+                if text is None:
+                    continue
+                resolved = self._required_id(text, context="identifier inside <Value>")
+                if resolved is None:
+                    continue
+                dependencies[text] = resolved
         return tuple(dependencies.items())
 
     def _field_metadata(self, element: _Element) -> FieldMetadata:

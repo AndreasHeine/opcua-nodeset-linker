@@ -1,4 +1,5 @@
 {
+  "schema_version": "1.0",
   "old": "examples\\demo4\\original.xml",
   "new": "examples\\demo4\\modified.xml",
   "paper": "OPC 11030 v1.03.03 \u2014 Best Practices for Companion Models",
@@ -13,7 +14,7 @@
     "advisory_changes": 0,
     "advisory_nodes": 0,
     "info_nodes": 0,
-    "namespace_changes": 3,
+    "namespace_changes": 1,
     "identical": false,
     "waived_changes": 0
   },
@@ -878,88 +879,11 @@
   "renumbered_nodes": [],
   "namespace_changes": [
     {
-      "namespace": "IA",
-      "uri": "http://opcfoundation.org/UA/IA/",
-      "severity": "advisory",
-      "rule_id": "BP-Namespace-VersionDrift",
-      "metadata": [
-        {
-          "attribute": "version",
-          "old": null,
-          "new": null,
-          "severity": "advisory",
-          "rule_id": "BP-Namespace-VersionDrift",
-          "rationale": "Version and ModelVersion disagree (\u00a711.3): the release says one base revision, the metadata another.",
-          "clause": "11.3",
-          "note": "Version 1.01.2 and ModelVersion 1.1.2 of http://opcfoundation.org/UA/IA/ describe the same release differently"
-        }
-      ],
-      "nodes": {
-        "old": 49,
-        "new": 49,
-        "delta": 0
-      },
-      "references": {
-        "old": 129,
-        "new": 129,
-        "delta": 0
-      },
-      "datatypes": {
-        "old": 4,
-        "new": 4,
-        "delta": 0
-      }
-    },
-    {
-      "namespace": "MachineTool",
-      "uri": "http://opcfoundation.org/UA/MachineTool/",
-      "severity": "advisory",
-      "rule_id": "BP-Namespace-VersionDrift",
-      "metadata": [
-        {
-          "attribute": "version",
-          "old": null,
-          "new": null,
-          "severity": "advisory",
-          "rule_id": "BP-Namespace-VersionDrift",
-          "rationale": "Version and ModelVersion disagree (\u00a711.3): the release says one base revision, the metadata another.",
-          "clause": "11.3",
-          "note": "Version 1.02.0 and ModelVersion 1.2.0 of http://opcfoundation.org/UA/MachineTool/ describe the same release differently"
-        }
-      ],
-      "nodes": {
-        "old": 523,
-        "new": 523,
-        "delta": 0
-      },
-      "references": {
-        "old": 1827,
-        "new": 1827,
-        "delta": 0
-      },
-      "datatypes": {
-        "old": 8,
-        "new": 8,
-        "delta": 0
-      }
-    },
-    {
       "namespace": "Machinery",
       "uri": "http://opcfoundation.org/UA/Machinery/",
-      "severity": "advisory",
-      "rule_id": "BP-Namespace-VersionDrift",
-      "metadata": [
-        {
-          "attribute": "version",
-          "old": null,
-          "new": null,
-          "severity": "advisory",
-          "rule_id": "BP-Namespace-VersionDrift",
-          "rationale": "Version and ModelVersion disagree (\u00a711.3): the release says one base revision, the metadata another.",
-          "clause": "11.3",
-          "note": "Version 1.04.0 and ModelVersion 1.4.0 of http://opcfoundation.org/UA/Machinery/ describe the same release differently"
-        }
-      ],
+      "severity": "info",
+      "rule_id": null,
+      "metadata": [],
       "nodes": {
         "old": 134,
         "new": 133,

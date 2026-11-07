@@ -3,6 +3,14 @@
 Self-contained work plan for aligning the semantic diff with the OPC UA best-practices whitepaper
 OPC 11030. Written so it can be executed in a later session without re-deriving the current code.
 
+**Status: executed.** Work packages WP 1-15 are implemented (severity table, metadata and release
+verdict, deprecation, ConformanceUnits/Profiles, impact identifiers, lint pass, waivers), so the plan
+is kept as the provenance record for the `WP n` numbers cited in code comments, not as pending work.
+Section 0 describes the *pre-implementation* state of the code — its line numbers are historical and
+do not point at today's files. What the code does per clause today is tracked in
+[best-practices-alignment.md](best-practices-alignment.md); what is still open is
+[semantic-diff.md §5](semantic-diff.md).
+
 * Analysis that produced this plan: [best-practices-alignment.md](best-practices-alignment.md)
 * Source text of the paper: `docs/OPC-11030-v1.03.03.md` (v1.03.03, published 2026-03-23) — cited below
   as `§3.2.5` etc. It is a whitepaper ("highly recommended"), **not** a conformance spec: every finding

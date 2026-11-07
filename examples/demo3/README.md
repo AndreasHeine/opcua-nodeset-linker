@@ -105,9 +105,13 @@ The modified input also carries a newer release of its own namespace: `Model` no
 `Version="1.04.0"` with a later `PublicationDate`, and its `RequiredModel` list names
 fewer dependencies than the original file. A metadata-only change is *information* on the
 namespace entry (`BP-Namespace-Version`, `BP-Namespace-PublicationDate`,
-`BP-Namespace-ModelVersion`) and never gates CI. The dependency namespaces additionally
-report `BP-Namespace-VersionDrift` as *advisory*, because `Version` and `ModelVersion`
-spell the same release differently; advisory findings do not fail a run either.
+`BP-Namespace-ModelVersion`) and never gates CI. The dependency namespaces state their
+release twice — a padded display `Version` (`1.04.0`) beside a SemVer `ModelVersion`
+(`1.4.0`) — which the diff reads as one release, so it reports nothing: `Version` is
+display-only per OPC 10000-6 Annex F.2, `ModelVersion` is the comparable field (§12.41).
+Only two claims naming *different* releases become `BP-Namespace-VersionDrift` (advisory),
+and a `ModelVersion` that is not valid SemVer becomes `BP-Namespace-ModelVersionSyntax`
+(advisory); neither fails a run.
 
 `--impact` walks reverse semantic dependency edges. Each changed node pulls 52 dependent
 nodes, and the two changes overlap, so the report totals 78 distinct dependents. These are
@@ -148,8 +152,8 @@ $LASTEXITCODE
 ```
 
 The expected exit code is **1** because of the two breaking findings: the datatype change
-and the moved identifier. Advisory and information findings - namespace metadata, version
-drift - do not change the exit code. A normal diff command without `--fail-on-breaking`
+and the moved identifier. Information findings - namespace metadata - and any advisory do
+not change the exit code. A normal diff command without `--fail-on-breaking`
 succeeds with exit code 0 even when it finds changes.
 
 To check the exported document structure and the validator's supported semantic checks:

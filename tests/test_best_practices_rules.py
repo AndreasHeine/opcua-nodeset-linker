@@ -545,6 +545,104 @@ class TestNamespaceMetadata:
         assert entry.severity is Severity.ADVISORY
         assert not diff.breaking
 
+    def test_padded_display_version_and_model_version_are_one_release(self) -> None:
+        # Annex F.2: Version is display-only, ModelVersion is the comparable SemVer.  A companion
+        # spec spelling the same release twice (1.04.0 next to 1.4.0) states one release.
+        release = {"version": "1.04.0", "model_version": "1.4.0"}
+        diff = diff_metadata(release, dict(release))
+        assert diff.namespaces == []
+        assert diff.is_empty
+
+    def test_drift_reports_the_releases_not_the_spellings(self) -> None:
+        diff = diff_metadata(
+            {"version": "1.04.0", "model_version": "1.4.0"},
+            {"version": "1.04.0", "model_version": "1.5.0"},
+        )
+        entry = diff.namespaces[0]
+        drift = next(
+            delta
+            for delta in entry.metadata
+            if delta.verdict.rule_id == "BP-Namespace-VersionDrift"
+        )
+        assert "1.4.0 vs 1.5.0" in drift.note
+        assert entry.severity is Severity.ADVISORY
+        assert not diff.breaking and not entry.breaking
+
+    def test_a_model_version_that_is_not_semantic_advises(self) -> None:
+        # §12.41 forbids leading zeros: this is the field consumers compare, so it is a finding
+        # even though it describes the same release as the display Version.
+        diff = diff_metadata(
+            {"version": "1.04.0", "model_version": "1.04.0"},
+            {"version": "1.04.0", "model_version": "1.04.0"},
+        )
+        entry = diff.namespaces[0]
+        assert {delta.verdict.rule_id for delta in entry.metadata} == {
+            "BP-Namespace-ModelVersionSyntax"
+        }
+        assert entry.severity is Severity.ADVISORY
+        assert not diff.breaking
+
+    def test_a_respelled_version_is_not_a_release_move(self) -> None:
+        diff = diff_metadata({"version": "1.04.0"}, {"version": "1.4.0"})
+        assert diff.namespaces == []
+
+    def test_a_version_bump_is_still_a_release_move(self) -> None:
+        diff = diff_metadata({"version": "1.04.0"}, {"version": "1.05.03"})
+        assert diff.namespaces[0].rule_id == "BP-Namespace-Version"
+        assert diff.namespaces[0].severity is Severity.INFO
+
+    def test_required_model_claim_compares_the_model_version(self) -> None:
+        node = in_machinery(make_object_type("MachineType", 2200))
+        old = model_of([node])
+        new = model_of([node])
+        old.models[Machinery_NS] = ModelInfo(
+            namespace_uri=Machinery_NS,
+            required_models=(UA_NS,),
+            required_model_entries=(
+                ModelInfo(namespace_uri=UA_NS, version="1.04.0", model_version="1.4.0"),
+            ),
+        )
+        new.models[Machinery_NS] = ModelInfo(
+            namespace_uri=Machinery_NS,
+            required_models=(UA_NS,),
+            required_model_entries=(
+                ModelInfo(namespace_uri=UA_NS, version="1.05.03", model_version="1.5.3"),
+            ),
+        )
+        deltas = diff_models(old, new).namespaces[0].metadata
+        assert {delta.verdict.rule_id for delta in deltas} == {"BP-Namespace-ModelVersion"}
+        assert (deltas[0].old, deltas[0].new) == ("1.4.0", "1.5.3")
+
+    def test_a_respelled_required_model_claim_is_not_a_delta(self) -> None:
+        # A document that only states the display Version and one that states the SemVer of the
+        # same release declare the same minimum version (Annex F.2).
+        node = in_machinery(make_object_type("MachineType", 2200))
+        old = model_of([node])
+        new = model_of([node])
+        old.models[Machinery_NS] = ModelInfo(
+            namespace_uri=Machinery_NS,
+            required_models=(UA_NS,),
+            required_model_entries=(ModelInfo(namespace_uri=UA_NS, version="1.04.0"),),
+        )
+        new.models[Machinery_NS] = ModelInfo(
+            namespace_uri=Machinery_NS,
+            required_models=(UA_NS,),
+            required_model_entries=(ModelInfo(namespace_uri=UA_NS, model_version="1.4.0"),),
+        )
+        assert diff_models(old, new).namespaces == []
+
+    def test_documents_that_only_spell_the_version_differently_do_not_conflict(self, tmp_path) -> None:
+        first = tmp_path / "a.xml"
+        second = tmp_path / "b.xml"
+        first.write_text(namespace_document(Machinery_NS, "1.04.0"), encoding="utf-8")
+        second.write_text(namespace_document(Machinery_NS, "1.4.0"), encoding="utf-8")
+        model = load_nodesets([first, second])
+        diff = diff_models(model, model)
+        # The merge keeps one spelling, but both documents claimed the same release (§11.2).
+        rules = {delta.verdict.rule_id for delta in diff.namespaces[0].metadata}
+        assert rules == {"BP-Namespace-ModelPrecedence"}
+        assert not diff.breaking
+
     def test_conflicting_metadata_across_documents_advises(self, tmp_path) -> None:
         first = tmp_path / "a.xml"
         second = tmp_path / "b.xml"

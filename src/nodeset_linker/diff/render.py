@@ -2,12 +2,14 @@
 
 All three formats come from the same report structure, so a human-readable report, a
 Markdown release note and an HTML artifact can never disagree with each other or with the
-JSON.  ``Change.describe()`` writes the actual +/- line; renderers only add structure.
+JSON.  ``Change.describe()`` writes the actual +/- line; renderers only add structure —
+the HTML report additionally folds node sections into one collapsible block per namespace.
 """
 
 from __future__ import annotations
 
 import html
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import TypeVar
 
@@ -23,6 +25,7 @@ from nodeset_linker.diff.model import (
 from nodeset_linker.diff.release import ReleaseVerdict, release_text
 from nodeset_linker.diff.rules import RuleVerdict, Severity
 from nodeset_linker.diff.waivers import WaiverOutcome
+from nodeset_linker.models.namespace import alias_from_uri
 
 #: A report entry, so the severity filter keeps its concrete type.
 EntryT = TypeVar("EntryT", NodeEntry, NodeModification, RenumberedNode)
@@ -36,6 +39,9 @@ class Entry:
 
     header: str
     details: tuple[str, ...] = ()
+    #: The NamespaceUri this entry belongs to.  Only the HTML report groups by it; console
+    #: and Markdown stay flat, because a terminal reader does not fold sections.
+    namespace_uri: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,7 +148,8 @@ def html_text(
         "<style>body{font-family:system-ui,sans-serif;max-width:60rem;margin:2rem auto}"
         "h2{margin:1.5rem 0 .5rem}ul{margin:.25rem 0}li{margin:.15rem 0}"
         ".detail{color:#555;font-family:ui-monospace,monospace;font-size:.9em}"
-        ".breaking{color:#b3261e}.advisory{color:#8a6d3b}</style></head><body>",
+        ".breaking{color:#b3261e}.advisory{color:#8a6d3b}"
+        "details{margin:.4rem 0}summary{cursor:pointer}</style></head><body>",
         "<h1>Semantic diff</h1>",
     ]
     if not sections:
@@ -160,17 +167,67 @@ def html_text(
             parts.append("</ul>")
         if section.entries:
             strong = _strong_for(section.title)
-            parts.append("<ul>")
-            for entry in section.entries:
-                parts.append(f"<li>{strong}>{html.escape(entry.header)}</strong>")
-                if entry.details:
-                    parts.append('<ul class="detail">')
-                    parts.extend(f"<li>{html.escape(detail)}</li>" for detail in entry.details)
-                    parts.append("</ul>")
-                parts.append("</li>")
-            parts.append("</ul>")
+            groups = _namespace_groups(section.title, section.entries)
+            if not groups:
+                parts.append("<ul>")
+                for entry in section.entries:
+                    parts.extend(_entry_html(entry, strong))
+                parts.append("</ul>")
+            else:
+                # A release spanning several namespaces is read namespace by namespace; the
+                # blocks stay collapsed so the headline counts above stay the first thing a
+                # reviewer sees.
+                for uri, entries in groups:
+                    count = len(entries)
+                    plural = "node" if count == 1 else "nodes"
+                    parts.append(
+                        f"<details><summary>{html.escape(_namespace_label(uri))} "
+                        f"({count} {plural})</summary>"
+                    )
+                    parts.append("<ul>")
+                    for entry in entries:
+                        parts.extend(_entry_html(entry, strong))
+                    parts.append("</ul></details>")
     parts.append("</body></html>")
     return "\n".join(parts)
+
+
+#: Sections that describe nodes, and therefore can be grouped by namespace.
+NODE_SECTION_TITLES = frozenset(
+    {"Added nodes", "Removed nodes", "Modified nodes", "Renumbered nodes"}
+)
+
+
+def _namespace_groups(title: str, entries: tuple[Entry, ...]) -> list[tuple[str, list[Entry]]]:
+    """Node entries bucketed by NamespaceUri, or empty when a section stays flat.
+
+    Grouping happens only when several namespaces are involved — a one-namespace release is
+    exactly as readable as the flat list it used to be.
+    """
+    if title not in NODE_SECTION_TITLES:
+        return []
+    grouped: dict[str, list[Entry]] = {}
+    for entry in entries:
+        grouped.setdefault(entry.namespace_uri, []).append(entry)
+    if len(grouped) < 2:
+        return []
+    return [(uri, grouped[uri]) for uri in sorted(grouped)]
+
+
+def _namespace_label(uri: str) -> str:
+    """A namespace as a report names it: alias and URI, URI alone when there is no alias."""
+    alias = alias_from_uri(uri) if uri else None
+    return f"{alias} ({uri})" if alias else (uri or "unknown namespace")
+
+
+def _entry_html(entry: Entry, strong: str) -> Iterator[str]:
+    """One `<li>` block: the header plus its detail list."""
+    yield f"<li>{strong}>{html.escape(entry.header)}</strong>"
+    if entry.details:
+        yield '<ul class="detail">'
+        yield from (f"<li>{html.escape(detail)}</li>" for detail in entry.details)
+        yield "</ul>"
+    yield "</li>"
 
 
 def _sections(
@@ -191,7 +248,14 @@ def _sections(
     ``waivers`` adds the header block WP 15 requires: an acknowledgement of breaking changes
     and any waiver that was refused, so a reviewer sees what was accepted and on what terms.
     """
-    if diff.is_empty and not diff.namespaces:
+    # A report is not empty just because no *node* changed: a merge conflict or a namespace
+    # finding is a fact a reader has to see.  Advisories hidden by --no-advisory do not count.
+    if (
+        diff.is_empty
+        and not diff.namespaces
+        and not diff.breaking
+        and not (diff.advisory and include_advisory)
+    ):
         if release is None and waivers is None:
             return []
         sections: list[Section] = []
@@ -258,7 +322,10 @@ def _sections(
         sections.append(
             Section(
                 title="Namespace changes",
-                entries=tuple(_namespace_line(entry) for entry in namespace_entries),
+                entries=tuple(
+                    _namespace_line(entry, include_advisory=include_advisory)
+                    for entry in namespace_entries
+                ),
             )
         )
 
@@ -365,7 +432,11 @@ def _impact_details(
 
 
 def _node_line(entry: NodeEntry, limit: int | None) -> Entry:
-    return Entry(header=_node_header(entry), details=_impact_details(entry.impact, limit=limit))
+    return Entry(
+        header=_node_header(entry),
+        details=_impact_details(entry.impact, limit=limit),
+        namespace_uri=entry.namespace_uri or entry.node_id.namespace,
+    )
 
 
 def _modification_line(entry: NodeModification, limit: int | None) -> Entry:
@@ -373,6 +444,7 @@ def _modification_line(entry: NodeModification, limit: int | None) -> Entry:
     return Entry(
         header=_node_header(entry),
         details=details + _impact_details(entry.impact, count_only=True, limit=limit),
+        namespace_uri=entry.namespace_uri or entry.node_id.namespace,
     )
 
 
@@ -388,10 +460,16 @@ def _renumbered_line(entry: RenumberedNode, limit: int | None) -> Entry:
     return Entry(
         header=header,
         details=details + _impact_details(entry.impact, count_only=True, limit=limit),
+        namespace_uri=entry.namespace_uri or entry.node_id.namespace,
     )
 
 
-def _namespace_line(entry: NamespaceChange) -> Entry:
+def _namespace_line(entry: NamespaceChange, *, include_advisory: bool = True) -> Entry:
+    """A namespace as a report shows it: totals, metadata deltas, and the rule it cites.
+
+    The note is a *finding*, so `--no-advisory` leaves it out; totals and metadata deltas are
+    facts a release note has to state, so they stay (§11.1, §11.3).
+    """
     details = [
         _count_line("Nodes", *entry.nodes),
         _count_line("References", *entry.references),
@@ -399,6 +477,8 @@ def _namespace_line(entry: NamespaceChange) -> Entry:
     ]
     details.extend(delta.describe() for delta in entry.metadata)
     strongest = _strongest(entry.all_verdicts())
+    if strongest is not None and strongest.severity is Severity.ADVISORY and not include_advisory:
+        strongest = None
     if strongest is not None and strongest.severity is not Severity.INFO:
         note = f"{strongest.rule_id}: {strongest.rationale}"
         if strongest.waived:

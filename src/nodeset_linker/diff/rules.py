@@ -18,7 +18,7 @@ Three severities:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
@@ -762,10 +762,19 @@ _RULES: dict[str, RuleVerdict] = {
     ),
     "namespace_version_drift": RuleVerdict(
         Severity.ADVISORY,
-        "Version and ModelVersion disagree (§11.3): the release says one base revision, the "
-        "metadata another.",
+        "The display Version and the comparable ModelVersion state different releases (§11.1, "
+        "OPC 10000-6 Annex F.2): one of them names a release the other does not. Version is "
+        "display-only, so this is not a contract change — read which release is meant.",
         "BP-Namespace-VersionDrift",
-        "11.3",
+        "11.1",
+    ),
+    "namespace_model_version_syntax": RuleVerdict(
+        Severity.ADVISORY,
+        "The ModelVersion is not a valid SemanticVersionString (OPC 10000-5 §12.41): consumers "
+        "compare this field, and the grammar forbids leading zeros and missing segments — "
+        "spell it as major.minor.patch.",
+        "BP-Namespace-ModelVersionSyntax",
+        "12.41",
     ),
     "namespace_metadata_conflict": RuleVerdict(
         Severity.ADVISORY,
@@ -782,6 +791,15 @@ _RULES: dict[str, RuleVerdict] = {
         "other document is dropped. Keep one Model entry per namespace.",
         "BP-Namespace-ModelPrecedence",
         "11.2",
+    ),
+    "merge_conflict": RuleVerdict(
+        Severity.ADVISORY,
+        "Two source documents declare the same identifier with different semantics (§3.2.17: "
+        "one identifier is one declaration): the merge kept the first declaration and dropped "
+        "the other, so which contract this model states depends on load order. Give the node to "
+        "exactly one document, or move the second declaration to its own NamespaceUri.",
+        "BP-Merge-Conflict",
+        "3.2.17",
     ),
     "breaking_in_released_namespace": RuleVerdict(
         Severity.BREAKING,
@@ -985,8 +1003,3 @@ def verdict(kind: str, context: RuleContext | None = None) -> RuleVerdict:
     if kind == "attributes" and ctx.symmetric_flip:
         return _RULES["symmetric_changed"]
     return _RULES.get(kind, _NEUTRAL)
-
-
-def relaxed_rule(verdict_value: RuleVerdict) -> RuleVerdict:
-    """Rewrite a verdict that only relaxes a contract; used where a change widens the model."""
-    return replace(verdict_value, severity=Severity.INFO)

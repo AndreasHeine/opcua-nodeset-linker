@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from nodeset_linker.models.identifiers import ExpandedNodeId
 from nodeset_linker.repository.model import SemanticModel
 from nodeset_linker.resolver.closure import Closure, RetentionReason
+from nodeset_linker.resolver.roots import resolve_namespace_index
 from nodeset_linker.utils.errors import ResolutionError
 
 
@@ -68,7 +69,9 @@ class Explainer:
 
     def _find(self, query: str) -> ExpandedNodeId:
         if query.startswith(("nsu=", "ns=", "i=", "s=", "g=", "b=")):
-            node_id = ExpandedNodeId.parse(query)
+            # `ns=<index>` is a document-local spelling the user typed; resolve it against the
+            # merged namespace table, exactly as a root selector does.
+            node_id = resolve_namespace_index(ExpandedNodeId.parse(query), self._model)
             if node_id in self._model.nodes:
                 return node_id
             raise ResolutionError(f"unknown node {query!r}")

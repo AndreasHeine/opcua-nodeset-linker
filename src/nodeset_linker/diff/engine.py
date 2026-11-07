@@ -55,11 +55,13 @@ from nodeset_linker.models.node import (
 )
 from nodeset_linker.models.node_class import ModellingRule, NodeClass, NodeRole
 from nodeset_linker.models.standard import STANDARD_DATA_TYPE_NAMES
-from nodeset_linker.repository.model import SemanticModel
+from nodeset_linker.models.version import canonical, is_semantic, versions_equal
+from nodeset_linker.repository.model import MergeConflict, SemanticModel
 from nodeset_linker.validator.semantic import ExternalSet, declared_external_namespaces
 
-#: Diff identity: namespace URI plus local identifier.  An index is a document property.
-Identity = tuple[str, NodeId]
+#: Diff identity: namespace URI, local identifier, and the server the identifier is qualified
+#: against.  An index is a document property; a server URI is part of the node's identity.
+Identity = tuple[str, NodeId, str | None]
 
 #: Removing one of these references breaks a contract instead of only navigation.
 HARD_REFERENCES = frozenset(
@@ -102,6 +104,11 @@ _METADATA_RULES: Mapping[str, str] = {
     "xml_schema_uri": "namespace_xml_schema_uri_changed",
     "model_version": "namespace_model_version_changed",
 }
+
+#: Namespace metadata whose *spelling* may differ while the claim is the same: a display
+#: ``Version`` pads its segments (``1.05.03``), a ``ModelVersion`` is SemVer (``1.5.3``).  Both
+#: are judged on the numeric core, so a re-spelled release is not a release move (§11.1, F.2).
+_VERSION_ATTRIBUTES = frozenset({"version", "model_version"})
 
 #: Namespace metadata that two source documents must not declare differently (§11.2); the
 #: merge keeps one spelling, so a published file can carry metadata no document claimed.
@@ -154,9 +161,11 @@ class NamespaceTotals:
 class ModelIndex:
     """A model plus the identity-keyed node lookup the diff needs.
 
-    ``model.nodes`` is keyed by ``ExpandedNodeId``, which also carries ``ServerUri``; the
-    diff keys by ``(namespaceUri, identifier)`` only, so the same node written with or
-    without a server URI is still the same node.
+    Identity is `(namespaceUri, identifier, serverUri)` — the same triple an
+    ``ExpandedNodeId`` compares on.  ``ServerUri`` is part of it on purpose: an identifier
+    qualified against another server names a different node than the same identifier in this
+    server's own address space, and leaving it out would make a re-qualification invisible and
+    let server-qualified twins overwrite each other in the index.
     """
 
     model: SemanticModel
@@ -213,7 +222,13 @@ class ModelIndex:
 
 
 def identity(node_id: ExpandedNodeId) -> Identity:
-    return (node_id.namespace, node_id.identifier)
+    """URI identity of a node — namespace, identifier, and server qualification.
+
+    The OPC UA identity of a node is its `NodeId` within a namespace, plus the `ServerUri` when
+    the identifier points into another server's address space (OPC 10000-6). A node re-qualified
+    against another server is therefore a different node, not the same one spelled differently.
+    """
+    return (node_id.namespace, node_id.identifier, node_id.server_uri)
 
 
 def diff_models(
@@ -284,8 +299,36 @@ def diff_models(
         namespaces=_namespace_changes(old_index, new_index),
     )
     diff.breaking = _breaking_changes(diff)
-    diff.advisory = _advisory_changes(diff)
+    diff.advisory = _advisory_changes(diff) + _merge_conflict_findings(old, new)
     return diff
+
+
+def _merge_conflict_findings(old: SemanticModel, new: SemanticModel) -> list[BreakingChange]:
+    """Conflicts a tolerant merge carried through, reported rather than swallowed.
+
+    A merge that kept going dropped one declaration of an identifier, so the model it produced
+    is *incomplete on purpose*: which contract was published depends on which document won.
+    The finding names both documents (§3.2.17 — one identifier, one declaration) and never
+    blocks a release, because the diff itself is still trustworthy.
+    """
+    seen: dict[tuple[ExpandedNodeId, tuple[str, ...]], MergeConflict] = {}
+    for conflict in [*old.conflicts, *new.conflicts]:
+        seen.setdefault((conflict.node_id, conflict.paths), conflict)
+    found = verdict("merge_conflict")
+    return [
+        BreakingChange(
+            label=conflict.browse_name or conflict.node_id.identifier.as_xml(),
+            node_id=conflict.node_id,
+            reason=conflict.describe(),
+            severity=found.severity,
+            rule_id=found.rule_id,
+            rationale=found.rationale,
+            clause=found.clause,
+        )
+        for (_node_id, _paths), conflict in sorted(
+            seen.items(), key=lambda item: (item[0][0].namespace, item[0][0].identifier.value)
+        )
+    ]
 
 
 def _entry_verdicts(
@@ -428,14 +471,14 @@ def _base_is_extension(node: UANode, index: ModelIndex) -> bool:
     base_identity = _base_type(node)
     if base_identity is None:
         return False
-    if base_identity.partition("|")[0] == UA_NAMESPACE_URI:
+    if _identity_parts(base_identity)[0] == UA_NAMESPACE_URI:
         return False
     return _lookup(index, base_identity) is not None
 
 
-def _sort_key(node_identity: Identity) -> tuple[str, str, str]:
-    namespace, identifier = node_identity
-    return (namespace, identifier.kind.value, identifier.value)
+def _sort_key(node_identity: Identity) -> tuple[str, str, str, str]:
+    namespace, identifier, server = node_identity
+    return (namespace, server or "", identifier.kind.value, identifier.value)
 
 
 def _pair_renumbering(
@@ -444,9 +487,9 @@ def _pair_renumbering(
     old_index: ModelIndex,
     new_index: ModelIndex,
 ) -> tuple[list[RenumberedNode], list[Identity], list[Identity]]:
-    """Pair removed and added nodes that kept namespace, BrowseName and node class."""
-    removed_groups: dict[tuple[str, str, NodeClass], list[Identity]] = {}
-    added_groups: dict[tuple[str, str, NodeClass], list[Identity]] = {}
+    """Pair removed and added nodes that kept namespace, server, BrowseName and node class."""
+    removed_groups: dict[tuple[str, str, str, NodeClass], list[Identity]] = {}
+    added_groups: dict[tuple[str, str, str, NodeClass], list[Identity]] = {}
     for node_identity in gone:
         key = _move_key(old_index.nodes[node_identity])
         removed_groups.setdefault(key, []).append(node_identity)
@@ -477,7 +520,7 @@ def _pair_renumbering(
                     label=_label(new_node),
                     old_node_id=old_node.node_id,
                     new_node_id=new_node.node_id,
-                    node_class=key[2].value,
+                    node_class=key[3].value,
                     namespace=new_index.alias(key[0]),
                     namespace_uri=key[0],
                     confidence=confidence,
@@ -508,13 +551,18 @@ def _pair_renames(
     renamed: list[RenumberedNode] = []
     paired_removed: set[Identity] = set()
     paired_added: set[Identity] = set()
-    candidates: dict[tuple[str, NodeClass], list[Identity]] = {}
+    candidates: dict[tuple[str, str, NodeClass], list[Identity]] = {}
     for node_identity in fresh:
         node = new_index.nodes[node_identity]
-        candidates.setdefault((node.node_id.namespace, node.node_class), []).append(node_identity)
+        candidates.setdefault(
+            (node.node_id.namespace, node.node_id.server_uri or "", node.node_class), []
+        ).append(node_identity)
     for node_identity in sorted(gone, key=_sort_key):
         old_node = old_index.nodes[node_identity]
-        group = candidates.get((old_node.node_id.namespace, old_node.node_class), [])
+        group = candidates.get(
+            (old_node.node_id.namespace, old_node.node_id.server_uri or "", old_node.node_class),
+            [],
+        )
         matches = [
             candidate
             for candidate in group
@@ -559,8 +607,18 @@ def _differs_only_in_name(
     return differences == ["browse_name"]
 
 
-def _move_key(node: UANode) -> tuple[str, str, NodeClass]:
-    return (node.node_id.namespace, node.browse_name.name, node.node_class)
+def _move_key(node: UANode) -> tuple[str, str, str, NodeClass]:
+    """Pairing key of a renumbered node: namespace, server, BrowseName, node class.
+
+    Server qualification belongs to the identity, so re-qualifying a node against another
+    server is not a move — it reads as a removal plus an addition.
+    """
+    return (
+        node.node_id.namespace,
+        node.node_id.server_uri or "",
+        node.browse_name.name,
+        node.node_class,
+    )
 
 
 def _modified_nodes(
@@ -742,14 +800,14 @@ def _node_changes(
                 verdict=verdict("extensions"),
             )
         )
-    if _value_dependencies(old_node, old) != _value_dependencies(new_node, new):
+    if _value_dependencies(old_node) != _value_dependencies(new_node):
         changes.append(
             Change(
                 area="node",
                 kind="attributes",
                 subject="ValueDependencies",
-                old=_spell_dependencies(_value_dependencies(old_node, old)) or None,
-                new=_spell_dependencies(_value_dependencies(new_node, new)) or None,
+                old=_spell_dependencies(_value_dependencies(old_node)) or None,
+                new=_spell_dependencies(_value_dependencies(new_node)) or None,
                 verdict=verdict("value_dependency"),
             )
         )
@@ -866,7 +924,7 @@ def _argument_method(node: UANode, index: ModelIndex) -> ExpandedNodeId | None:
         if holder is not None and holder.node_class is NodeClass.METHOD:
             return parent
     for ref in node.references:
-        if _reference_key(ref)[0] != "HasProperty" or ref.is_forward:
+        if _reference_name(ref) != "HasProperty" or ref.is_forward:
             continue
         holder = index.node(ref.target)
         if holder is not None and holder.node_class is NodeClass.METHOD:
@@ -972,7 +1030,7 @@ def _is_argument_of(argument: UAVariable, method_id: ExpandedNodeId) -> bool:
     if parent is not None and identity(parent) == identity(method_id):
         return True
     return any(
-        _reference_key(ref)[0] == "HasProperty"
+        _reference_name(ref) == "HasProperty"
         and not ref.is_forward
         and identity(ref.target) == identity(method_id)
         for ref in argument.references
@@ -1822,10 +1880,6 @@ def _subtype_children(node: UANode) -> set[str]:
     }
 
 
-def _reference_name(ref: Reference) -> str:
-    return _reference_key(ref)[0]
-
-
 def _reference_label(index: ModelIndex, node_id: ExpandedNodeId | None) -> str | None:
     """The target of a hierarchy attribute, named the way the report names other targets."""
     if node_id is None:
@@ -1842,56 +1896,102 @@ def _reference_changes(
 ) -> list[Change]:
     """Added and removed references, keyed by reference type, target identity and direction.
 
+    The key is the *identifier* of the reference type, never its browse name: `HasEncoding`
+    and `i=38` are one reference, and renaming the declaration is a finding on that declaration,
+    not a removal plus an addition on every node that points at it.
+    Multiplicity counts: a reference declared twice in the old model and once in the new one is
+    a change, not an unchanged reference — a `set` used to hide that.
     A target that only moved identifier is resolved through the paired move: the move is a
     finding on the node itself, and must not read here as a detached child (§3.2.16, §3.2.17).
     """
     back = {new_text: old_text for old_text, new_text in moved.items()}
-    old_refs = {_resolved_key(ref, moved) for ref in old_node.references}
-    new_refs = {_resolved_key(ref, moved) for ref in new_node.references}
+    old_counts = Counter(_resolved_key(ref, moved) for ref in old_node.references)
+    new_counts = Counter(_resolved_key(ref, moved) for ref in new_node.references)
+    old_names = {_resolved_key(ref, moved): _reference_name(ref) for ref in old_node.references}
+    new_names = {_resolved_key(ref, moved): _reference_name(ref) for ref in new_node.references}
     changes: list[Change] = []
-    for name, target, is_forward in sorted(old_refs - new_refs):
-        if name in HIERARCHY_REFERENCES:
+    for key in sorted(set(old_counts) | set(new_counts)):
+        type_identity, target, is_forward = key
+        old_name = _reference_type_label(old, type_identity, old_names.get(key, ""))
+        new_name = _reference_type_label(new, type_identity, new_names.get(key, ""))
+        if new_name in HIERARCHY_REFERENCES or old_name in HIERARCHY_REFERENCES:
             continue
-        original = back.get(target, target)
-        changes.append(
-            Change(
-                area="reference",
-                kind="removed",
-                subject=f"{name or 'Reference'} -> {_target_label(old, original, is_forward)}",
-                old=name,
-                verdict=verdict(
-                    "removed",
-                    RuleContext(reference=_reference_category(name, original, old, old_node)),
-                ),
-            )
-        )
-    for name, target, is_forward in sorted(new_refs - old_refs):
-        if name in HIERARCHY_REFERENCES:
-            continue
-        changes.append(
-            Change(
-                area="reference",
-                kind="added",
-                subject=f"{name or 'Reference'} -> {_target_label(new, target, is_forward)}",
-                new=name,
-                verdict=verdict(
-                    "added",
-                    RuleContext(reference=_reference_category(name, target, new, new_node)),
-                ),
-            )
-        )
-        version = _deprecation_target_name(new, target) if name in DEPRECATION_REFERENCES else None
-        if version is not None:
+        old_count = old_counts.get(key, 0)
+        new_count = new_counts.get(key, 0)
+        # A move of the target's identifier is reported once, on the node that moved.
+        if old_count > new_count:
+            original = back.get(target, target)
             changes.append(
                 Change(
                     area="reference",
-                    kind="deprecation_version",
-                    subject="Deprecation version",
-                    new=version,
-                    verdict=verdict("deprecation_version"),
+                    kind="removed",
+                    subject=_reference_subject(
+                        old_name, old, original, is_forward, old_count, new_count
+                    ),
+                    old=old_name,
+                    verdict=verdict(
+                        "removed",
+                        RuleContext(
+                            reference=_reference_category(old_name, original, old, old_node)
+                        ),
+                    ),
                 )
             )
+        elif new_count > old_count:
+            changes.append(
+                Change(
+                    area="reference",
+                    kind="added",
+                    subject=_reference_subject(
+                        new_name, new, target, is_forward, old_count, new_count
+                    ),
+                    new=new_name,
+                    verdict=verdict(
+                        "added",
+                        RuleContext(reference=_reference_category(new_name, target, new, new_node)),
+                    ),
+                )
+            )
+            version = (
+                _deprecation_target_name(new, target)
+                if new_name in DEPRECATION_REFERENCES
+                else None
+            )
+            if version is not None:
+                changes.append(
+                    Change(
+                        area="reference",
+                        kind="deprecation_version",
+                        subject="Deprecation version",
+                        new=version,
+                        verdict=verdict("deprecation_version"),
+                    )
+                )
     return changes
+
+
+def _reference_type_label(index: ModelIndex, type_identity: str, name: str) -> str:
+    """The name a report shows for a reference type.
+
+    A document may spell the type as an identifier without naming it; the declaration of that
+    identifier supplies the name, so hierarchy and contract rules can still recognise it.
+    """
+    if name:
+        return name
+    if type_identity.startswith("name:"):
+        return ""
+    declaration = _lookup(index, type_identity)
+    return declaration.browse_name.name if declaration is not None else ""
+
+
+def _reference_subject(
+    name: str, index: ModelIndex, target: str, is_forward: bool, old_count: int, new_count: int
+) -> str:
+    """`HasComponent -> Target`, with the multiplicity stated when a reference was duplicated."""
+    subject = f"{name or 'Reference'} -> {_target_label(index, target, is_forward)}"
+    if old_count > 1 or new_count > 1:
+        subject += f" ({old_count} -> {new_count})"
+    return subject
 
 
 def _deprecation_target_name(index: ModelIndex, target: str) -> str | None:
@@ -1902,14 +2002,31 @@ def _deprecation_target_name(index: ModelIndex, target: str) -> str | None:
     return node.browse_name.name if DEPRECATION_OBJECT_NAME.search(node.browse_name.name) else None
 
 
+def _reference_name(ref: Reference) -> str:
+    """The name of a reference's type, as the document spelled it."""
+    return ref.type_name or (str(ref.reference_type) if ref.reference_type is not None else "")
+
+
 def _reference_key(ref: Reference) -> tuple[str, str, bool]:
-    name = ref.type_name or (str(ref.reference_type) if ref.reference_type is not None else "")
-    return (name, _identity_text(ref.target), ref.is_forward)
+    """Identity key of a reference: reference type identity, target identity, direction.
+
+    Two spellings of one reference type — `ReferenceType="HasEncoding"` and
+    `ReferenceType="i=38"` — are the same reference, and a renamed reference type declaration is
+    a change on that declaration, not one removal plus one addition on every node pointing at
+    it; both need the identifier of the type, never its browse name.  A reference that names no
+    identifier at all falls back to its name, so it still pairs with itself.
+    """
+    type_identity = (
+        _identity_text(ref.reference_type)
+        if ref.reference_type is not None
+        else f"name:{ref.type_name}"
+    )
+    return (type_identity, _identity_text(ref.target), ref.is_forward)
 
 
 def _resolved_key(ref: Reference, moved: Mapping[str, str]) -> tuple[str, str, bool]:
-    name, target, is_forward = _reference_key(ref)
-    return (name, _resolve(target, moved), is_forward)
+    type_identity, target, is_forward = _reference_key(ref)
+    return (type_identity, _resolve(target, moved), is_forward)
 
 
 def _resolve(identity_text: str, moved: Mapping[str, str]) -> str:
@@ -1933,20 +2050,47 @@ def _same_target(
     return _resolve(_identity_text(old_value), moved) == _resolve(_identity_text(new_value), moved)
 
 
+#: Separator of the internal identity text.  An XML attribute value cannot carry a control
+#: character (a document containing one is not well-formed), so it can never appear in a
+#: NamespaceUri, a NodeId or a ServerUri.  ``|`` can: ``s=…`` identifiers may legally contain
+#: it, and splitting on it would read back a different identifier — with a ``srv=`` part
+#: present, even the identifier itself was corrupted.
+_IDENTITY_SEPARATOR = "\x1f"
+
+
 def _identity_text(node_id: ExpandedNodeId) -> str:
-    return f"{node_id.namespace}|{node_id.identifier.as_xml()}"
+    """Identity as text: `namespace␟identifier␟server`, the third part empty when unqualified.
+
+    The server part belongs here for the same reason it belongs to :func:`identity`: a
+    server-qualified identifier is a different node, and a text without it would merge the two.
+    This text is a key inside the engine only — a report spells identifiers with
+    :meth:`ExpandedNodeId.as_xml`, never with this encoding.
+    """
+    return _IDENTITY_SEPARATOR.join(
+        (node_id.namespace, node_id.identifier.as_xml(), node_id.server_uri or "")
+    )
+
+
+def _identity_parts(identity_text: str) -> tuple[str, str, str | None]:
+    """The namespace, identifier and server an identity text encodes."""
+    namespace, local, server = identity_text.split(_IDENTITY_SEPARATOR)
+    return namespace, local, server or None
+
+
+def _identity_node(identity_text: str) -> ExpandedNodeId:
+    """The identifier an identity text describes."""
+    namespace, local, server = _identity_parts(identity_text)
+    return ExpandedNodeId(
+        identifier=NodeId.parse(local), namespace_uri=namespace, server_uri=server
+    )
 
 
 def _lookup(index: ModelIndex, identity_text: str) -> UANode | None:
-    namespace, _, local = identity_text.partition("|")
-    node_id = ExpandedNodeId(identifier=NodeId.parse(local), namespace_uri=namespace)
-    return index.node(node_id)
+    return index.node(_identity_node(identity_text))
 
 
 def _target_label(index: ModelIndex, identity_text: str, is_forward: bool) -> str:
-    namespace, _, local = identity_text.partition("|")
-    node_id = ExpandedNodeId(identifier=NodeId.parse(local), namespace_uri=namespace)
-    label = index.label(node_id)
+    label = index.label(_identity_node(identity_text))
     return label if is_forward else f"{label} (inverse)"
 
 
@@ -2077,6 +2221,9 @@ def _release_metadata(
     for attribute, rule_kind in _METADATA_RULES.items():
         old_value = getattr(before, attribute)
         new_value = getattr(after, attribute)
+        if attribute in _VERSION_ATTRIBUTES and versions_equal(old_value, new_value):
+            # One release in two spellings is not a release move (Annex F.2).
+            continue
         if old_value != new_value:
             deltas.append(
                 MetadataDelta(attribute, verdict(rule_kind), old_value, new_value)
@@ -2105,41 +2252,75 @@ def _model_deltas(
             )
         )
     versions_before = {
-        entry.namespace_uri: entry.version for entry in before.required_model_entries
+        entry.namespace_uri: _required_claim(entry) for entry in before.required_model_entries
     }
     versions_after = {
-        entry.namespace_uri: entry.version for entry in after.required_model_entries
+        entry.namespace_uri: _required_claim(entry) for entry in after.required_model_entries
     }
     for dependency in sorted(set(versions_before) | set(versions_after)):
         old_version = versions_before.get(dependency)
         new_version = versions_after.get(dependency)
-        if old_version != new_version:
-            deltas.append(
-                MetadataDelta(
-                    "required_model_version",
-                    verdict("namespace_model_version_changed"),
-                    old_version,
-                    new_version,
-                    note=dependency,
-                )
+        if versions_equal(old_version, new_version):
+            continue
+        deltas.append(
+            MetadataDelta(
+                "required_model_version",
+                verdict("namespace_model_version_changed"),
+                old_version,
+                new_version,
+                note=dependency,
             )
+        )
     return deltas
 
 
+def _required_claim(entry: ModelInfo) -> str | None:
+    """The version a dependency claims: the comparable ``ModelVersion``, display-only else.
+
+    Annex F.2 states a minimum version through ``ModelVersion`` and ``PublicationDate``; the
+    human readable ``Version`` is the only claim older documents carry.
+    """
+    return entry.model_version or entry.version
+
+
 def _version_drift(uri: str, new: SemanticModel) -> list[MetadataDelta]:
-    """One release, two version claims (§11.3): Version and ModelVersion disagree."""
+    """The two version claims of one namespace (§11.1, OPC 10000-6 Annex F.2, §12.41).
+
+    ``Version`` is a display string that Annex F.2 excludes from programmatic comparisons, while
+    ``ModelVersion`` is the ``SemanticVersionString`` consumers actually compare.  A padded
+    display spelling of the same release — ``1.04.0`` beside ``1.4.0`` — is therefore one release,
+    not a contradiction: only a numeric disagreement is reported, as an advisory to review by
+    hand.  A ``ModelVersion`` that is not valid SemVer is reported separately, because it is the
+    field the comparison depends on.
+    """
     namespace = new.namespaces.get(uri)
-    if namespace is None or namespace.version is None or namespace.model_version is None:
+    if namespace is None:
         return []
-    if namespace.version == namespace.model_version:
-        return []
+    deltas: list[MetadataDelta] = []
+    if namespace.model_version is not None and not is_semantic(namespace.model_version):
+        deltas.append(
+            MetadataDelta(
+                "model_version",
+                verdict("namespace_model_version_syntax"),
+                note=(
+                    f"ModelVersion {namespace.model_version} of {uri} is not a "
+                    "SemanticVersionString (§12.41): consumers compare this field, so spell it "
+                    "as major.minor.patch without leading zeros"
+                ),
+            )
+        )
+    if namespace.version is None or namespace.model_version is None:
+        return deltas
+    if versions_equal(namespace.version, namespace.model_version):
+        return deltas
     return [
         MetadataDelta(
             "version",
             verdict("namespace_version_drift"),
             note=(
-                f"Version {namespace.version} and ModelVersion {namespace.model_version} "
-                f"of {uri} describe the same release differently"
+                f"Version {namespace.version} and ModelVersion {namespace.model_version} of {uri} "
+                f"state different releases ({canonical(namespace.version)} vs "
+                f"{canonical(namespace.model_version)}): review which release is meant"
             ),
         )
     ]
@@ -2186,13 +2367,12 @@ def _metadata_conflicts(model: SemanticModel) -> dict[str, list[MetadataDelta]]:
         if len(seen) < 2:
             continue
         for attribute, label in _CONFLICT_ATTRIBUTES.items():
-            values = sorted(
-                {
-                    declared
-                    for namespace in seen
-                    if (declared := getattr(namespace, attribute))
-                }
-            )
+            claims = [
+                declared
+                for namespace in seen
+                if (declared := getattr(namespace, attribute))
+            ]
+            values = _distinct_claims(claims, numeric=attribute in _VERSION_ATTRIBUTES)
             if len(values) > 1:
                 conflicts.setdefault(uri, []).append(
                     MetadataDelta(
@@ -2226,6 +2406,21 @@ def _metadata_conflicts(model: SemanticModel) -> dict[str, list[MetadataDelta]]:
                 )
             )
     return conflicts
+
+
+def _distinct_claims(values: Sequence[str], *, numeric: bool) -> list[str]:
+    """Metadata spellings that state *different* claims, one representative each.
+
+    Version fields are deduplicated per release rather than per spelling: ``1.04.0`` and
+    ``1.4.0`` are one release written twice (§11.1, Annex F.2), so documents that disagree only
+    about the spelling declare the same claim and do not conflict.
+    """
+    if not numeric:
+        return sorted(set(values))
+    per_release: dict[str, list[str]] = {}
+    for value in values:
+        per_release.setdefault(canonical(value) or value, []).append(value)
+    return sorted(min(group) for group in per_release.values())
 
 
 def _spell_model(entry: ModelInfo) -> str:
@@ -2375,18 +2570,15 @@ def _normalized_extension(values: Sequence[str]) -> tuple[str, ...]:
     return tuple("".join(value.split()) for value in values)
 
 
-def _value_dependencies(node: UANode, index: ModelIndex) -> tuple[tuple[str, str], ...]:
+def _value_dependencies(node: UANode) -> tuple[tuple[str, str], ...]:
     """Where a value points: dependency name and the identifier it resolves to (§3.2.17).
 
-    An identifier that does not resolve in this model keeps its spelling, so a dependency the
-    linker externalized is not read as a changed dependency.
+    The target is spelled in the canonical XML form (`nsu=…;i=…`), which is what the parser
+    resolved a document-local index into — so a dependency the linker externalized and a
+    dependency a document re-indexed both keep their identity, neither reads as changed.
     """
     return tuple(
-        (
-            name,
-            _identity_text(identifier) if index.node(identifier) else identifier.as_xml(),
-        )
-        for name, identifier in node.value_dependencies
+        (name, identifier.as_xml()) for name, identifier in node.value_dependencies
     )
 
 

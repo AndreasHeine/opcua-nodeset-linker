@@ -125,7 +125,7 @@ Expected results:
 | Added / removed / renumbered nodes | 0 / 1 / 0 |
 | Modified nodes | 5, including `ProductInstanceUri` (i=6015) and `Location` (i=6029) |
 | Breaking changes | 6: datatype, modelling rule, declaration removal, reference removal, enum value, array dimensions |
-| Advisory | 3 namespace-metadata findings |
+| Advisory | none: `Version` and `ModelVersion` spell one release twice (`1.04.0` display, `1.4.0` SemVer), which the diff reads as one release |
 | Impact | 494 dependent nodes |
 
 The changed declarations are displayed as:

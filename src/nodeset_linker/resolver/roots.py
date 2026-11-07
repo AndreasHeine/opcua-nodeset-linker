@@ -18,7 +18,6 @@ SelectorKind = Literal[
     "browseName",
     "namespaceUri",
     "typeDefinition",
-    "glob",
 ]
 
 _SELECTOR = re.compile(r"^(?P<kind>[A-Za-z]+)=(?P<value>.+)$")
@@ -94,6 +93,7 @@ class RootResolver:
         raise ResolutionError(f"unsupported root selector kind: {selector.kind!r}")
 
     def _match_browse(self, pattern: str) -> list[UANode]:
+        """A BrowseName, or a glob (`*`/`?`) over BrowseNames — a `browseName=` selector."""
         if "*" in pattern or "?" in pattern:
             return [
                 n
@@ -117,14 +117,25 @@ class RootResolver:
 
     def _resolve_index_marker(self, node_id: ExpandedNodeId) -> ExpandedNodeId:
         """``ns=<index>`` from a config file refers to the document-local index."""
-        uri = node_id.namespace_uri
-        if uri is None or not uri.startswith("index:"):
-            return node_id
-        index = int(uri.removeprefix("index:"))
-        for namespace in self._model.namespaces.values():
-            if namespace.index_in_document == index:
-                return ExpandedNodeId(identifier=node_id.identifier, namespace_uri=namespace.uri)
-        raise ResolutionError(f"namespace index {index} is not declared by any loaded nodeset")
+        return resolve_namespace_index(node_id, self._model)
+
+
+def resolve_namespace_index(node_id: ExpandedNodeId, model: SemanticModel) -> ExpandedNodeId:
+    """Turn a document-local ``ns=<index>`` marker into URI identity.
+
+    The marker comes from a user expression (`ns=1;i=2001`), not from a document, so it is
+    resolved against the merged namespace table.  Identity is a URI everywhere else: an index
+    means different namespaces in different files, which is the load-order trap documented in
+    *Dependency Resolution*.
+    """
+    uri = node_id.namespace_uri
+    if uri is None or not uri.startswith("index:"):
+        return node_id
+    index = int(uri.removeprefix("index:"))
+    for namespace in model.namespaces.values():
+        if namespace.index_in_document == index:
+            return ExpandedNodeId(identifier=node_id.identifier, namespace_uri=namespace.uri)
+    raise ResolutionError(f"namespace index {index} is not declared by any loaded nodeset")
 
 
 def _dedupe(ids: list[ExpandedNodeId]) -> list[ExpandedNodeId]:

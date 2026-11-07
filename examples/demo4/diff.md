@@ -7,7 +7,6 @@
 - Nodes: 1110 → 1109 (-1)
 - Added: 0   Removed: 1   Modified: 5
 - Breaking changes: 6
-- Advisory: 3
 - Total Impact: 494 nodes
 
 ## Removed nodes
@@ -84,24 +83,10 @@
   - Impact: 165 nodes
 
 ## Namespace changes
-- **IA (http://opcfoundation.org/UA/IA/)**
-  - Nodes: 49 → 49
-  - References: 129 → 129
-  - DataTypes: 4 → 4
-  - Version 1.01.2 and ModelVersion 1.1.2 of http://opcfoundation.org/UA/IA/ describe the same release differently
-  - BP-Namespace-VersionDrift: Version and ModelVersion disagree (§11.3): the release says one base revision, the metadata another.
-- **MachineTool (http://opcfoundation.org/UA/MachineTool/)**
-  - Nodes: 523 → 523
-  - References: 1827 → 1827
-  - DataTypes: 8 → 8
-  - Version 1.02.0 and ModelVersion 1.2.0 of http://opcfoundation.org/UA/MachineTool/ describe the same release differently
-  - BP-Namespace-VersionDrift: Version and ModelVersion disagree (§11.3): the release says one base revision, the metadata another.
 - **Machinery (http://opcfoundation.org/UA/Machinery/)**
   - Nodes: 134 → 133 (-1)
   - References: 519 → 516 (-3)
   - DataTypes: 0 → 0
-  - Version 1.04.0 and ModelVersion 1.4.0 of http://opcfoundation.org/UA/Machinery/ describe the same release differently
-  - BP-Namespace-VersionDrift: Version and ModelVersion disagree (§11.3): the release says one base revision, the metadata another.
 
 ## Impact
 - Total Impact: 494 nodes

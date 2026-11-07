@@ -575,6 +575,17 @@ class TestStrictnessStaysStrict:
             LinkerConfig(**base, external=["  "])  # type: ignore[arg-type]
         assert LinkerConfig(**base, external=[DI_NS, DI_NS]).external == [DI_NS]  # type: ignore[arg-type]
 
+    def test_a_modeluri_without_the_trailing_slash_is_the_same_dependency(self) -> None:
+        # OPC 10000-5 writes a namespace URI with a trailing '/'.  A config that leaves it off
+        # means the same model, and both spellings collapse into the URI documents declare.
+        base = {"nodesets": ["x.xml"], "roots": ["browseName=X"]}
+        without_slash = "http://opcfoundation.org/UA/DI"
+        assert LinkerConfig(**base, external=[without_slash]).external == [DI_NS]  # type: ignore[arg-type]
+        assert (
+            LinkerConfig(**base, external=[DI_NS, without_slash]).external  # type: ignore[arg-type]
+            == [DI_NS]
+        )
+
 
 class TestCli:
     @pytest.fixture
