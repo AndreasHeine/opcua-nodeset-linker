@@ -36,6 +36,16 @@ def node_id(number: int, namespace: str = UA_NS) -> ExpandedNodeId:
     return ExpandedNodeId(identifier=NodeId.numeric_id(number), namespace_uri=namespace)
 
 
+def spaced(text: str) -> str:
+    """Console output with line breaks collapsed.
+
+    A CLI message that names a path is printed at the console width, so it wraps at a column
+    that depends on how long the temp directory it runs in is — the same phrase is one line
+    locally and two lines on CI.  Assertions on such a message compare this collapsed form.
+    """
+    return " ".join(text.split())
+
+
 @pytest.fixture
 def ua_base() -> Path:
     return UA_BASE

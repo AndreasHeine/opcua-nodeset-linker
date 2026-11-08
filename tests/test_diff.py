@@ -20,6 +20,7 @@ from tests.conftest import (
     make_reference_type,
     make_variable,
     node_id,
+    spaced,
     structure_definition,
 )
 
@@ -942,7 +943,7 @@ class TestBundleInput:
         old = write(tmp_path, "old.xml", BASE)
         result = CliRunner().invoke(main, ["diff", str(old), str(directory)])
         assert result.exit_code == 1
-        assert "without manifest.json" in result.output
+        assert "without manifest.json" in spaced(result.output)
 
     def test_a_manifest_naming_files_that_are_not_there_is_an_explicit_failure(
         self, tmp_path
@@ -952,7 +953,7 @@ class TestBundleInput:
         old = write(tmp_path, "old.xml", BASE)
         result = CliRunner().invoke(main, ["diff", str(old), str(bundle)])
         assert result.exit_code == 1
-        assert "names files that are not there" in result.output
+        assert "names files that are not there" in spaced(result.output)
 
     def test_a_conflicting_bundle_reports_a_merge_conflict_instead_of_aborting(
         self, tmp_path
@@ -1063,7 +1064,7 @@ class TestScoping:
         old, new = self.pair(tmp_path)
         result = CliRunner().invoke(main, ["diff", str(old), str(new), "--namespace", "NoSuchModel"])
         assert result.exit_code == 1
-        assert "matches no namespace in either side" in result.output
+        assert "matches no namespace in either side" in spaced(result.output)
         assert "NoSuchModel" in result.output
 
     def test_excluding_a_namespace_nothing_declares_is_only_a_notice(self, tmp_path) -> None:

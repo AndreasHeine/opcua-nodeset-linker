@@ -732,5 +732,7 @@ def _render_lint(report: LintReport) -> None:
 
 def _fail(message: str) -> NoReturn:
     """Report a failure and exit with code 1."""
-    console.print(f"[bold red]error:[/] {message}")
+    # A failure usually names a path, so it is printed unwrapped: word wrap would break the
+    # message at whatever column the path happens to run to.
+    console.print(f"[bold red]error:[/] {message}", soft_wrap=True)
     raise SystemExit(1)

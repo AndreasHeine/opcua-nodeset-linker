@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
-from tests.conftest import MACHINERY
+from tests.conftest import MACHINERY, spaced
 
 from nodeset_linker.cli.main import main
 from nodeset_linker.diff.waivers import Waiver, WaiverFileError, WaiverSet
@@ -233,7 +233,7 @@ def test_waiver_file_reports_what_is_wrong(
         main, ["diff", str(before), str(after), "--waiver-file", str(path)]
     )
     assert outcome.exit_code == 1
-    assert expected in outcome.output
+    assert expected in spaced(outcome.output)
 
 
 def test_waiver_file_must_be_an_array_or_a_waivers_object(tmp_path: Path) -> None:
@@ -248,7 +248,7 @@ def test_waiver_file_must_be_an_array_or_a_waivers_object(tmp_path: Path) -> Non
             main, ["diff", str(before), str(after), "--waiver-file", str(path)]
         )
         assert outcome.exit_code == 1
-        assert expected in outcome.output
+        assert expected in spaced(outcome.output)
 
 
 def test_waiver_object_shape_is_parsed_from_the_file(tmp_path: Path) -> None:
