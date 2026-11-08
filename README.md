@@ -536,7 +536,8 @@ Missing files and unparsable nodesets are reported and exit 1, like every other 
 
 ## Behaviour changes
 
-Changes to how the tool reports, compared with earlier releases:
+Changes to how the tool reports, compared with earlier releases — per-release notes live in
+[CHANGELOG.md](CHANGELOG.md):
 
 - Severity is a three-bucket model (BREAKING / ADVISORY / INFO) with a rule id and a paper-grounded
   rationale on every finding; the old flat "breaking" list is gone.
