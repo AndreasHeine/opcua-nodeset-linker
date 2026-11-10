@@ -29,7 +29,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from lxml.etree import Element, SubElement, fromstring, tostring
+from lxml.etree import Element, SubElement, tostring
 from lxml.etree import indent as xml_indent
 
 from nodeset_linker.graph.engine import SemanticGraph
@@ -52,8 +52,9 @@ from nodeset_linker.models.node import (
 )
 from nodeset_linker.models.node_class import ModellingRule, NodeClass
 from nodeset_linker.repository.model import SemanticModel
-from nodeset_linker.retention.engine import prune_navigation
+from nodeset_linker.retention.engine import repair_navigation
 from nodeset_linker.utils.errors import ExportError
+from nodeset_linker.utils.xml import parse_fragment
 from nodeset_linker.validator.semantic import SemanticValidator
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -181,6 +182,19 @@ class NodeSetExporter:
             and (document_namespace is None or node.node_id.namespace == document_namespace)
         ]
         self._server_indices: dict[str, int] = {}
+        self._dropped: list[str] = []
+
+    @property
+    def dropped(self) -> list[str]:
+        """Identifiers omitted while serialising because their target is not shipped.
+
+        The raw exporter may legitimately write a hand-picked subset with boundary links
+        pruned; the safe :func:`export` refuses the write instead of losing data silently.
+        """
+        return list(self._dropped)
+
+    def _record_drop(self, node: UANode, target: ExpandedNodeId, kind: str) -> None:
+        self._dropped.append(f"{kind} of {node.browse_name.name} -> {target.as_xml()}")
 
     def _is_external(self, node_id: ExpandedNodeId) -> bool:
         return node_id.namespace in self._external
@@ -246,13 +260,13 @@ class NodeSetExporter:
 
         models_el = SubElement(root, "Models")
         written = False
-        infos = self._model.models.values()
+        infos: list[ModelInfo] = list(self._model.models.values())
         if self._document_namespace is not None:
-            infos = {
-                self._document_namespace: self._model.models.get(
-                    self._document_namespace, ModelInfo(namespace_uri=self._document_namespace)
-                )
-            }.values()
+            # A split document states only the model its *source* declared; a namespace
+            # without a ModelTableEntry contributes no entry — inventing a version-less
+            # one would claim metadata the source never stated.
+            declared = self._model.models.get(self._document_namespace)
+            infos = [] if declared is None else [declared]
         for info in sorted(infos, key=lambda m: m.namespace_uri):
             if info.namespace_uri not in namespaces:
                 continue  # a namespace that contributed no node contributes no model entry
@@ -423,8 +437,6 @@ class NodeSetExporter:
         # official documents do.  The node's own NodeId index is never used for a browse name.
         browse = node.browse_name
         browse_uri = browse.namespace_uri
-        if browse_uri is None and browse.namespace_index:
-            browse_uri = node.node_id.namespace  # an index hint with no resolvable URI
         if browse_uri and browse_uri != UA_NAMESPACE and browse_uri in assigner.indices():
             element.set("BrowseName", f"{assigner.index_of(browse_uri)}:{browse.name}")
         elif ":" in browse.name:
@@ -442,7 +454,9 @@ class NodeSetExporter:
             NodeClass.VARIABLE_TYPE,
         }:
             target = self._id_of(data_type, ids, assigner)
-            if target is not None:
+            if target is None:
+                self._record_drop(node, data_type, "data type")
+            else:
                 element.set("DataType", target)
         value_rank = getattr(node, "value_rank", None)
         if value_rank is not None:
@@ -453,11 +467,15 @@ class NodeSetExporter:
 
         if node.node_class in INSTANCE_CLASSES and node.parent_node_id is not None:
             parent = self._id_of(node.parent_node_id, ids, assigner)
-            if parent is not None:
+            if parent is None:
+                self._record_drop(node, node.parent_node_id, "parent")
+            else:
                 element.set("ParentNodeId", parent)
         if node.node_class is NodeClass.METHOD and node.method_declaration_id is not None:
             declaration = self._id_of(node.method_declaration_id, ids, assigner)
-            if declaration is not None:
+            if declaration is None:
+                self._record_drop(node, node.method_declaration_id, "method declaration")
+            else:
                 element.set("MethodDeclarationId", declaration)
 
         allowed = PASSTHROUGH_ATTRIBUTES[node.node_class.value]
@@ -485,14 +503,19 @@ class NodeSetExporter:
         if node.role_permissions_xml:
             permissions_el = SubElement(element, "RolePermissions")
             for serialized in node.role_permissions_xml:
-                permissions_el.append(fromstring(serialized))
+                permissions_el.append(parse_fragment(serialized))
         if node.extensions_xml:
             extensions_el = SubElement(element, "Extensions")
             for serialized in node.extensions_xml:
-                extensions_el.append(fromstring(serialized))
+                extensions_el.append(parse_fragment(serialized))
 
-        if node.value_xml is not None:
-            value = fromstring(node.value_xml)
+        # ``Value`` is only legal on variables (OPC 10000-6); a stray value on another
+        # node class is a source-document mistake and must not be written verbatim.
+        if node.value_xml is not None and node.node_class in {
+            NodeClass.VARIABLE,
+            NodeClass.VARIABLE_TYPE,
+        }:
+            value = parse_fragment(node.value_xml)
             dependencies = dict(node.value_dependencies)
             for field in value.iter():
                 if field.tag.rsplit("}", 1)[-1] not in {"TypeId", "DataType"}:
@@ -507,7 +530,9 @@ class NodeSetExporter:
                             raise ExportError(f"value dependency {dependency} was removed")
                         identifier.text = target
             element.append(value)
-        if node.inverse_name:
+        # ``InverseName`` belongs to reference types only; on any other class it would
+        # make the written document fail the schema.
+        if node.inverse_name and node.node_class is NodeClass.REFERENCE_TYPE:
             SubElement(element, "InverseName").text = node.inverse_name
 
         if isinstance(node, UADataType) and node.definition is not None:
@@ -525,7 +550,8 @@ class NodeSetExporter:
         for ref in node.references:
             target = self._id_of(ref.target, ids, assigner)
             if target is None:
-                continue  # dropped dependency; validation already guarantees none remain
+                self._record_drop(node, ref.target, "reference")
+                continue
             attrs: dict[str, str] = {
                 "ReferenceType": self._reference_type_xml(ref, ids, aliases, assigner)
             }
@@ -698,6 +724,10 @@ def export(
     ``external`` declares the models whose declarations this file does not ship.  Their
     nodes are never written, but every identifier pointing at them is, and validation only
     accepts targets in those namespaces.
+
+    ``validate=False`` skips the semantic pass, but identifiers whose targets are not
+    shipped still refuse the write — skipping validation must never become silent data
+    loss in the written file.
     """
     declared = frozenset(external)
     shipped = {node_id for node_id in keep if node_id.namespace not in declared}
@@ -706,9 +736,15 @@ def export(
         report = SemanticValidator(subset, source=model, external=declared).validate()
         if not report.ok:
             raise ExportError(f"export blocked: {report.summary()}")
-    return NodeSetExporter(
+    exporter = NodeSetExporter(
         model, shipped, mark_namespace_subsets=mark_namespace_subsets, external=declared
-    ).write(path)
+    )
+    exporter.build_document()
+    if exporter.dropped:
+        raise ExportError(
+            "export blocked: identifiers cannot be written: " + "; ".join(exporter.dropped)
+        )
+    return exporter.write(path)
 
 
 def export_closure(
@@ -716,7 +752,7 @@ def export_closure(
 ) -> Path:
     """Export exactly the nodes of a dependency closure."""
     keep = {node_id for node_id in closure.ids() if node_id.namespace not in external}
-    prepared = prune_navigation(
+    prepared = repair_navigation(
         model, SemanticGraph.from_model(model), keep, external,
         navigation_only=closure.navigation_only,
     )

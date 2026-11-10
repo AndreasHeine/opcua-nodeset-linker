@@ -167,4 +167,9 @@ class QualifiedName:
         return self.namespace_uri is not None and self.namespace_uri != UA_NAMESPACE_URI
 
     def __str__(self) -> str:
-        return f"{self.namespace_index}:{self.name}" if self.namespace_index else self.name
+        # Qualified by the namespace *URI*, never the source-document index: indexes
+        # change when nodesets are merged or reduced, the URI does not.  A name in the
+        # OPC UA namespace (or with no namespace at all) spells bare.
+        if self.is_qualified and self.namespace_uri is not None:
+            return f"{self.namespace_uri}:{self.name}"
+        return self.name

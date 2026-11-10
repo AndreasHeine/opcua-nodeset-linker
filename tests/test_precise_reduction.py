@@ -26,7 +26,7 @@ from nodeset_linker.models.node_class import ModellingRule
 from nodeset_linker.pipeline import LinkerPipeline
 from nodeset_linker.repository.model import build_model, load_nodesets
 from nodeset_linker.resolver.closure import DependencyResolver
-from nodeset_linker.retention.engine import prune_navigation
+from nodeset_linker.retention.engine import repair_navigation
 from nodeset_linker.validator.semantic import SemanticValidator
 
 
@@ -70,7 +70,7 @@ def test_datatype_inheritance_keeps_bases_not_siblings(forward_only: bool) -> No
     assert closure(nodes, 1).ids() == {node_id(1)}
     model = build_model(nodes)
     graph = SemanticGraph.from_model(model)
-    prepared = prune_navigation(model, graph, {node_id(1), node_id(2)})
+    prepared = repair_navigation(model, graph, {node_id(1), node_id(2)})
     prepared.nodes = {nid: n for nid, n in prepared.nodes.items() if nid != node_id(3)}
     assert SemanticValidator(prepared).validate().ok
 

@@ -27,7 +27,7 @@ from nodeset_linker.reports.data import (
 from nodeset_linker.repository.model import SemanticModel, load_nodesets
 from nodeset_linker.resolver.closure import Closure, DependencyResolver
 from nodeset_linker.resolver.roots import RootResolver, RootSelector
-from nodeset_linker.retention.engine import RetentionEngine, prune_navigation
+from nodeset_linker.retention.engine import RetentionEngine, repair_navigation
 from nodeset_linker.utils.errors import ResolutionError, ValidationError
 from nodeset_linker.validator.semantic import SemanticValidator, ValidationReport
 
@@ -114,7 +114,7 @@ class LinkerPipeline:
         # closure, because the dependency it represents is stated in the output header.
         retained -= external_ids
 
-        export_model = prune_navigation(
+        export_model = repair_navigation(
             model, graph, retained, external, navigation_only=closure.navigation_only
         )
         engine.repair(
@@ -122,7 +122,7 @@ class LinkerPipeline:
             retained,
             repairable=set(engine.dropped) - set(engine.excluded) - external_ids,
         )
-        export_model = prune_navigation(
+        export_model = repair_navigation(
             model, graph, retained, external, navigation_only=closure.navigation_only
         )
 

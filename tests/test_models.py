@@ -6,6 +6,7 @@ import pytest
 
 from nodeset_linker.models.dependency import DependencyKind, MandatoryLevel
 from nodeset_linker.models.identifiers import ExpandedNodeId, IdentifierKind, NodeId, QualifiedName
+from nodeset_linker.models.namespace_metadata import is_namespace_metadata
 from nodeset_linker.models.node import (
     Definition,
     EnumValue,
@@ -23,6 +24,7 @@ from nodeset_linker.models.node import (
     mandatory_level_of,
 )
 from nodeset_linker.models.node_class import ModellingRule, NodeClass, NodeRole
+from nodeset_linker.repository.model import build_model
 
 UA = "http://opcfoundation.org/UA/"
 
@@ -68,9 +70,15 @@ class TestExpandedNodeId:
 
 
 class TestQualifiedName:
-    def test_indexed_form(self) -> None:
-        assert QualifiedName(name="Foo", namespace_index=3).__str__() == "3:Foo"
-        assert QualifiedName(name="Foo").__str__() == "Foo"
+    def test_str_qualifies_by_uri_not_source_index(self) -> None:
+        """The index is document-local; the URI is the stable qualification (§docstring)."""
+        qualified = QualifiedName(
+            name="Foo", namespace_index=3, namespace_uri="http://opcfoundation.org/UA/Machinery/"
+        )
+        assert str(qualified) == "http://opcfoundation.org/UA/Machinery/:Foo"
+        assert str(QualifiedName(name="Foo")) == "Foo"
+        assert str(QualifiedName(name="Foo", namespace_index=3)) == "Foo"  # index alone spells bare
+        assert str(QualifiedName(name="HasComponent", namespace_uri=UA)) == "HasComponent"
 
 
 class TestNodeModel:
@@ -181,3 +189,67 @@ class TestStructureField:
         field = StructureField(name="x", data_type=ExpandedNodeId.parse("i=24"))
         assert field.is_optional is False
         assert field.description is None
+
+
+class TestNamespaceMetadataMatching:
+    """``IsNamespaceSubset`` detection requires the *standard* type, not just its number."""
+
+    VENDOR = "http://vendor.example.org/"
+
+    def _vendor_metadata_like(self) -> UAObject:
+        return UAObject(
+            node_id=ExpandedNodeId(identifier=NodeId.numeric_id(9000), namespace_uri=self.VENDOR),
+            browse_name=QualifiedName(name=self.VENDOR),
+            references=(
+                Reference(
+                    reference_type=ExpandedNodeId(identifier=NodeId.numeric_id(40), namespace_uri=UA),
+                    type_name="HasTypeDefinition",
+                    target=ExpandedNodeId(identifier=NodeId.numeric_id(11616), namespace_uri=self.VENDOR),
+                    is_forward=True,
+                ),
+            ),
+        )
+
+    def test_foreign_type_id_is_not_namespace_metadata(self) -> None:
+        node = self._vendor_metadata_like()
+        assert is_namespace_metadata(node) is False
+
+    def test_standard_type_id_in_ua_namespace_is_namespace_metadata(self) -> None:
+        node = UAObject(
+            node_id=ExpandedNodeId(identifier=NodeId.numeric_id(9000), namespace_uri=self.VENDOR),
+            browse_name=QualifiedName(name=self.VENDOR),
+            references=(
+                Reference(
+                    reference_type=ExpandedNodeId(identifier=NodeId.numeric_id(40), namespace_uri=UA),
+                    type_name="HasTypeDefinition",
+                    target=ExpandedNodeId(identifier=NodeId.numeric_id(11616), namespace_uri=UA),
+                    is_forward=True,
+                ),
+            ),
+        )
+        assert is_namespace_metadata(node) is True
+
+    def test_foreign_metadata_is_not_a_subset_marker(self) -> None:
+        """The vendor object's ``IsNamespaceSubset`` property never marks the namespace."""
+        from nodeset_linker.models.namespace_metadata import marked_namespaces, metadata_objects
+        from nodeset_linker.models.node import UAVariable
+        from nodeset_linker.models.node_class import NodeRole
+
+        obj = self._vendor_metadata_like()
+        marker = UAVariable(
+            node_id=ExpandedNodeId(identifier=NodeId.numeric_id(9001), namespace_uri=self.VENDOR),
+            browse_name=QualifiedName(name="IsNamespaceSubset"),
+            node_class=NodeClass.VARIABLE,
+            role=NodeRole.INSTANCE,
+            parent_node_id=obj.node_id,
+        )
+        plain = UAObject(
+            node_id=ExpandedNodeId(identifier=NodeId.numeric_id(9002), namespace_uri=self.VENDOR),
+            browse_name=QualifiedName(name="Pump"),
+        )
+        model = build_model([obj, marker, plain])
+        assert metadata_objects(model, self.VENDOR) == []
+        retained = {obj.node_id, marker.node_id, plain.node_id}
+        subset, present = marked_namespaces(model, retained)[self.VENDOR]
+        assert subset is False
+        assert present is False

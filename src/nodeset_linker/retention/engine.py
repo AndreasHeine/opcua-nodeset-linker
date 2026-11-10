@@ -13,7 +13,7 @@ from nodeset_linker.models.node_class import ModellingRule, NodeRole
 from nodeset_linker.repository.model import SemanticModel
 
 
-def prune_navigation(
+def repair_navigation(
     model: SemanticModel,
     graph: SemanticGraph,
     keep: set[ExpandedNodeId],
@@ -21,7 +21,13 @@ def prune_navigation(
     *,
     navigation_only: set[ExpandedNodeId] | None = None,
 ) -> SemanticModel:
-    """Prepare retained nodes without legal boundary links; preserve missing hard targets."""
+    """Repair the references of the retained nodes; the returned model keeps *all* nodes.
+
+    The name says *repair*, not *prune*: dropping happens elsewhere (the export ships
+    ``keep``).  This only rewrites the references of retained nodes — removing illegal
+    boundary links and preserving missing hard targets — so validation of the shipped
+    subset can still resolve everything against the full model.
+    """
     result = SemanticModel(
         nodes=dict(model.nodes),
         namespaces=dict(model.namespaces),

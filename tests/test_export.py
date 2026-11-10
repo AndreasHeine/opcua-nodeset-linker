@@ -9,13 +9,14 @@ from tests.conftest import DATA, UA_NS, Machinery_NS, node_id
 from nodeset_linker.exporter.nodeset import (
     NODESET_XML_NAMESPACE,
     NamespaceIndexAssigner,
+    NodeSetExporter,
     export,
     export_closure,
 )
 from nodeset_linker.models.identifiers import QualifiedName
 from nodeset_linker.models.namespace import Namespace
 from nodeset_linker.models.namespace_metadata import TYPES_XML_NAMESPACE
-from nodeset_linker.models.node import Reference, UAObject
+from nodeset_linker.models.node import Reference, UANode, UAObject
 from nodeset_linker.models.node_class import NodeClass, NodeRole
 from nodeset_linker.repository.model import build_model, load_nodesets
 from nodeset_linker.utils.errors import ExportError
@@ -173,6 +174,90 @@ class TestExport:
         with pytest.raises(ExportError, match="no reference type"):
             export(model, {source.node_id, target.node_id}, out, validate=False)
         assert not out.exists()
+
+    def test_schema_forbidden_value_and_inverse_name_are_not_written(self, tmp_path) -> None:
+        """``Value`` is only legal on variables and ``InverseName`` only on reference types."""
+        stray = UAObject(
+            node_id=node_id(31000, Machinery_NS),
+            browse_name=QualifiedName(name="StrayValueObject"),
+            node_class=NodeClass.OBJECT,
+            role=NodeRole.INSTANCE,
+            value_xml="<Value>oops</Value>",
+            inverse_name="No",
+        )
+        reftype = UANode(
+            node_id=node_id(31001, Machinery_NS),
+            browse_name=QualifiedName(name="HasWorkDone"),
+            node_class=NodeClass.REFERENCE_TYPE,
+            role=NodeRole.BASE_TYPE,
+            inverse_name="HasWorkDone_Inverse",
+        )
+        model = build_model([stray, reftype])
+        out = export(model, {stray.node_id, reftype.node_id}, tmp_path / "gated.xml", validate=False)
+        xml = out.read_text(encoding="utf-8")
+        assert "<Value" not in xml
+        # The legal one still survives.
+        assert "InverseName" in xml
+
+    def test_export_refuses_an_unwritable_reference_even_without_validation(self, tmp_path) -> None:
+        """validate=False may skip the semantic pass, but it never writes a silently pruned file."""
+        target = UAObject(
+            node_id=node_id(31002, Machinery_NS),
+            browse_name=QualifiedName(name="Gone"),
+            node_class=NodeClass.OBJECT,
+            role=NodeRole.INSTANCE,
+        )
+        source = UAObject(
+            node_id=node_id(31003, Machinery_NS),
+            browse_name=QualifiedName(name="Holder"),
+            node_class=NodeClass.OBJECT,
+            role=NodeRole.INSTANCE,
+            references=[Reference(target=target.node_id, type_name="HasComponent")],
+        )
+        model = build_model([source, target])
+        out = tmp_path / "dangling.xml"
+        with pytest.raises(ExportError, match="cannot be written"):
+            export(model, {source.node_id}, out, validate=False)
+        assert not out.exists()
+
+    def test_split_document_without_a_declared_model_has_no_models_element(self, tmp_path) -> None:
+        """A namespace whose source declared no ``Model`` gets no invented entry (§OPC 10000-6)."""
+        vendor_ns = "http://vendor.example.org/"
+        node = UAObject(
+            node_id=node_id(4200, vendor_ns),
+            browse_name=QualifiedName(name="PumpType"),
+            node_class=NodeClass.OBJECT,
+            role=NodeRole.INSTANCE,
+        )
+        model = build_model([node])  # domain objects declare no models
+        exporter = NodeSetExporter(model, {node.node_id}, document_namespace=vendor_ns)
+        out = exporter.write(tmp_path / "vendor.xml")
+        xml = out.read_text(encoding="utf-8")
+        assert "<Models" not in xml
+        assert "<Model " not in xml
+        assert vendor_ns in xml  # the namespace itself is still declared
+
+
+    def test_raw_exporter_records_the_references_it_omits(self, tmp_path) -> None:
+        """The low-level exporter may prune boundary links, but it says which ones."""
+        target = UAObject(
+            node_id=node_id(31004, Machinery_NS),
+            browse_name=QualifiedName(name="Sibling"),
+            node_class=NodeClass.OBJECT,
+            role=NodeRole.INSTANCE,
+        )
+        source = UAObject(
+            node_id=node_id(31005, Machinery_NS),
+            browse_name=QualifiedName(name="Holder2"),
+            node_class=NodeClass.OBJECT,
+            role=NodeRole.INSTANCE,
+            references=[Reference(target=target.node_id, type_name="HasComponent")],
+        )
+        model = build_model([source, target])
+        exporter = NodeSetExporter(model, {source.node_id})
+        exporter.write(tmp_path / "pruned.xml")
+        assert len(exporter.dropped) == 1
+        assert "31004" in exporter.dropped[0]
 
     def test_exported_nodeids_use_new_indexes(self, tmp_path) -> None:
         model = load_nodesets([DATA / "ua_base.xml", DATA / "machinery.xml"])
