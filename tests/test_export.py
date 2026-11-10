@@ -259,6 +259,48 @@ class TestExport:
         assert len(exporter.dropped) == 1
         assert "31004" in exporter.dropped[0]
 
+    def test_illegal_class_attributes_are_recorded_as_omitted(self, tmp_path) -> None:
+        """A gated ``Value``/``InverseName`` is recorded instead of written silently."""
+        stray = UAObject(
+            node_id=node_id(31006, Machinery_NS),
+            browse_name=QualifiedName(name="StrayAgain"),
+            node_class=NodeClass.OBJECT,
+            role=NodeRole.INSTANCE,
+            value_xml="<Value>oops</Value>",
+            inverse_name="No",
+        )
+        model = build_model([stray])
+        exporter = NodeSetExporter(model, {stray.node_id})
+        out = exporter.write(tmp_path / "omitted.xml")
+        assert "<Value" not in out.read_text(encoding="utf-8")
+        assert exporter.omitted == [
+            "value of StrayAgain (Object)",
+            "inverse name of StrayAgain (Object)",
+        ]
+        assert exporter.dropped == []
+
+    def test_dropped_describes_the_last_build(self, tmp_path) -> None:
+        """Rebuilding the same subset does not accumulate drop entries."""
+        target = UAObject(
+            node_id=node_id(31007, Machinery_NS),
+            browse_name=QualifiedName(name="Sibling2"),
+            node_class=NodeClass.OBJECT,
+            role=NodeRole.INSTANCE,
+        )
+        source = UAObject(
+            node_id=node_id(31008, Machinery_NS),
+            browse_name=QualifiedName(name="Holder3"),
+            node_class=NodeClass.OBJECT,
+            role=NodeRole.INSTANCE,
+            references=[Reference(target=target.node_id, type_name="HasComponent")],
+        )
+        model = build_model([source, target])
+        exporter = NodeSetExporter(model, {source.node_id})
+        exporter.write(tmp_path / "pruned-a.xml")
+        assert len(exporter.dropped) == 1
+        exporter.write(tmp_path / "pruned-b.xml")
+        assert len(exporter.dropped) == 1  # reset per build, not accumulated
+
     def test_exported_nodeids_use_new_indexes(self, tmp_path) -> None:
         model = load_nodesets([DATA / "ua_base.xml", DATA / "machinery.xml"])
         out = export(model, set(FULL), tmp_path / "full.xml")

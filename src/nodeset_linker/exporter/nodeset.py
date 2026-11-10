@@ -183,6 +183,7 @@ class NodeSetExporter:
         ]
         self._server_indices: dict[str, int] = {}
         self._dropped: list[str] = []
+        self._omitted: list[str] = []
 
     @property
     def dropped(self) -> list[str]:
@@ -190,11 +191,25 @@ class NodeSetExporter:
 
         The raw exporter may legitimately write a hand-picked subset with boundary links
         pruned; the safe :func:`export` refuses the write instead of losing data silently.
+        Entries describe the *last* :meth:`build_document` call — a rebuild resets them.
         """
         return list(self._dropped)
 
+    @property
+    def omitted(self) -> list[str]:
+        """Attributes not written because they are illegal for the node's class.
+
+        Kept apart from :attr:`dropped`: a gated ``Value`` or ``InverseName`` is a
+        source-document mistake of the *node class*, not an identifier whose target is
+        unshippable, so :func:`export` records these but does not refuse the write.
+        """
+        return list(self._omitted)
+
     def _record_drop(self, node: UANode, target: ExpandedNodeId, kind: str) -> None:
         self._dropped.append(f"{kind} of {node.browse_name.name} -> {target.as_xml()}")
+
+    def _record_omitted(self, node: UANode, kind: str) -> None:
+        self._omitted.append(f"{kind} of {node.browse_name.name} ({node.node_class.value})")
 
     def _is_external(self, node_id: ExpandedNodeId) -> bool:
         return node_id.namespace in self._external
@@ -221,6 +236,10 @@ class NodeSetExporter:
         return rewrites
 
     def build_document(self) -> bytes:
+        # Each build reports its own omissions: dropped/omitted describe the document
+        # that was just built, not every build this exporter has done.
+        self._dropped = []
+        self._omitted = []
         used_uris = {node.node_id.namespace for node in self._nodes}
         # Every identifier this document points at, references and embedded identifiers
         # alike: an externalized model needs a namespace entry so its references resolve.
@@ -334,10 +353,14 @@ class NodeSetExporter:
 
     def write(self, path: Path | str) -> Path:
         out = Path(path)
-        if out.parent and not out.parent.exists():
-            out.parent.mkdir(parents=True)
+        self._ensure_parent(out)
         out.write_bytes(self.build_document())
         return out
+
+    @staticmethod
+    def _ensure_parent(out: Path) -> None:
+        if out.parent and not out.parent.exists():
+            out.parent.mkdir(parents=True)
 
     def _namespace(self, uri: str) -> Namespace:
         """Declared metadata if known; otherwise the URI is still written out."""
@@ -510,7 +533,7 @@ class NodeSetExporter:
                 extensions_el.append(parse_fragment(serialized))
 
         # ``Value`` is only legal on variables (OPC 10000-6); a stray value on another
-        # node class is a source-document mistake and must not be written verbatim.
+        # node class is a source-document mistake — record it, never write it verbatim.
         if node.value_xml is not None and node.node_class in {
             NodeClass.VARIABLE,
             NodeClass.VARIABLE_TYPE,
@@ -530,10 +553,15 @@ class NodeSetExporter:
                             raise ExportError(f"value dependency {dependency} was removed")
                         identifier.text = target
             element.append(value)
+        elif node.value_xml is not None:
+            self._record_omitted(node, "value")
         # ``InverseName`` belongs to reference types only; on any other class it would
-        # make the written document fail the schema.
-        if node.inverse_name and node.node_class is NodeClass.REFERENCE_TYPE:
-            SubElement(element, "InverseName").text = node.inverse_name
+        # make the written document fail the schema — record it, do not write it.
+        if node.inverse_name:
+            if node.node_class is NodeClass.REFERENCE_TYPE:
+                SubElement(element, "InverseName").text = node.inverse_name
+            else:
+                self._record_omitted(node, "inverse name")
 
         if isinstance(node, UADataType) and node.definition is not None:
             self._serialise_definition(element, node, node.definition, ids, assigner)
@@ -739,12 +767,15 @@ def export(
     exporter = NodeSetExporter(
         model, shipped, mark_namespace_subsets=mark_namespace_subsets, external=declared
     )
-    exporter.build_document()
+    document = exporter.build_document()
     if exporter.dropped:
         raise ExportError(
             "export blocked: identifiers cannot be written: " + "; ".join(exporter.dropped)
         )
-    return exporter.write(path)
+    out = Path(path)
+    NodeSetExporter._ensure_parent(out)
+    out.write_bytes(document)
+    return out
 
 
 def export_closure(
