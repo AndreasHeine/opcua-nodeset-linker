@@ -201,7 +201,9 @@ class NodeSetExporter:
 
         Kept apart from :attr:`dropped`: a gated ``Value`` or ``InverseName`` is a
         source-document mistake of the *node class*, not an identifier whose target is
-        unshippable, so :func:`export` records these but does not refuse the write.
+        unshippable, so the raw exporter records these and :func:`export` never refuses
+        a write because of them. Only the raw exporter exposes the list — the safe
+        :func:`export` discards its exporter after writing.
         """
         return list(self._omitted)
 
@@ -351,10 +353,11 @@ class NodeSetExporter:
         ordered = sorted(uris)
         return {uri: index for index, uri in enumerate(ordered, start=1)}
 
-    def write(self, path: Path | str) -> Path:
+    def write(self, path: Path | str, document: bytes | None = None) -> Path:
+        """Write the serialized document; ``document`` reuses a prior build's bytes."""
         out = Path(path)
         self._ensure_parent(out)
-        out.write_bytes(self.build_document())
+        out.write_bytes(self.build_document() if document is None else document)
         return out
 
     @staticmethod
@@ -772,10 +775,7 @@ def export(
         raise ExportError(
             "export blocked: identifiers cannot be written: " + "; ".join(exporter.dropped)
         )
-    out = Path(path)
-    NodeSetExporter._ensure_parent(out)
-    out.write_bytes(document)
-    return out
+    return exporter.write(path, document)
 
 
 def export_closure(
