@@ -86,6 +86,25 @@ class TestCustomRules:
     def test_browse_glob(self) -> None:
         assert CustomRule(include=False, browse_name="*Diagnostics*").matches(make_object("MachineDiagnostics", 1))
 
+    def test_modelling_rule_selects_rule_less_nodes(self) -> None:
+        """A rule-less node spells as ``None``; a spelled rule must not crash on it."""
+        rule_less = make_object("JobStatus", 1)
+        assert CustomRule(include=False, modelling_rule="None").matches(rule_less) is True
+        assert CustomRule(include=False, modelling_rule="Mandatory").matches(rule_less) is False
+
+        mandatory = make_variable("JobStatus", 1, rule=ModellingRule.MANDATORY)
+        assert CustomRule(include=False, modelling_rule="Mandatory").matches(mandatory) is True
+        assert CustomRule(include=False, modelling_rule="None").matches(mandatory) is False
+
+    def test_engine_excludes_rule_less_nodes_by_modelling_rule(self) -> None:
+        engine = RetentionEngine(
+            policy=RuntimePolicy(),
+            custom_rules=[CustomRule(include=False, modelling_rule="None")],
+        )
+        rule_less = make_object("MachineDiagnostics", 1)
+        assert engine.decide(rule_less, retained_by_closure=True, is_root=False) is False
+        assert engine.excluded == [rule_less.node_id]
+
     def test_engine_first_rule_wins(self) -> None:
         engine = RetentionEngine(
             policy=StrictPolicy(),

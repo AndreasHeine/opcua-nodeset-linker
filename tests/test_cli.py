@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from click.testing import CliRunner
@@ -120,3 +121,71 @@ class TestCli:
         result = CliRunner().invoke(main, ["analyze", str(bad)])
         assert result.exit_code == 1
         assert "error:" in result.output
+
+    def test_analyze_with_modelling_rule_custom(self, tmp_path) -> None:
+        """End-to-end: a ``modellingRule=`` rule must survive decisions over rule-less nodes."""
+        config = tmp_path / "custom.yaml"
+        config.write_text(
+            "nodesets:\n"
+            f"  - {(DATA / 'ua_base.xml').as_posix()}\n"
+            f"  - {(DATA / 'machinery.xml').as_posix()}\n"
+            "roots:\n  - browseName=MSSControllerType\n"
+            "mode: CUSTOM\n"
+            "custom:\n  retain:\n    - modellingRule=Mandatory\n",
+            encoding="utf-8",
+        )
+        result = CliRunner().invoke(main, ["analyze", str(config)])
+        assert result.exit_code == 0, result.output
+        assert "original_nodes" in result.output
+
+    def test_bundle_manifest_cannot_escape_the_bundle(self, tmp_path) -> None:
+        """Manifest entries are data, not trust: paths outside the bundle directory fail."""
+        bundle = tmp_path / "bundle"
+        bundle.mkdir()
+        (bundle / "machinery.xml").write_text(
+            (DATA / "machinery.xml").read_text(encoding="utf-8"), encoding="utf-8"
+        )
+        secret = tmp_path / "secret.xml"
+        secret.write_text((DATA / "ua_base.xml").read_text(encoding="utf-8"), encoding="utf-8")
+
+        for escape in ("../secret.xml", secret.as_posix()):
+            (bundle / "manifest.json").write_text(
+                json.dumps({"namespaces": [{"namespaceUri": "u", "output_file": escape}]}),
+                encoding="utf-8",
+            )
+            result = CliRunner().invoke(main, ["diff", str(bundle), str(bundle)])
+            assert result.exit_code == 1, result.output
+            assert "outside the bundle" in result.output
+
+    def test_bundle_manifest_inside_the_bundle_still_loads(self, tmp_path) -> None:
+        bundle = tmp_path / "bundle"
+        bundle.mkdir()
+        (bundle / "machinery.xml").write_text(
+            (DATA / "machinery.xml").read_text(encoding="utf-8"), encoding="utf-8"
+        )
+        (bundle / "manifest.json").write_text(
+            json.dumps({"namespaces": [{"namespaceUri": "u", "output_file": "machinery.xml"}]}),
+            encoding="utf-8",
+        )
+        result = CliRunner().invoke(main, ["diff", str(bundle), str(bundle)])
+        assert result.exit_code == 0, result.output
+
+    def test_stats_and_validate_report_bad_files_without_tracebacks(self, tmp_path) -> None:
+        broken = tmp_path / "broken.xml"
+        broken.write_text("<UANodeSet", encoding="utf-8")  # truncated document
+        for command in ("stats", "validate"):
+            result = CliRunner().invoke(main, [command, str(broken)])
+            assert result.exit_code == 1, result.output
+            assert "error:" in result.output
+            assert "Traceback" not in result.output
+
+    def test_corrupt_schema_fails_the_validate_cleanly(self, tmp_path) -> None:
+        broken_schema = tmp_path / "broken.xsd"
+        broken_schema.write_text("<xs:schema xmlns:xs=", encoding="utf-8")  # truncated XSD
+        result = CliRunner().invoke(
+            main,
+            ["validate", str(DATA / "ua_base.xml"), "--schema", str(broken_schema)],
+        )
+        assert result.exit_code == 1, result.output
+        assert "cannot read schema" in result.output
+        assert "Traceback" not in result.output

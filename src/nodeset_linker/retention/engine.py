@@ -92,8 +92,10 @@ class CustomRule:
 
     Supported keys: ``namespace`` (the namespace *URI*, e.g.
     ``http://opcfoundation.org/UA/Machinery/`` or ``*Machinery*``), ``browseName``,
-    ``nodeClass`` and ``modellingRule``; values may contain globs (``*Diagnostics*``).
-    All given keys must match for the rule to apply.
+    ``nodeClass`` and ``modellingRule``; ``namespace`` and ``browseName`` values may
+    contain globs (``*Diagnostics*``), ``nodeClass`` and ``modellingRule`` are exact
+    spellings (case-insensitive).  ``modellingRule=None`` selects nodes that carry no
+    modelling rule at all.  All given keys must match for the rule to apply.
     """
 
     include: bool = True
@@ -117,7 +119,13 @@ class CustomRule:
         if self.node_class is not None and node.node_class.value.lower() != self.node_class.lower():
             return False
         if self.modelling_rule is not None:
-            rule = node.modelling_rule.value if node.modelling_rule else "None"
+            # NO_RULE is an enum member whose *value* is None, and enum members are
+            # truthy, so the rule-less case must be detected on the member, not on
+            # the value: a rule-less node spells as "None" and stays comparable.
+            if node.modelling_rule is None or node.modelling_rule is ModellingRule.NO_RULE:
+                rule = "None"
+            else:
+                rule = node.modelling_rule.value
             if rule.lower() != self.modelling_rule.lower():
                 return False
         return True

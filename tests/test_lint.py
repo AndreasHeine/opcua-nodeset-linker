@@ -487,6 +487,13 @@ class TestNamespaceRules:
         )
         assert codes(lint([], documents=(document,))) == set()
 
+    def test_official_companion_case_variants_are_accepted(self) -> None:
+        """The official DI file is ``Opc.Ua.Di.NodeSet2.xml`` although the alias is ``DI``."""
+        di_uri = "http://opcfoundation.org/UA/DI/"
+        for filename in ("Opc.Ua.Di.NodeSet2.xml", "Opc.Ua.DI.NodeSet2.xml"):
+            document = DocumentInfo(source_path=filename, namespaces=(Namespace(uri=di_uri),))
+            assert codes(lint([], documents=(document,))) == set()
+
     def test_a_vendor_only_needs_the_nodeset2_suffix(self) -> None:
         document = DocumentInfo(source_path="ACME.NodeSet2.xml", namespaces=(Namespace(uri=VENDOR_NS),))
         assert codes(lint([], documents=(document,))) == set()

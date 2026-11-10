@@ -639,7 +639,9 @@ def _document_findings(model: SemanticModel) -> list[LintFinding]:
         ]
         for uri in companions:
             expected = f"Opc.Ua.{alias_from_uri(uri) or ''}.NodeSet2.xml"
-            if filename != expected:
+            # The official companion files vary in case (``Opc.Ua.Di.NodeSet2.xml`` vs the
+            # alias ``DI``), so the convention check compares spellings case-insensitively.
+            if filename.lower() != expected.lower():
                 found.append(
                     finding(
                         _rule("FILENAME_CONVENTION"),

@@ -9,6 +9,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic import ValidationError as PydanticValidationError
 
+from nodeset_linker.models.node_class import ModellingRule
 from nodeset_linker.retention.engine import CustomRule
 from nodeset_linker.utils.errors import ParseError
 
@@ -17,6 +18,8 @@ Mode = Literal["STRICT", "OPTIONAL_AWARE", "RUNTIME", "CUSTOM"]
 
 class CustomRulesConfig(BaseModel):
     """``retain:`` / ``exclude:`` sections of a custom policy."""
+
+    model_config = ConfigDict(extra="forbid")
 
     retain: list[str] = Field(default_factory=list)
     exclude: list[str] = Field(default_factory=list)
@@ -49,10 +52,14 @@ class ExportConfig(BaseModel):
 class LinkerConfig(BaseModel):
     """Top-level configuration of one linking run."""
 
+    # A typo'd key must fail the load, not silently configure nothing: an unknown key
+    # here (``ouput:``) would run with defaults and quietly write the wrong file.
+    model_config = ConfigDict(extra="forbid")
+
     nodesets: list[str] = Field(min_length=1)
     mode: Mode = "STRICT"
     roots: list[str] = Field(min_length=1)
-    output: str | None = None
+    output: str | None = Field(default=None, min_length=1)
     export: ExportConfig | None = None
     custom: CustomRulesConfig | None = None
     validate_before_export: bool = True
@@ -144,6 +151,20 @@ RULE_KEYS: dict[str, str] = {
     "modellingrule": "modelling_rule",
 }
 
+#: How each keyword is spelled in YAML — error messages must name the keys a user
+# *types*, not the dataclass fields the parser fills.
+RULE_KEY_SPELLINGS: dict[str, str] = {
+    "namespace": "namespace",
+    "browsename": "browseName",
+    "nodeclass": "nodeClass",
+    "modellingrule": "modellingRule",
+}
+
+
+#: Exact spellings accepted for ``modellingRule``, derived from the enum so the
+#: accepted list can never drift from the model; ``NO_RULE`` spells as ``None``.
+_MODELLING_SPELLINGS = {str(rule.value) for rule in ModellingRule}
+
 
 def _parse_rule(line: str) -> dict[str, str | None]:
     """``namespace=<uri glob>`` / ``browseName=*Diagnostics*`` → keyword arguments."""
@@ -154,6 +175,14 @@ def _parse_rule(line: str) -> dict[str, str | None]:
     if lowered not in RULE_KEYS:
         raise ParseError(
             f"invalid custom rule: {line!r} (supported keys: "
-            f"{', '.join(sorted(RULE_KEYS.values()))}; values may contain globs)"
+            f"{', '.join(sorted(RULE_KEY_SPELLINGS.values()))}; values may contain globs)"
+        )
+    if lowered == "modellingrule" and value.lower() not in {
+        spelling.lower() for spelling in _MODELLING_SPELLINGS
+    }:
+        raise ParseError(
+            f"invalid custom rule: {line!r} (modellingRule must be one of "
+            f"{', '.join(sorted(_MODELLING_SPELLINGS))}, case-insensitive; globs are "
+            "not supported here)"
         )
     return {field: value if lowered == alias else None for alias, field in RULE_KEYS.items()}

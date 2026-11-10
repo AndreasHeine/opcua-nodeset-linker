@@ -61,7 +61,49 @@ class TestConfig:
             roots=["browseName=X"],
             custom={"exclude": ["typeDefinition=Foo"]},
         )
-        with pytest.raises(ParseError, match="supported keys"):
+        # The message names the keys a user types, not the dataclass fields.
+        with pytest.raises(ParseError, match="browseName, modellingRule, namespace, nodeClass"):
+            config.custom_rules()
+
+    def test_typo_in_a_top_level_key_is_rejected(self, tmp_path) -> None:
+        """``ouput:`` must fail the load, not run with defaults and write the wrong file."""
+        with pytest.raises(ParseError, match="invalid configuration"):
+            load_config(
+                write(tmp_path, "nodesets:\n  - a.xml\nroots:\n  - browseName=X\nouput: out.xml\n")
+            )
+
+    def test_typo_in_a_custom_section_is_rejected(self, tmp_path) -> None:
+        with pytest.raises(ParseError, match="invalid configuration"):
+            load_config(
+                write(
+                    tmp_path,
+                    "nodesets:\n  - a.xml\nroots:\n  - browseName=X\nmode: CUSTOM\n"
+                    "custom:\n  retain:\n    - browseName=X\n  keeps: []\n",
+                )
+            )
+
+    def test_empty_output_is_rejected(self, tmp_path) -> None:
+        with pytest.raises(ParseError, match="invalid configuration"):
+            load_config(write(tmp_path, "nodesets:\n  - a.xml\nroots:\n  - browseName=X\noutput: \"\"\n"))
+
+    def test_modelling_rule_translates(self) -> None:
+        config = LinkerConfig(
+            nodesets=["a.xml"],
+            mode="CUSTOM",
+            roots=["browseName=X"],
+            custom={"exclude": ["modellingRule=None"]},
+        )
+        assert config.custom_rules()[0].modelling_rule == "None"
+
+    def test_unknown_modelling_rule_spelling_rejected(self) -> None:
+        """A misspelled rule must fail at config load, not silently match nothing."""
+        config = LinkerConfig(
+            nodesets=["a.xml"],
+            mode="CUSTOM",
+            roots=["browseName=X"],
+            custom={"exclude": ["modellingRule=Required"]},
+        )
+        with pytest.raises(ParseError, match="modellingRule must be one of"):
             config.custom_rules()
 
     def test_output_override(self) -> None:

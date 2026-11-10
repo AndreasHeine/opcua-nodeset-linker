@@ -46,6 +46,32 @@ class TestRootSelectors:
         )
         assert all(root.namespace_uri == "http://opcfoundation.org/UA/Machinery/" for root in roots)
 
+    def test_namespace_uri_selector_without_trailing_slash(self, merged_model) -> None:
+        roots = RootResolver(merged_model).resolve(
+            [RootSelector.parse("namespaceUri=http://opcfoundation.org/UA/Machinery")]
+        )
+        assert roots
+
+    def test_namespace_uri_selector_is_exact_not_a_suffix(self) -> None:
+        """A vendor namespace that merely *ends* with the UA URI must not be selected."""
+        from nodeset_linker.models.identifiers import ExpandedNodeId, NodeId, QualifiedName
+        from nodeset_linker.models.node import UANode
+        from nodeset_linker.models.node_class import NodeClass, NodeRole
+
+        alien = UANode(
+            node_id=ExpandedNodeId(
+                identifier=NodeId.numeric_id(7000),
+                namespace_uri="urn:ends-with-http://opcfoundation.org/UA/",
+            ),
+            browse_name=QualifiedName(name="Alien"),
+            node_class=NodeClass.OBJECT,
+            role=NodeRole.INSTANCE,
+        )
+        with pytest.raises(ResolutionError, match="matched nothing"):
+            RootResolver(build_model([alien])).resolve(
+                [RootSelector.parse("namespaceUri=http://opcfoundation.org/UA/")]
+            )
+
     def test_type_definition_selector(self, merged_model) -> None:
         roots = RootResolver(merged_model).resolve([RootSelector.parse("typeDefinition=MSSControllerType")])
         assert node_id(1002, UA_NS) in roots  # the type itself

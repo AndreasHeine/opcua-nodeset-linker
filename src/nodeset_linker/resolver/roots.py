@@ -82,11 +82,14 @@ class RootResolver:
         if selector.kind == "browseName":
             return [n.node_id for n in self._match_browse(selector.value)]
         if selector.kind == "namespaceUri":
-            uri = selector.value
+            # Identity, not suffix matching: a vendor namespace whose URI merely *ends*
+            # with the requested one must not be selected.  The canonical trailing slash
+            # of OPC 10000-5 is tolerated on either side.
+            wanted = selector.value.rstrip("/")
             return [
                 n.node_id
                 for n in self._model.iter_nodes()
-                if n.node_id.namespace == uri or n.node_id.namespace.endswith(uri)
+                if n.node_id.namespace.rstrip("/") == wanted
             ]
         if selector.kind == "typeDefinition":
             return [n.node_id for n in self._match_type_definition(selector.value)]
