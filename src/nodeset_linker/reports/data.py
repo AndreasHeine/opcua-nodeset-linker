@@ -48,19 +48,31 @@ class Statistics:
 
 @dataclass(slots=True)
 class DependencyReportData:
-    """Dependency tree, origins, retention reasons and category counts."""
+    """Dependency tree, origins, retention reasons and category counts.
+
+    Node references are ``ExpandedNodeId.as_xml()`` identifiers, not BrowseNames: names
+    repeat across namespaces (a vendor ``MachineType`` and the UA one are different nodes),
+    so a bare name would merge two nodes into one entry.  The human label lives in
+    ``labels``, the same identifier principle the diff report follows.
+    """
 
     roots: list[str] = field(default_factory=list)
+    labels: dict[str, str] = field(default_factory=dict)
     origins: dict[str, list[str]] = field(default_factory=dict)
     reasons: dict[str, str] = field(default_factory=dict)
     categories: dict[str, int] = field(default_factory=dict)
     mandatory: list[str] = field(default_factory=list)
     optional: list[str] = field(default_factory=list)
 
+    def label(self, identifier: str) -> str:
+        """The human-readable name for an identifier key, falling back to the identifier."""
+        return self.labels.get(identifier, identifier)
+
     def as_json(self) -> str:
         return json.dumps(
             {
                 "roots": self.roots,
+                "labels": self.labels,
                 "dependency_origins": self.origins,
                 "retention_reasons": self.reasons,
                 "dependency_categories": self.categories,
@@ -133,7 +145,7 @@ def compute_statistics(
 
 
 def build_dependency_report(model: SemanticModel, closure: Closure) -> DependencyReportData:
-    labels = {node_id: _label(model, node_id) for node_id in closure.ids()}
+    labels = {node_id.as_xml(): _label(model, node_id) for node_id in closure.ids()}
     categories: Counter[str] = Counter()
     origins: dict[str, list[str]] = {}
     reasons: dict[str, str] = {}
@@ -141,21 +153,22 @@ def build_dependency_report(model: SemanticModel, closure: Closure) -> Dependenc
     optional: list[str] = []
 
     for node_id, reason in closure.retained.items():
-        label = labels[node_id]
-        reasons[label] = reason.describe()
-        origin_label = labels.get(reason.origin, str(reason.origin))
-        origins.setdefault(origin_label, []).append(label)
+        key = node_id.as_xml()
+        reasons[key] = reason.describe()
+        origin_key = reason.origin.as_xml()
+        origins.setdefault(origin_key, []).append(key)
         if reason.kind is not None:
             categories[reason.kind.value] += 1
         node = model.get(node_id)
         if node is not None:
             if mandatory_level_of(node) is MandatoryLevel.MANDATORY:
-                mandatory.append(label)
+                mandatory.append(key)
             else:
-                optional.append(label)
+                optional.append(key)
 
     return DependencyReportData(
-        roots=[labels[root] for root in closure.roots],
+        roots=[root.as_xml() for root in closure.roots],
+        labels={key: labels[key] for key in sorted(labels)},
         origins={origin: sorted(nodes) for origin, nodes in sorted(origins.items())},
         reasons=dict(sorted(reasons.items())),
         categories=dict(sorted(categories.items())),

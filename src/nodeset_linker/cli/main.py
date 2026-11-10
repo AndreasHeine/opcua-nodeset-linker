@@ -714,9 +714,9 @@ def _render_external(external: frozenset[str]) -> None:
 def _render_dependency_tree(report: DependencyReportData) -> None:
     tree = Tree("[bold]dependency origins[/]")
     for origin, nodes in report.origins.items():
-        branch = tree.add(f"[bold cyan]{origin}[/] -> {len(nodes)} node(s)")
-        for name in nodes[:20]:
-            branch.add(name)
+        branch = tree.add(f"[bold cyan]{report.label(origin)}[/] -> {len(nodes)} node(s)")
+        for identifier in nodes[:20]:
+            branch.add(report.label(identifier))
         if len(nodes) > 20:
             branch.add(f"... {len(nodes) - 20} more")
     console.print(tree)

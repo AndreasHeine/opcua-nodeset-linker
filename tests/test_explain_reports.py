@@ -109,10 +109,76 @@ class TestReports:
         model, closure = closure_for_machinery()
         report = build_dependency_report(model, closure)
         payload = json.loads(report.as_json())
-        assert payload["roots"] == ["MSSControllerType"]
-        assert "JobStateEnum" in payload["retention_reasons"]
+        # Keys are identifiers; the human label is a value field.
+        expected_roots = [n.node_id.as_xml() for n in model.find_by_browse_name("MSSControllerType")]
+        assert payload["roots"] == expected_roots
+        assert payload["labels"][payload["roots"][0]] == "MSSControllerType"
+        job_state = next(
+            key for key, label in payload["labels"].items() if label == "JobStateEnum"
+        )
+        assert job_state in payload["retention_reasons"]
         assert payload["dependency_categories"]["datatype"] > 0
         assert payload["optional_nodes"]  # fixture declares Optional nodes inside the closure
+
+    def test_dependency_report_keys_survive_browse_name_collisions(self) -> None:
+        """Two namespaces sharing one BrowseName must yield two distinct report entries."""
+        from tests.conftest import node_id
+
+        from nodeset_linker.models.identifiers import QualifiedName
+        from nodeset_linker.models.node import Reference, UANode
+        from nodeset_linker.models.node_class import NodeClass, NodeRole
+        from nodeset_linker.repository.model import build_model
+
+        vendor_ns = "http://vendor.example.org/"
+
+        def foreign(browse: str, number: int, node_class: NodeClass, role: NodeRole, refs=()):
+            return UANode(
+                node_id=node_id(number, vendor_ns),
+                browse_name=QualifiedName(name=browse),
+                node_class=node_class,
+                role=role,
+                references=refs,
+            )
+
+        vendor_root = foreign(
+            "MachineType",
+            9000,
+            NodeClass.OBJECT,
+            NodeRole.INSTANCE,
+            (
+                Reference(
+                    reference_type=node_id(0, UA_NS),
+                    type_name="HasComponent",
+                    target=node_id(9001, vendor_ns),
+                    is_forward=True,
+                ),
+            ),
+        )
+        vendor_child = foreign(
+            "JobStateEnum",
+            9001,
+            NodeClass.DATA_TYPE,
+            NodeRole.ENUM,
+        )
+        ua_twin = UANode(
+            node_id=node_id(2002, Machinery_NS),
+            browse_name=QualifiedName(name="JobStateEnum"),
+            node_class=NodeClass.DATA_TYPE,
+            role=NodeRole.ENUM,
+        )
+        model = build_model([vendor_root, vendor_child, ua_twin])
+        roots = [vendor_root.node_id, ua_twin.node_id]
+        closure = DependencyResolver(SemanticGraph.from_model(model)).resolve(
+            roots, dict.fromkeys(roots, "roots")
+        )
+        report = build_dependency_report(model, closure)
+        payload = json.loads(report.as_json())
+        twin_keys = [
+            key for key, label in payload["labels"].items() if label == "JobStateEnum"
+        ]
+        assert len(twin_keys) == 2  # collision kept apart by the identifier key
+        assert f"nsu={vendor_ns};i=9001" in payload["retention_reasons"]
+        assert payload["labels"][f"nsu={vendor_ns};i=9001"] == "JobStateEnum"
 
     def test_namespace_report_counts_and_cross_namespace(self) -> None:
         model, closure = closure_for_machinery()

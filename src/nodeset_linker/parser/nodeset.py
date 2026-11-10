@@ -21,6 +21,7 @@ from typing import Any, Self
 from lxml.etree import _Element, tostring
 
 from nodeset_linker.models.identifiers import (
+    UA_NAMESPACE_URI,
     ExpandedNodeId,
     IdentifierKind,
     NodeId,
@@ -715,6 +716,7 @@ class NodeSetParser:
         if (
             type_definition is not None
             and type_definition.identifier.numeric == NAMESPACE_METADATA_TYPE_ID
+            and type_definition.namespace == UA_NAMESPACE_URI
         ):
             return NodeRole.NAMESPACE_METADATA
         if (element.get("SymbolicName") or "").endswith("NamespaceMetadata"):

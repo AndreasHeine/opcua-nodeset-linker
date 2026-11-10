@@ -43,7 +43,9 @@ def is_namespace_metadata(node: UANode) -> bool:
         return True
     typedef = node.type_definition
     if typedef is not None and typedef.identifier.numeric == NAMESPACE_METADATA_TYPE_ID:
-        return True
+        # The id 11616 belongs to the OPC UA namespace; the same number in a vendor
+        # namespace is a custom type, not namespace metadata (§6.3.13).
+        return typedef.namespace == UA_NAMESPACE_URI
     if node.node_class is NodeClass.OBJECT and (node.symbolic_name or "").endswith(
         "NamespaceMetadata"
     ):
