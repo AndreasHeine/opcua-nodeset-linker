@@ -8,11 +8,12 @@ and exposes `nodeset-linker = nodeset_linker.cli.main:main`.
 
 - Run everything through the venv: `.venv\Scripts\python.exe` and `.venv\Scripts\nodeset-linker.exe`,
   from the repository root.
-- The global Windows Store Python has a **stale installed `nodeset_linker`** (0.1.0) in `site-packages`;
-  plain `python` imports that copy instead of `src/`. It fails outright for the diff layer
-  (`ModuleNotFoundError` for `nodeset_linker.diff.rules`, `ImportError` for symbols like `Baseline`,
-  `PAPER`, `SCHEMA_VERSION`) and fails *silently* for modules the old copy still has, so the run looks
-  green while testing the installed build. Never verify a change with the interpreter outside `.venv`.
+- The global Windows Store Python has a **stale installed `nodeset_linker`** (0.1.1-alpha) in
+  `site-packages`; plain `python` imports that copy instead of `src/`. It fails outright for the
+  diff layer (`ModuleNotFoundError` for `nodeset_linker.diff.rules` and `nodeset_linker.utils.xml`,
+  `ImportError` for symbols like `Baseline`, `PAPER`, `SCHEMA_VERSION`) and fails *silently* for
+  modules the old copy still has, so the run looks green while testing the installed build. Never
+  verify a change with the interpreter outside `.venv`.
 - CLI output needs `set PYTHONIOENCODING=utf-8` (`→` and box-drawing otherwise crash the cp1252
   console with `UnicodeEncodeError`; `§` encodes fine).
 - In this shell, avoid `findstr`/`tail`/`grep` pipelines and `python -c "..."` (quoting breaks); write a
@@ -21,7 +22,7 @@ and exposes `nodeset-linker = nodeset_linker.cli.main:main`.
 ## Commands
 
 ```bash
-.venv\Scripts\python.exe -m pytest --no-cov -q          # fast suite (~7s, ~670 tests)
+.venv\Scripts\python.exe -m pytest --no-cov -q          # fast suite (~5s, ~707 tests)
 .venv\Scripts\python.exe -m pytest tests/test_diff.py::TestCli -q   # one file/class/test
 .venv\Scripts\python.exe -m ruff check src tests scripts
 .venv\Scripts\python.exe -m mypy src
@@ -32,18 +33,32 @@ and exposes `nodeset-linker = nodeset_linker.cli.main:main`.
   untested half of an `if/else` is untested.
 - CI (`.github/workflows/ci.yml`) = pytest on 3.12/3.13, plus `ruff check src tests scripts` and
   `mypy src` on 3.12. Local order that mirrors it: ruff → mypy → pytest. `mypy` is strict; `lxml.*`
-  stubs are ignored on purpose.
+  stubs are ignored on purpose. All workflow actions are SHA-pinned with a `# vN` comment — when
+  bumping, replace the SHA and keep the comment (`.github/dependabot.yaml` opens weekly PRs for
+  actions and pip).
 - `.venv\Scripts\python.exe scripts\check_official_nodesets.py` is **manual**, not a test: it downloads
-  the official OPC UA/DI/Machinery/IA nodesets into `scratch/` and validates against
-  `tests/data/schema/UANodeSet.xsd`. Run it through the venv: its imports (`config`, `pipeline`,
-  `repository`, `validator`) all resolve in the stale global copy, so plain `python` validates the old
-  installed build and still prints PASS/FAIL. Do not add it to CI.
+  the official OPC UA/DI/Machinery/IA nodesets into `scratch/` — the `--ref` must be
+  tag/branch/commit-shaped, downloads are atomic via a `.part` file with a 30s timeout — and validates
+  the sources *and* the written file against `tests/data/schema/UANodeSet.xsd` plus semantics. Run it
+  through the venv: its imports (`config`, `pipeline`, `repository`, `validator`) all resolve in the
+  stale global copy, so plain `python` validates the old installed build and still prints PASS/FAIL.
+  Do not add it to CI.
 
 ## Architecture facts worth knowing before editing
 
 - **XML is never compared.** Node identity is `(namespaceUri, identifier, serverUri)`; the parser
   resolves document-local `NamespaceIndex`/`ServerUris` to URIs, so reordered or re-indexed documents
   diff as identical. `diff/engine.py` compares `SemanticModel` objects only.
+- **XML enters only through `utils/xml.py`.** Every reader — the NodeSet parser, the CLI schema check,
+  the official-nodeset script and the exporter's embedded fragments — goes through `parse_xml` /
+  `parse_fragment` on `SECURE_PARSER` (entities and DTDs never resolved, no network, 64 MiB size cap).
+  Do not add raw lxml `parse`/`fromstring` call sites in `src/` or `scripts/`; the hardening must stay
+  unbypassable. Tests may parse trusted fixtures with the default parser.
+- **Export refuses instead of silently pruning.** The raw `NodeSetExporter` records, per
+  `build_document()` call, the identifiers it omits (`dropped`) and the class-illegal attributes it
+  gates (`omitted`: a `Value` on a non-variable, an `InverseName` on a non-reference-type). The safe
+  `export()` builds the document once and refuses the write when `dropped` is non-empty — turning
+  `validate=False` off must never become silent data loss.
 - **The rule table is the public contract.** `diff/rules.py` maps internal change kinds to
   `RuleVerdict(severity, rationale, rule_id, clause)` via `verdict(kind, RuleContext)`. `BP-*` rule ids
   and clauses are user-facing (CLI `--waive`, waiver files, CI, docs) — keep them stable and add a
@@ -62,7 +77,15 @@ and exposes `nodeset-linker = nodeset_linker.cli.main:main`.
 - **Internal identity keys are text, not tuples.** `diff/engine.py` keys hierarchies, moves and
   reference pairing by `namespace␟identifier␟server` (`_IDENTITY_SEPARATOR`, a control character:
   `|` is legal inside a string NodeId). Reports spell identifiers with `ExpandedNodeId.as_xml()`,
-  never with this encoding — don't put identity text into user-facing output.
+  never with this encoding — don't put identity text into user-facing output. `DependencyReportData`
+  follows the same principle: JSON keys are `as_xml()` identifiers and the human label lives in the
+  `labels` map.
+- **Selectors and config are strict.** `namespaceUri=` matches the full URI exactly — trailing slash
+  tolerated on either side, suffix matching would select vendor namespaces that merely *end* with the
+  wanted URI. `modellingRule=` takes exact case-insensitive `ModellingRule` spellings derived from the
+  enum (`None` selects rule-less nodes; `NO_RULE`'s *value* is `None` and enum members are truthy, so
+  detect the member, never the value). Configs reject unknown keys (`extra="forbid"`), and rule errors
+  name the YAML spellings a user types, not the dataclass fields.
 - `validate` and `stats` take **one file**; only `diff` accepts a split-export bundle directory
   (`manifest.json`).
 - Severity buckets are BREAKING / ADVISORY / INFO; advisory findings are review hints and must not
