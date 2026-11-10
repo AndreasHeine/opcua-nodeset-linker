@@ -13,6 +13,7 @@ property value — this module is the single place that knows how.
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
@@ -125,13 +126,31 @@ def marked_namespaces(
 
     ``marker_present`` says whether a metadata object survived the reduction; without
     one the subset cannot be announced inside the document, only in the report.
+
+    One pass over the model groups node counts and metadata objects by namespace; a
+    per-namespace scan would be quadratic on models with many namespaces.
     """
-    flags = subset_flags(model, retained)
+    declared: Counter[str] = Counter()
+    kept: Counter[str] = Counter()
+    metadata: dict[str, list[UANode]] = {}
+    for node in model.iter_nodes():
+        uri = node.node_id.namespace
+        declared[uri] += 1
+        if node.node_id in retained:
+            kept[uri] += 1
+        if node.node_class is NodeClass.OBJECT and is_namespace_metadata(node):
+            # A metadata object counts for the namespace it describes *and* for the
+            # namespace it lives in — the same rule metadata_objects applies.
+            described = namespace_of_metadata(node)
+            for key in {described, uri}:
+                metadata.setdefault(key, []).append(node)
+
     marked: dict[str, tuple[bool, bool]] = {}
-    for uri, subset in flags.items():
-        obj = metadata_object_in(model, uri)
-        present = obj is not None and obj.node_id in retained
-        marked[uri] = (subset, present)
+    for uri in sorted(kept):
+        subset = kept[uri] < declared[uri]
+        candidates = metadata.get(uri, [])
+        obj = candidates[0] if candidates else None
+        marked[uri] = (subset, obj is not None and obj.node_id in retained)
     return marked
 
 

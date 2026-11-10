@@ -8,7 +8,7 @@ document and namespace metadata instead of at nodes.
 from __future__ import annotations
 
 import re
-from collections import deque
+from collections import Counter, deque
 from pathlib import Path
 
 from nodeset_linker.lint.report import LintFinding, finding
@@ -319,7 +319,10 @@ def _definition_findings(model: SemanticModel) -> list[LintFinding]:
 
 
 def _duplicates(names: list[str]) -> list[str]:
-    return sorted({name for name in names if names.count(name) > 1})
+    # Grouped once instead of a pairwise scan: `count()` per name would be quadratic
+    # on a large definition.  Output stays sorted, so findings remain deterministic.
+    counts = Counter(names)
+    return sorted(name for name, count in counts.items() if count > 1)
 
 
 def _member_name(

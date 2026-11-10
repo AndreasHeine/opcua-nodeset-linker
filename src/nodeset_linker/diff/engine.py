@@ -174,12 +174,16 @@ class ModelIndex:
     #: The hierarchy rules need these (§3.2.9, §3.2.10, §3.2.15).
     supertypes: dict[str, tuple[str, ...]] = field(default_factory=dict)
     subtypes: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    #: Argument variables per method, keyed by the method's identity text.  Built once
+    #: so method-signature changes do not rescan the whole model per method.
+    arguments: dict[str, list[ExpandedNodeId]] = field(default_factory=dict)
 
     @classmethod
     def of(cls, model: SemanticModel) -> Self:
         nodes = {identity(n.node_id): n for n in model.iter_nodes()}
         parents: dict[str, tuple[str, ...]] = {}
         children: dict[str, list[str]] = {}
+        arguments: dict[str, list[ExpandedNodeId]] = {}
         for node in nodes.values():
             own = _identity_text(node.node_id)
             for reference in node.references:
@@ -189,11 +193,25 @@ class ModelIndex:
                 parent, child = (own, target) if reference.is_forward else (target, own)
                 parents[child] = tuple(sorted({*parents.get(child, ()), parent}))
                 children.setdefault(parent, []).append(child)
+            if isinstance(node, UAVariable):
+                # An argument hangs on its method by ParentNodeId or an inverse HasProperty;
+                # record it under the method instead of scanning for it later.
+                method_ids: list[ExpandedNodeId] = [
+                    *([node.parent_node_id] if node.parent_node_id is not None else []),
+                    *(
+                        ref.target
+                        for ref in node.references
+                        if _reference_name(ref) == "HasProperty" and not ref.is_forward
+                    ),
+                ]
+                for method_id in method_ids:
+                    arguments.setdefault(_identity_text(method_id), []).append(node.node_id)
         return cls(
             model=model,
             nodes=nodes,
             supertypes=parents,
             subtypes={key: tuple(sorted(values)) for key, values in children.items()},
+            arguments=arguments,
         )
 
     def node(self, node_id: ExpandedNodeId) -> UANode | None:
@@ -1013,28 +1031,14 @@ def _method_changes(
 def _method_arguments(index: ModelIndex, node: UANode) -> dict[str, str]:
     """The argument variables a method is contracted with, keyed by their BrowseName."""
     arguments: dict[str, str] = {}
-    for other in index.nodes.values():
-        if not isinstance(other, UAVariable) or other.node_id == node.node_id:
+    for argument_id in index.arguments.get(_identity_text(node.node_id), ()):
+        argument = index.nodes.get(identity(argument_id))
+        if argument is None or not isinstance(argument, UAVariable):
             continue
-        if not _is_argument_of(other, node.node_id):
-            continue
-        arguments[other.browse_name.name or other.node_id.identifier.as_xml()] = _argument_contract(
-            index, other
+        arguments[argument.browse_name.name or argument_id.identifier.as_xml()] = (
+            _argument_contract(index, argument)
         )
     return arguments
-
-
-def _is_argument_of(argument: UAVariable, method_id: ExpandedNodeId) -> bool:
-    """An argument hangs on its method as a property, forward or inverse."""
-    parent = argument.parent_node_id
-    if parent is not None and identity(parent) == identity(method_id):
-        return True
-    return any(
-        _reference_name(ref) == "HasProperty"
-        and not ref.is_forward
-        and identity(ref.target) == identity(method_id)
-        for ref in argument.references
-    )
 
 
 def _argument_contract(index: ModelIndex, argument: UAVariable) -> str:

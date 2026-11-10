@@ -493,6 +493,11 @@ the `clause` it comes from, so the mapping lives in the report rather than in a 
     O(changed nodes × graph). For a registry-scale comparison (UA.xml ~5k nodes plus many
     companion specs, thousands of changed nodes between releases), the repeated graph builds
     and per-node BFS dominate runtime and memory; there is no incremental/cached mode.
+    The quadratic hotspots inside the engine are gone: lint duplicate grouping, method
+    argument lookup (a per-side index keyed by method identity) and namespace subset
+    marking each make a single pass.  Remaining known gaps, *not* fixed here: the split
+    export re-scans the shared model for every document, and the validator makes several
+    full passes over the model instead of one grouped pass.
 27. **Report output does not scale** *(partly closed)*. Impact lists truncate at
     `--impact-limit` names per entry (default 50) and say how many more there are; the flat
     breaking list grows linearly; there is no paging, no per-node drill-down and no CSV export.
