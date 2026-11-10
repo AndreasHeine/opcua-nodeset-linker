@@ -7,6 +7,92 @@ Rule ids are `BP-*` slugs that never encode a clause number of one paper revisio
 `§` numbers refer to OPC 11030 *Best Practices for Companion Models* v1.03.03, whose source
 text ships in `docs/OPC-11030-v1.03.03.md`.
 
+## 0.4.0-alpha — 2026-11-10
+
+An audit pass over the input paths and the export: every XML read hardened, every refusal stated
+instead of quietly pruned, and the strictness a consumer has to account for.
+
+### Added
+
+- **One hardened XML parser** (`utils/xml.py`) — `parse_xml` and `parse_fragment` read through a
+  `SECURE_PARSER` that never resolves entity or DTD declarations (no expansion bomb), caps a
+  document at 64 MiB and keeps network access off while parsing. Every reader in the package and in
+  `scripts/` goes through it — the NodeSet parser, the CLI schema check, the exporter's embedded
+  fragments, the official-nodeset script — so the hardening cannot be bypassed.
+- **Exporter accounting per build** — `dropped` lists every identifier `build_document()` omits and
+  `omitted` lists the class-illegal attributes it gates (a `Value` on a non-variable, an
+  `InverseName` on a non-reference-type). Both reset at the start of every build, so they describe
+  the document just built instead of accumulating across rebuilds.
+- **`write()` takes an optional pre-built document** — `export()` reuses the document it probed
+  instead of serialising a second time, so the hook a subclass overrides still runs.
+- **Base-declared subtype links** (OPC 10000-6) — a base that declares `HasSubtype` from its own
+  side (`IsForward="true"`) counts as a base. Graph and validator share one
+  `forward_subtype_declarations` builder, so both classify the same hierarchy.
+- **Identifier-keyed dependency report** — entries are keyed by `ExpandedNodeId.as_xml()` and the
+  human name moved into a `labels` map: the same BrowseName in a vendor namespace and in the UA one
+  is two entries, not one merged one, and the console renders the labels. A node typed by id
+  `11616` counts as namespace metadata only when that type definition lives in the OPC UA namespace.
+- **Supply-chain pins** — every `uses:` ref in `ci.yml` and `publish.yml` is pinned to a commit SHA
+  with its version in a trailing comment, and `.github/dependabot.yaml` opens weekly PRs for the
+  actions and for pip.
+- **Hot paths that stopped rescanning** — duplicate member grouping counts once instead of a
+  per-name `count()` scan, method argument lookup builds one index per side (`ModelIndex.arguments`)
+  instead of walking the whole model per method, and namespace subset marking groups node counts and
+  metadata objects in a single pass.
+- **Official nodesets checked end to end** — `scripts/check_official_nodesets.py` validates the
+  `--ref` shape before downloading, writes each download atomically through a `.part` file with a
+  30 s timeout, and XSD- and semantically validates the *written* file as well as the sources.
+- **Tests** — the suite grew to 708 (34 added): export refusals and gated attributes, a subtype
+  chain deeper than the recursion limit, base-declared subtype links, identifier-keyed reports,
+  strict config keys and selectors, hardened parsing and bundle paths, and the version a release
+  states in two places.
+
+### Changed
+
+- **Config keys are checked** — `extra="forbid"` on `LinkerConfig` and `CustomRulesConfig`: a
+  typo'd key (`ouput:`) fails the load instead of running with defaults. Custom-rule errors name the
+  YAML spellings a user types (`namespace`, `browseName`, `nodeClass`, `modellingRule`), not the
+  dataclass fields they fill.
+- **`namespaceUri=` selectors are identity** — the full URI, a trailing slash tolerated on either
+  side, instead of a suffix match. A partial selector that used to match now reports that it matched
+  nothing, and a vendor namespace that merely *ends* with the wanted URI is no longer selected.
+- **`modellingRule=` takes exact spellings** derived from the `ModellingRule` enum (`Optional`,
+  `Mandatory`, `OptionalPlaceholder`, `MandatoryPlaceholder`, `None`), case-insensitive; globs are
+  rejected there, and `None` selects rule-less nodes.
+- **An export that cannot write an identifier refuses** — `export()` builds the document once and
+  refuses the write when anything was dropped, so `validate_before_export: false` can no longer turn
+  into silent data loss. Gated illegal attributes are recorded in `omitted`; the safe export still
+  refuses only on identifiers that cannot be written.
+- **Dependency-report JSON keys are identifiers** — `roots`, `dependency_origins`,
+  `retention_reasons`, `mandatory_nodes` and `optional_nodes` carry `as_xml()` identifiers, and the
+  human names come from the new `labels` map. A consumer that keyed entries by BrowseName has to
+  read `labels`.
+- **`prune_navigation` is now `repair_navigation`** — it rewrites the references of the nodes that
+  are retained, it does not prune them.
+- **A split document states only the model its source declared**, and the companion-file naming
+  check compares spellings case-insensitively (the official DI file is `Opc.Ua.Di.NodeSet2.xml`
+  although its alias is `DI`).
+- **Bad inputs are reported, not raised** — `stats` and `validate` name the file that failed
+  instead of printing a traceback, and a corrupt schema is a failure rather than a crash.
+- **Hierarchy verdicts can move for documents that declare subtypes from the base side** — those
+  links count as bases now, so the subtype hierarchy and its cycle check see edges the previous
+  first-base-only walk missed.
+
+### Fixed
+
+- A subtype chain deeper than the recursion limit no longer raises `RecursionError`: the multi-base
+  `HasSubtype` walk keeps an explicit enter/exit stack, and it walks every declared base rather than
+  only the first, with a shared visited set so inheritance diamonds stay linear.
+- A `QualifiedName` is qualified by the namespace URI, never by a document-local index.
+- `nodeset_linker.__version__` still said `0.2.0-alpha` while the project shipped `0.3.0-alpha`; it
+  now matches the project version, and a test pins the two together so a release cannot forget one.
+
+### Scope of this release
+
+The same boundary as 0.3.0-alpha: the tool judges semantic structure and best-practice rules. It
+does not certify OPC UA conformance, and it does not verify runtime value/datatype compatibility or
+server behaviour.
+
 ## 0.3.0-alpha — 2026-11-08
 
 The semantic diff stopped being a report of differences and became a release gate: every

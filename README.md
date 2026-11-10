@@ -129,8 +129,10 @@ two configurations, then demonstrates semantic diff, impact analysis, and a brea
 property's datatype and tightens another property's modelling rule from Optional to
 Mandatory, both naturally retained by the showcase root.
 
-Keys of a custom rule are `namespace`, `browseName`, `nodeClass` and `modellingRule`; values may
-contain globs, an unknown key is rejected. `retain:` rules are checked before `exclude:` rules, so
+Keys of a custom rule are `namespace`, `browseName`, `nodeClass` and `modellingRule`; `namespace`
+and `browseName` values may contain globs, `modellingRule` takes the exact rule spellings
+(`Optional`, `Mandatory`, `OptionalPlaceholder`, `MandatoryPlaceholder`, `None`) case-insensitive and
+no globs, and an unknown key is rejected. `retain:` rules are checked before `exclude:` rules, so
 a retain rule naming the same node as an exclude rule wins. A retain rule can also bring in nodes
 the original roots never reached; their own dependency closures are then included.
 
@@ -561,6 +563,21 @@ Changes to how the tool reports, compared with earlier releases — per-release 
   `--fail-on-breaking`.
 - JSON keys are additive only: new severity counts, `waived`/`waived_by` and the `waivers` block.
 - `--waive`, `--waiver-file` and `--accept-breaking` mark findings without removing them.
+- A config rejects unknown keys (`extra="forbid"`), so a typo'd key fails the load instead of running
+  with defaults.
+- A `namespaceUri=` root selector is identity, not a suffix match: it needs the full URI (a trailing
+  slash is optional on either side), and `modellingRule=` takes the exact rule spellings
+  case-insensitive with no globs.
+- An export that cannot write an identifier refuses the write instead of dropping it, so
+  `validate_before_export: false` is not silent pruning; gated class-illegal attributes are recorded
+  in `omitted`.
+- Dependency-report JSON keys are `ExpandedNodeId.as_xml()` identifiers; the human names live in the
+  new `labels` map.
+- A `HasSubtype` declared by the base itself (`IsForward="true"`) counts as a base, so hierarchy and
+  cycle checks see edges the previous first-base-only walk missed.
+- Every XML read goes through one hardened parser: entity and DTD declarations are never resolved,
+  documents are capped at 64 MiB, and parsing does not reach the network.
+- `nodeset_linker.__version__` now matches the project version, pinned by a test.
 
 ## Architecture
 

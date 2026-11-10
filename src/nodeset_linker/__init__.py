@@ -24,4 +24,4 @@ from nodeset_linker.models.node import UANode
 
 __all__ = ["ExpandedNodeId", "NodeId", "UANode", "__version__"]
 
-__version__ = "0.2.0-alpha"
+__version__ = "0.4.0-alpha"

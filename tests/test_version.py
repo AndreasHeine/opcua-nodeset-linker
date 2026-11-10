@@ -4,8 +4,15 @@
 (OPC 10000-5 §12.41).  Published companion specs spell one release twice — `1.05.03` next to
 `1.5.3` — so equality is judged on the numeric core, and a value nobody can parse is never
 silently equal.
+
+The package itself claims its version twice too (`pyproject.toml` and `nodeset_linker.__version__`),
+which is what a release can forget to bump; that pairing is pinned here as well.
 """
 
+import tomllib
+from pathlib import Path
+
+import nodeset_linker
 from nodeset_linker.models.version import (
     canonical,
     is_semantic,
@@ -134,3 +141,16 @@ class TestPrecedence:
     def test_unparseable_versions_cannot_be_ordered(self) -> None:
         assert version_precedes("V2", "1.4.0") is None
         assert version_precedes(None, "1.4.0") is None
+
+
+class TestPackageVersion:
+    """The release states its version in two places, and both must say the same release.
+
+    `pyproject.toml` is what the tag and PyPI are built from; `nodeset_linker.__version__` is what a
+    library consumer reads.  One bumped without the other reports a release that was never built.
+    """
+
+    def test_module_version_matches_the_project_version(self) -> None:
+        pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+        project = tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"]
+        assert nodeset_linker.__version__ == project["version"]

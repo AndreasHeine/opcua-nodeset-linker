@@ -22,7 +22,7 @@ and exposes `nodeset-linker = nodeset_linker.cli.main:main`.
 ## Commands
 
 ```bash
-.venv\Scripts\python.exe -m pytest --no-cov -q          # fast suite (~5s, ~707 tests)
+.venv\Scripts\python.exe -m pytest --no-cov -q          # fast suite (~5s, ~708 tests)
 .venv\Scripts\python.exe -m pytest tests/test_diff.py::TestCli -q   # one file/class/test
 .venv\Scripts\python.exe -m ruff check src tests scripts
 .venv\Scripts\python.exe -m mypy src
