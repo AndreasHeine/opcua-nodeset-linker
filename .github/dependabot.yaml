@@ -1,0 +1,12 @@
+# Keeps the CI actions and the Python dependencies current; the badge in README.md
+# points at the update graph this file drives.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
