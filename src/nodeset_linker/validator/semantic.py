@@ -336,25 +336,29 @@ class SemanticValidator:
     def _has_subtype_cycle(self, start: UANode) -> bool:
         # Inheritance is a graph, not a chain: a node may declare several bases (and
         # bases can be declared from either side), so a cycle may hide behind *any* of
-        # them.  A shared "visited" set keeps diamonds linear; only a node on the
-        # current path means a cycle.
+        # them.  An explicit stack keeps deep chains from hitting the recursion limit;
+        # a shared "visited" set keeps diamonds linear, and only a node on the current
+        # path means a cycle.
         visited: set[ExpandedNodeId] = set()
-
-        def walk(node_id: ExpandedNodeId, stack: set[ExpandedNodeId]) -> bool:
-            if node_id in stack:
+        path: set[ExpandedNodeId] = set()
+        pending: list[tuple[ExpandedNodeId, bool]] = [(start.node_id, True)]
+        while pending:
+            node_id, enter = pending.pop()
+            if not enter:
+                path.discard(node_id)
+                continue
+            if node_id in path:
                 return True
             if node_id in visited:
-                return False
+                continue
             visited.add(node_id)
+            path.add(node_id)
+            pending.append((node_id, False))  # leave the path once the bases are done
             node = self._resolve(node_id)
             if node is None:
-                return False
-            stack.add(node_id)
-            cyclic = any(walk(base, stack) for base in self._bases_of(node))
-            stack.discard(node_id)
-            return cyclic
-
-        return walk(start.node_id, set())
+                continue
+            pending.extend((base, True) for base in self._bases_of(node))
+        return False
 
     def _check_encoding_references(self, report: ValidationReport) -> None:
         for node in self._model.iter_nodes():
