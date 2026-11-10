@@ -41,8 +41,9 @@ belong to individual documents and may differ between NodeSets.
 
 For your own model, replace `nodesets` with paths to your source files and choose roots that
 identify the nodes your application needs. Common selectors include `browseName=`, `nodeid=`,
-`namespaceUri=`, and `typeDefinition=`. A `typeDefinition=` selector includes the type and
-instances that declare it.
+`namespaceUri=`, and `typeDefinition=`. A `namespaceUri=` selector takes the full namespace URI
+and matches it exactly — a trailing slash is optional, a partial suffix is not accepted. A
+`typeDefinition=` selector includes the type and instances that declare it.
 
 ## 3. Preview the reduction
 

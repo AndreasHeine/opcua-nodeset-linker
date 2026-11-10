@@ -111,7 +111,9 @@ Analyze-only runs report planned relative filenames without populating written-o
 In a normal CLI run validation happens twice: `pipeline.run()` validates the retained set
 and raises `ValidationError` before the exporter is reached, and `export()` validates the
 same subset again when `validate=True`. Turning `validate_before_export` off skips the
-exporter's check; the pipeline's check is unconditional.
+exporter's semantic check, but the document is still built once up front and refused if any
+identifier cannot be written — skipping validation never becomes silent pruning. The
+pipeline's check is unconditional.
 
 ## Domain model
 

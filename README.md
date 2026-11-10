@@ -74,7 +74,10 @@ output: out/reduced.xml
 external:               # models the consumer provides — referenced, never shipped
   - http://opcfoundation.org/UA/DI/
 
-validate_before_export: true   # default — exporter check; pipeline validation is always on
+validate_before_export: true   # default — exporter check; pipeline validation is always
+                               # on. With false the semantic pass is skipped, but
+                               # identifiers whose targets are not shipped still refuse
+                               # the write
 mark_namespace_subsets: true   # default — reduced namespaces get IsNamespaceSubset=true
 
 custom:                 # only used with mode: CUSTOM
@@ -137,8 +140,10 @@ Legal links to omitted optional children are pruned. An exclusion that breaks a 
 non-navigation dependency blocks export; policy-dropped required targets are repaired instead.
 
 Root selectors accept `nodeid=`, `expandedNodeId=`, `browseName=`, `namespaceUri=`,
-`typeDefinition=` and globs (`browseName=*Type`); selector keywords are case-insensitive. A bare
-identifier (`nsu=http://opcfoundation.org/UA/Machinery/;i=2200`, `i=24`) is also accepted. Note that
+`typeDefinition=` and globs (`browseName=*Type`); selector keywords are case-insensitive. A
+`namespaceUri=` selector is identity, not a suffix match: it needs the full namespace URI
+(a trailing slash is optional on either side). A bare identifier
+(`nsu=http://opcfoundation.org/UA/Machinery/;i=2200`, `i=24`) is also accepted. Note that
 `ns=<index>` resolves through the namespace table of the *merged* model, where the first loaded
 document wins for a shared index — prefer the URI form.
 
