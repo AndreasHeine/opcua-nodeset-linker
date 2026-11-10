@@ -83,6 +83,22 @@ class TestValidation:
         report = validate_model(build_model([a, b]))
         assert any(f.code == "SUBTYPE_CYCLE" for f in report.errors)
 
+    def test_subtype_cycle_behind_a_second_base(self) -> None:
+        """A multi-base declaration must not hide a cycle behind the first base."""
+        a = make_object_type("A", 1, refs=ref("HasSubtype", 3) + ref("HasSubtype", 2))
+        b = make_object_type("B", 2, refs=ref("HasSubtype", 1))
+        c = make_object_type("C", 3)
+        report = validate_model(build_model([a, b, c]))
+        assert any(f.code == "SUBTYPE_CYCLE" for f in report.errors)
+
+    def test_diamond_bases_are_not_a_cycle(self) -> None:
+        a = make_object_type("A", 1, refs=ref("HasSubtype", 2) + ref("HasSubtype", 3))
+        b = make_object_type("B", 2, refs=ref("HasSubtype", 4))
+        c = make_object_type("C", 3, refs=ref("HasSubtype", 4))
+        d = make_object_type("D", 4)
+        report = validate_model(build_model([a, b, c, d]))
+        assert not any(f.code == "SUBTYPE_CYCLE" for f in report.errors)
+
     def test_reference_type_needs_base(self) -> None:
         custom = UANode(
             node_id=node_id(30),

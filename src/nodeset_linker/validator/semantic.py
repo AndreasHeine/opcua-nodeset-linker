@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from nodeset_linker.graph.engine import forward_subtype_declarations
 from nodeset_linker.models.identifiers import UA_NAMESPACE_URI, ExpandedNodeId
 from nodeset_linker.models.namespace_metadata import marked_namespaces
 from nodeset_linker.models.node import UADataType, UANode, referenced_identifiers
@@ -75,11 +76,7 @@ class SemanticValidator:
         self._model = model
         self._source = source
         self._external = frozenset(external)
-        self._forward_bases: dict[ExpandedNodeId, list[ExpandedNodeId]] = {}
-        for node in model.iter_nodes():
-            for ref in node.references:
-                if ref.type_name == "HasSubtype" and ref.is_forward:
-                    self._forward_bases.setdefault(ref.target, []).append(node.node_id)
+        self._forward_bases = forward_subtype_declarations(model)
 
     def validate(self) -> ValidationReport:
         report = ValidationReport()
@@ -337,18 +334,27 @@ class SemanticValidator:
                 )
 
     def _has_subtype_cycle(self, start: UANode) -> bool:
-        seen: set[ExpandedNodeId] = set()
-        current: ExpandedNodeId | None = start.node_id
-        while current is not None:
-            if current in seen:
+        # Inheritance is a graph, not a chain: a node may declare several bases (and
+        # bases can be declared from either side), so a cycle may hide behind *any* of
+        # them.  A shared "visited" set keeps diamonds linear; only a node on the
+        # current path means a cycle.
+        visited: set[ExpandedNodeId] = set()
+
+        def walk(node_id: ExpandedNodeId, stack: set[ExpandedNodeId]) -> bool:
+            if node_id in stack:
                 return True
-            seen.add(current)
-            node = self._resolve(current)
+            if node_id in visited:
+                return False
+            visited.add(node_id)
+            node = self._resolve(node_id)
             if node is None:
                 return False
-            bases = self._bases_of(node)
-            current = bases[0] if bases else None
-        return False
+            stack.add(node_id)
+            cyclic = any(walk(base, stack) for base in self._bases_of(node))
+            stack.discard(node_id)
+            return cyclic
+
+        return walk(start.node_id, set())
 
     def _check_encoding_references(self, report: ValidationReport) -> None:
         for node in self._model.iter_nodes():

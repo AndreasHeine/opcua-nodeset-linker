@@ -68,6 +68,24 @@ def reverse_dependency(reference_type: str, is_forward: bool) -> bool:
     return reference_type in OWNERSHIP_REFERENCES | {"Organizes"} and not is_forward
 
 
+def forward_subtype_declarations(
+    model: SemanticModel,
+) -> dict[ExpandedNodeId, list[ExpandedNodeId]]:
+    """Subtypes declared on the *base* side of ``HasSubtype`` (``IsForward="true"``).
+
+    OPC 10000-6 lets the base declare the link too: ``base -> subtype`` with
+    ``IsForward="true"`` states the *subtype's* base.  A reader that only walks reverse
+    declarations misses these bases; graph and validator share this one builder so both
+    sides classify the same hierarchy.
+    """
+    declared: dict[ExpandedNodeId, list[ExpandedNodeId]] = {}
+    for node in model.iter_nodes():
+        for ref in node.references:
+            if ref.type_name == "HasSubtype" and ref.is_forward:
+                declared.setdefault(ref.target, []).append(node.node_id)
+    return declared
+
+
 @dataclass(frozen=True, slots=True)
 class EdgeMetadata:
     """Metadata carried on every graph edge."""
@@ -106,6 +124,7 @@ class SemanticGraph:
         graph = cls()
         for node in model.iter_nodes():
             graph.add_node(node)
+        forward_bases = forward_subtype_declarations(model)
         for node in model.iter_nodes():
             if node.node_class is not NodeClass.REFERENCE_TYPE:
                 continue
@@ -123,12 +142,23 @@ class SemanticGraph:
                 if name == "Aggregates":
                     graph._reference_semantics[node.browse_name.name] = "HasComponent"
                     break
-                pending.extend(
+                bases = [
                     base
                     for ref in reference_type.references
                     if ref.type_name == "HasSubtype" and not ref.is_forward
                     and (base := model.get(ref.target)) is not None
+                ]
+                # A base may declare the link from its own side; that base is the
+                # source pointing at this reference type, not one of its references.
+                bases.extend(
+                    base
+                    for base in (
+                        model.get(source)
+                        for source in forward_bases.get(reference_type.node_id, [])
+                    )
+                    if base is not None
                 )
+                pending.extend(bases)
         for node in model.iter_nodes():
             for ref in node.references:
                 kind = STANDARD_REFERENCE_TYPES.get(ref.type_name, DependencyKind.STRUCTURAL)

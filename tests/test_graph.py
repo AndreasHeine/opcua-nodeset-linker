@@ -47,6 +47,28 @@ class TestGraphConstruction:
         _, metadata = next(graph.out_edges(node_id(1)))
         assert metadata.reference_type == "HasMachineState"
 
+    def test_custom_reference_base_declared_from_the_base_side(self) -> None:
+        """``HasSubtype`` declared on the base side must classify the custom reference."""
+        from nodeset_linker.models.identifiers import QualifiedName
+        from nodeset_linker.models.node import UANode
+        from nodeset_linker.models.node_class import NodeClass, NodeRole
+
+        component = UANode(
+            node_id=node_id(47, UA_NS),
+            browse_name=QualifiedName(name="HasComponent"),
+            node_class=NodeClass.REFERENCE_TYPE,
+            role=NodeRole.BASE_TYPE,
+            references=_ref("HasSubtype", 5000, forward=True),
+        )
+        custom = UANode(
+            node_id=node_id(5000, UA_NS),
+            browse_name=QualifiedName(name="HasJobInfo"),
+            node_class=NodeClass.REFERENCE_TYPE,
+            role=NodeRole.BASE_TYPE,
+        )
+        graph = graph_of([component, custom])
+        assert graph.reference_semantics("HasJobInfo") == "HasComponent"
+
     def test_datatype_subtype_chain_is_not_inheritance(self) -> None:
         base = make_data_type("BaseDataType", 49)
         derived = make_data_type("JobDataType", 2001, refs=_ref("HasSubtype", 49))
