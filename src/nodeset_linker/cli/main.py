@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import NoReturn
 
 import click
-from lxml.etree import XMLSchema, parse
+from lxml.etree import XMLSchema
 from rich.console import Console
 from rich.json import JSON
 from rich.panel import Panel
@@ -55,6 +55,7 @@ from nodeset_linker.pipeline import LinkerPipeline
 from nodeset_linker.reports.data import DependencyReportData, Statistics
 from nodeset_linker.repository.model import SemanticModel, load_nodesets
 from nodeset_linker.utils.errors import LinkerError
+from nodeset_linker.utils.xml import parse_xml
 from nodeset_linker.validator.semantic import (
     ValidationReport,
     declared_external_namespaces,
@@ -154,7 +155,10 @@ def explain(config: Path, node: str) -> None:
 @click.argument("output", type=Path)
 def stats(output: Path) -> None:
     """Show node statistics of a produced NodeSet."""
-    model = load_nodesets([output])
+    try:
+        model = load_nodesets([output])
+    except LinkerError as exc:
+        _fail(str(exc))
     console.print(
         JSON(
             json.dumps(
@@ -200,7 +204,10 @@ def validate(output: Path, schema: Path | None, best_practices: bool) -> None:
     failures = 0
     if schema is not None:
         failures += _validate_schema(output, schema)
-    model = load_nodesets([output])
+    try:
+        model = load_nodesets([output])
+    except LinkerError as exc:
+        _fail(str(exc))
     report = validate_model(model, external=declared_external_namespaces(model))
     _render_validation(report)
     if best_practices:
@@ -501,11 +508,23 @@ def _bundle_files(path: Path, label: str) -> list[Path]:
     except json.JSONDecodeError as exc:
         _fail(f"{label}: {manifest} is not valid JSON: {exc}")
     entries = payload.get("namespaces", []) if isinstance(payload, dict) else []
-    files = [
-        manifest.parent / str(entry["output_file"])
-        for entry in entries
-        if isinstance(entry, dict) and entry.get("output_file")
-    ]
+    bundle_root = manifest.parent.resolve()
+    files: list[Path] = []
+    for entry in entries:
+        if not isinstance(entry, dict) or not entry.get("output_file"):
+            continue
+        raw = str(entry["output_file"])
+        candidate = (manifest.parent / raw).resolve()
+        try:
+            # A manifest is data, not trust: entries must stay inside the bundle directory,
+            # so a crafted manifest cannot read files outside it (or via absolute paths).
+            candidate.relative_to(bundle_root)
+        except ValueError:
+            _fail(
+                f"{label}: {manifest} names {raw!r}, which lies outside the bundle "
+                "directory — manifest entries must stay inside the bundle"
+            )
+        files.append(candidate)
     if not files:
         _fail(f"{label}: {manifest} lists no namespace files")
     missing = [str(file) for file in files if not file.is_file()]
@@ -654,11 +673,15 @@ def _validate_schema(output: Path, schema: Path) -> int:
         console.print(f"[bold red]error:[/] schema not found: {schema}")
         raise SystemExit(1)
     try:
-        document = parse(str(output))
+        document = parse_xml(output)
     except Exception as exc:  # any unreadable document is a validation failure
         console.print(f"[bold red]error:[/] cannot read {output}: {exc}")
         return 1
-    xsd = XMLSchema(parse(str(schema)))
+    try:
+        xsd = XMLSchema(parse_xml(schema))
+    except Exception as exc:  # a schema that cannot be read is a failure, not a crash
+        console.print(f"[bold red]error:[/] cannot read schema {schema}: {exc}")
+        return 1
     if xsd.validate(document):
         console.print(f"[green]schema validation passed[/] ({schema})")
         return 0

@@ -348,9 +348,10 @@ The written file is checked against the official schema in `tests/data/schema/UA
 (`tests/test_schema_compliance.py`, and `tests/test_compliance.py` compares the semantics of a
 subset before and after export). `scripts/check_official_nodesets.py` runs the real OPC UA, DI,
 Machinery and IA nodesets through the same checks: it downloads from a ref you can pin with
-`--ref`, prints each file's SHA-256 and its declared `Model` version/publication date plus the
-schema version, and exits non-zero if *any* source fails the schema or the semantic checks — a
-source that does not validate is a failed run, not a footnote. Schema validation alone is not
+`--ref` (ref-shaped names only), prints each file's SHA-256 and its declared `Model`
+version/publication date plus the schema version, XSD-validates the sources and the written file
+and validates both semantically, and exits non-zero if *any* check fails — a source that does not
+validate is a failed run, not a footnote. Schema validation alone is not
 OPC UA conformance: it says the XML matches `UANodeSet.xsd`, nothing more.
 
 ## Semantic diff (`diff`)

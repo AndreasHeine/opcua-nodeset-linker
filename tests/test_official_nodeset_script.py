@@ -7,6 +7,7 @@ schema check has to *count* failures, and what the run used has to be reported e
 from __future__ import annotations
 
 import importlib.util
+import sys
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -71,7 +72,7 @@ def test_fetch_uses_a_separate_cache_for_each_ref(script, tmp_path, monkeypatch)
         def __exit__(self, *args: object) -> None:
             self.close()
 
-    def fake_urlopen(url: str) -> Response:
+    def fake_urlopen(url: str, timeout: int | None = None) -> Response:
         requested.append(url)
         return Response(url.encode("utf-8"))
 
@@ -86,3 +87,70 @@ def test_fetch_uses_a_separate_cache_for_each_ref(script, tmp_path, monkeypatch)
     script.fetch(tmp_path, "tag-a")
     assert len(requested) == 2 * len(script.OFFICIAL_FILES)
     assert all(path.read_bytes().startswith(b"https://") for path in first + second)
+
+
+class FakeResponse:
+    def __init__(self, payload: bytes) -> None:
+        self._payload = payload
+
+    def __enter__(self) -> FakeResponse:
+        return self
+
+    def __exit__(self, *_exc: object) -> bool:
+        return False
+
+    def read(self) -> bytes:
+        return self._payload
+
+
+class InterruptedResponse:
+    def __enter__(self) -> InterruptedResponse:
+        return self
+
+    def __exit__(self, *_exc: object) -> bool:
+        return False
+
+    def read(self) -> bytes:
+        raise OSError("connection reset mid-stream")
+
+
+def test_bad_ref_is_rejected_before_any_download(script, tmp_path, monkeypatch, capsys) -> None:
+    def explode(*args, **kwargs):  # must never run
+        raise AssertionError("urlopen must not be called for an invalid ref")
+
+    monkeypatch.setattr(script, "urlopen", explode)
+    for bad in ("../evil", "v1 03", "refs/main/../x", "?v=1", ""):
+        monkeypatch.setattr(
+            sys, "argv", ["check_official_nodesets", "--ref", bad, "--dir", str(tmp_path)]
+        )
+        assert script.main() == 1
+        assert "invalid ref" in capsys.readouterr().out
+
+
+def test_interrupted_download_leaves_no_cache_entry(script, tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(script, "urlopen", lambda url, timeout=None: InterruptedResponse())
+    with pytest.raises(OSError, match=r"download of .* failed"):
+        script.fetch(tmp_path, "latest")
+    cache = tmp_path / script.hashlib.sha256(b"latest").hexdigest()
+    leftovers = sorted(p.name for p in cache.iterdir()) if cache.exists() else []
+    assert leftovers == []  # neither the target nor a .part survives an interruption
+
+
+def test_complete_download_lands_atomically(script, tmp_path, monkeypatch) -> None:
+    captured: list[tuple[str, object]] = []
+
+    def fake(url: str, timeout=None):
+        captured.append((url, timeout))
+        return FakeResponse(b"<UANodeSet/>")
+
+    monkeypatch.setattr(script, "urlopen", fake)
+    paths = script.fetch(tmp_path, "v1.03.03")
+    assert len(paths) == len(script.OFFICIAL_FILES)
+    for path in paths:
+        assert path.read_bytes() == b"<UANodeSet/>"
+        assert not path.with_name(f"{path.name}.part").exists()
+    assert all(timeout == script.DOWNLOAD_TIMEOUT for _url, timeout in captured)
+    # A second fetch reads from the cache instead of re-downloading.
+    captured.clear()
+    assert script.fetch(tmp_path, "v1.03.03") == paths
+    assert captured == []

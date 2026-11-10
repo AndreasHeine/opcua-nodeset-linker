@@ -19,6 +19,37 @@ class TestParsing:
         info = parser.document_info()
         assert info.namespaces[0].uri == "http://opcfoundation.org/UA/"
 
+    def test_entity_declarations_are_never_expanded(self, tmp_path) -> None:
+        """The hardened parser keeps entity references unresolved, so a bomb cannot expand."""
+        bomb = tmp_path / "bomb.xml"
+        entity_a = "x" * 4096
+        bomb.write_text(
+            '<?xml version="1.0"?>'
+            f'<!DOCTYPE UANodeSet [<!ENTITY a "{entity_a}">'
+            '<!ENTITY b "&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;">]>'
+            '<UANodeSet xmlns="http://opcfoundation.org/UA/2011/03/UANodeSet.xsd">'
+            '<UAVariable NodeId="i=1" BrowseName="Bomb">&b;</UAVariable>'
+            "</UANodeSet>",
+            encoding="utf-8",
+        )
+        nodes, _ = parse_nodeset(bomb)
+        assert len(nodes) == 1
+        # Unresolved references carry no expansion: nothing approaches 40 KiB of text.
+        expanded = sum(len(node.value_xml or "") for node in nodes)
+        assert expanded < 100
+
+    def test_oversized_document_is_rejected(self, tmp_path, monkeypatch) -> None:
+        monkeypatch.setattr("nodeset_linker.utils.xml.MAX_XML_BYTES", 32)
+        big = tmp_path / "big.xml"
+        big.write_text(
+            '<UANodeSet xmlns="http://opcfoundation.org/UA/2011/03/UANodeSet.xsd">'
+            + "<!-- pad -->" * 10
+            + "</UANodeSet>",
+            encoding="utf-8",
+        )
+        with pytest.raises(ParseError, match="exceed the"):
+            parse_nodeset(big)
+
     def test_namespace_indexes_resolve_to_uris(self, machinery) -> None:
         nodes, _ = parse_nodeset(machinery)
         job = next(n for n in nodes if n.browse_name.name == "JobDataType")

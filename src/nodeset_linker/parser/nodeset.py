@@ -18,10 +18,14 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Self
 
-from lxml.etree import XMLSyntaxError, _Element, tostring
-from lxml.etree import parse as xml_parse
+from lxml.etree import _Element, tostring
 
-from nodeset_linker.models.identifiers import ExpandedNodeId, IdentifierKind, NodeId, QualifiedName
+from nodeset_linker.models.identifiers import (
+    ExpandedNodeId,
+    IdentifierKind,
+    NodeId,
+    QualifiedName,
+)
 from nodeset_linker.models.namespace import (
     DocumentInfo,
     ModelInfo,
@@ -52,6 +56,7 @@ from nodeset_linker.models.node import (
 from nodeset_linker.models.node_class import ModellingRule, NodeClass, NodeRole
 from nodeset_linker.models.standard import STANDARD_DATA_TYPE_IDS as CANONICAL_DATA_TYPE_IDS
 from nodeset_linker.utils.errors import ParseError
+from nodeset_linker.utils.xml import parse_xml
 
 UA_NAMESPACE = "http://opcfoundation.org/UA/"
 
@@ -256,10 +261,7 @@ class NodeSetParser:
         return cls().parse_path(Path(path))
 
     def parse_path(self, path: Path) -> Self:
-        try:
-            root = xml_parse(str(path)).getroot()
-        except XMLSyntaxError as exc:
-            raise ParseError(f"{path}: {exc}") from exc
+        root = parse_xml(path).getroot()
         if _local(root.tag) != "UANodeSet":
             raise ParseError(f"{path}: root element {root.tag!r}, expected UANodeSet")
 

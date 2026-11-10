@@ -10,8 +10,9 @@ come from the network, so this runs by hand.
     python scripts/check_official_nodesets.py --ref 1.05.05   # pin the nodeset source
 
 The exit status is 0 only when *everything* passed: every source against the XSD and
-semantically, the reduction, and the written file.  A source that does not validate is a
-failed run, not a footnote.  Which sources were used is printed, because ``latest`` moves.
+semantically, the reduction, and the written file against both as well.  A source that does
+not validate is a failed run, not a footnote.  Which sources were used is printed, because
+``latest`` moves.
 """
 
 from __future__ import annotations
@@ -19,15 +20,19 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
+import re
 import sys
 from pathlib import Path
 from urllib.request import urlopen
 
-from lxml.etree import XMLSchema, parse
+from lxml.etree import XMLSchema
 
 from nodeset_linker.config.schema import LinkerConfig
 from nodeset_linker.pipeline import LinkerPipeline
 from nodeset_linker.repository.model import load_nodesets
+from nodeset_linker.utils.errors import ParseError
+from nodeset_linker.utils.xml import parse_xml
 from nodeset_linker.validator.semantic import SemanticValidator
 
 BASE_URL = "https://raw.githubusercontent.com/OPCFoundation/UA-Nodeset/{ref}/"
@@ -38,6 +43,13 @@ OFFICIAL_FILES = [
     "IA/Opc.Ua.IA.NodeSet2.xml",
 ]
 SCHEMA = Path("tests/data/schema/UANodeSet.xsd")
+
+#: A ref is interpolated into the URL, so only tag/branch/commit-shaped spellings pass:
+#: no path separators, no scheme, no query characters that could redirect the request.
+REF_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
+
+#: Seconds a single download may take before it is abandoned.
+DOWNLOAD_TIMEOUT = 30
 
 
 def fetch(directory: Path, ref: str) -> list[Path]:
@@ -50,8 +62,16 @@ def fetch(directory: Path, ref: str) -> list[Path]:
     for remote in OFFICIAL_FILES:
         path = cache_directory / Path(remote).name
         if not path.exists():
-            with urlopen(base + remote) as response:
-                path.write_bytes(response.read())
+            # A partial download must never become a cache entry: write beside the
+            # target and move it into place only after the stream is complete.
+            staging = path.with_name(f"{path.name}.part")
+            try:
+                with urlopen(base + remote, timeout=DOWNLOAD_TIMEOUT) as response:
+                    staging.write_bytes(response.read())
+                os.replace(staging, path)
+            except OSError as exc:
+                staging.unlink(missing_ok=True)
+                raise OSError(f"download of {remote} failed: {exc}") from exc
             print(f"downloaded {remote} ({path.stat().st_size} bytes)")
         paths.append(path)
     return paths
@@ -63,7 +83,7 @@ def sha256(path: Path) -> str:
 
 def model_versions(path: Path) -> str:
     """The ``Model`` entries a file declares: what version of the model it is."""
-    root = parse(str(path)).getroot()
+    root = parse_xml(path).getroot()
     entries = [
         f"{child.get('ModelUri')}"
         f" v{child.get('Version') or '?'} ({child.get('PublicationDate') or '?'})"
@@ -75,7 +95,7 @@ def model_versions(path: Path) -> str:
 
 def schema_version(xsd_path: Path) -> str:
     """The version of the schema itself, from its own annotation."""
-    root = parse(str(xsd_path)).getroot()
+    root = parse_xml(xsd_path).getroot()
     for child in root.iter():
         if child.tag.rpartition("}")[2] == "Model":
             version = child.get("Version")
@@ -85,7 +105,11 @@ def schema_version(xsd_path: Path) -> str:
 
 
 def xsd_ok(path: Path, xsd: XMLSchema) -> bool:
-    document = parse(str(path))
+    try:
+        document = parse_xml(path)
+    except ParseError as exc:  # an unreadable document is a failure, not a crash
+        print(f"  {path.name}: cannot parse: {exc}")
+        return False
     ok = xsd.validate(document)
     if not ok:
         print(f"  {path.name}: {str(xsd.error_log)[:500]}")
@@ -113,14 +137,25 @@ def main() -> int:
     )
     options = parser.parse_args()
 
+    if not REF_PATTERN.fullmatch(options.ref):
+        print(f"invalid ref: {options.ref!r} (expected a branch, tag or commit name)")
+        return 1
     if not SCHEMA.exists():
         print(f"missing schema: {SCHEMA}")
         return 1
-    xsd = XMLSchema(parse(str(SCHEMA)))
+    try:
+        xsd = XMLSchema(parse_xml(SCHEMA))
+    except ParseError as exc:
+        print(f"cannot parse schema: {exc}")
+        return 1
     print(f"schema: {SCHEMA} - {schema_version(SCHEMA)}")
     print(f"source: OPCFoundation/UA-Nodeset ref={options.ref}")
 
-    sources = fetch(Path(options.dir), options.ref)
+    try:
+        sources = fetch(Path(options.dir), options.ref)
+    except OSError as exc:
+        print(f"cannot fetch official nodesets: {exc}")
+        return 1
     failures = schema_failures(sources, xsd)
     for source in sources:
         print(
@@ -153,6 +188,9 @@ def main() -> int:
 
     reloaded = load_nodesets([str(output)])
     print(f"the written file reloads on its own: {reloaded.node_count()} nodes")
+    written_report = SemanticValidator(reloaded).validate()
+    failures += len(written_report.errors)
+    print(f"written-file semantics: {written_report.summary()}")
     print("PASS" if failures == 0 else f"FAIL: {failures} failure(s)")
     return 0 if failures == 0 else 1
 
