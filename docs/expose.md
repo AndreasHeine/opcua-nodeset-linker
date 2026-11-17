@@ -3,7 +3,7 @@
 **Ein Kompaktwerkzeug für OPC-UA-Modellierung: reduziert Companion-Specs, validiert NodeSets ohne
 laufenden Server und schreibt aus dem semantischen Diff den Changelog.**
 
-Stand: `0.2.0-alpha`, Working Tree auf `main` (669 Tests grün, 94 % Coverage, `mypy` und `ruff` clean).
+Stand: Projektversion `0.4.0-alpha` (siehe `pyproject.toml`).
 
 ---
 
@@ -256,7 +256,7 @@ Typische Nutzer: Maschinen- und Anlagenbauer, Integratoren, Endanwender mit eige
   Lücke, siehe `docs/semantic-diff.md` §5.
 - `validate` und `stats` nehmen eine Datei; ein Split-Bundle-Verzeichnis akzeptiert bisher nur `diff`.
 - Ein Teil der Diff-Gaps ist offen (u. a. Facets/Feature-Sets, Value-vs-Datatype-Konsistenz,
-  Identifier-Struktur in `reports/data.py`, unterscheidbare Exit-Codes).
+  ein veröffentlichtes JSON-Schema und unterscheidbare Exit-Codes).
 
 ---
 
@@ -268,8 +268,9 @@ Typische Nutzer: Maschinen- und Anlagenbauer, Integratoren, Endanwender mit eige
 3. **KI-Integration als eigener Schritt:** Prompt-Contract auf `diff.json` (Regel-ID, Klausel, Node-ID,
    Impact) plus Rückprüfung der generierten Changelog-Punkte gegen den Report; Ziel: Changelog als
    CI-Artefakt, nicht als Handarbeit.
-4. **Waiver-/Registry-Format für Gremien:** Baseline-Registry publizierter `NamespaceUris` als Shared
-   Artefakt, damit `--release-verdict` in einer Spec-Pipeline läuft.
+4. **Gemeinsame Release-Governance:** ein geteiltes und versioniertes Baseline-Manifest
+   veröffentlichter `NamespaceUris` sowie abgestimmte Waiver-Regeln; `--baseline`,
+   `--release-verdict` und `--waiver-file` unterstützen diese Pipeline bereits.
 5. **Modellversion als Pflicht** (`ModelVersion` fehlt → Finding), Facets/Feature-Sets,
    Value-vs-Datatype-Konsistenz.
 6. **Unterscheidbare Exit-Codes** für „breaking“, „advisory“, „baseline unknown“, damit eine Pipeline die

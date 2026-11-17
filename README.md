@@ -451,7 +451,7 @@ whether it blocks a release:
 | **INFO** | a fact about the change, nothing to fix | no gate |
 
 **Breaking** — identifier moved (`BP-NodeId-Immutable`), node renamed or retyped
-(`BP-Node-Renamed`, `BP-NodeClass-Immutable`), BrowseName or SymbolicName changed
+(`BP-Node-Renamed`, `BP-NodeClass-Immutable`), BrowseName changed
 (`BP-BrowseName-Immutable`), declaration removed including an optional one
 (`BP-Declaration-Removed`, `BP-Declaration-Removed-Optional`), datatype of a variable changed
 (`BP-DataType-Immutable`), hierarchy moved (`BP-Hierarchy-Move`, `BP-TypeDefinition-Moved`,
@@ -473,16 +473,15 @@ encoding (`BP-FieldOrder-Encoding`, `BP-AlternativeOrder-Encoding`), a replaced 
 (`BP-Type-Replaced`), namespace metadata drift (`BP-Namespace-VersionDrift` on two version
 claims that name *different* releases, `BP-Namespace-ModelVersionSyntax` on a `ModelVersion` that
 is not valid SemVer, `BP-Namespace-MetadataConflict`, `BP-Namespace-ModelPrecedence`), naming and
-file-name
-conventions (`BP-Naming-PascalCase`, `BP-Filename-Convention`), Conformance Unit and profile
+file-name conventions (`BP-Naming-PascalCase`, `BP-Filename-Convention`), a changed
+`SymbolicName` (`BP-SymbolicName-Identity`), Conformance Unit and profile
 changes (`BP-CU-*`, `BP-Profile-Removed`), deprecation without a new namespace, a guessed field
 rename (`BP-Field-Rename-Guess`), a duplicate member, `InverseName`, extensions and value
 dependencies, and an identifier two documents declare inconsistently (`BP-Merge-Conflict`).
 
 **INFO** — text a consumer reads but never parses (`BP-DisplayName-Meaning`,
-`BP-Description-Meaning`, `BP-Documentation-Meaning`, `BP-Member-Text`), a SymbolicName that only
-re-identifies the node (`BP-SymbolicName-Identity`), server-specific attributes and instance data
-(`BP-Attributes-ServerSpecific`, `BP-Value-InstanceData`), a modelling rule relaxed
+`BP-Description-Meaning`, `BP-Documentation-Meaning`, `BP-Member-Text`), server-specific attributes
+and instance data (`BP-Attributes-ServerSpecific`, `BP-Value-InstanceData`), a modelling rule relaxed
 (`BP-ModellingRule-Relaxing`), navigation and optional references added or removed
 (`BP-Reference-Navigation-*`, `BP-Reference-OptionalChild-Added`), an added declaration, subtype
 or CU (`BP-Declaration-Added`, `BP-Interface-Added` in a compatible extension, `BP-CU-Added`),
@@ -490,9 +489,10 @@ and namespace metadata (`BP-Namespace-Version`, `BP-Namespace-PublicationDate`,
 `BP-Namespace-ModelVersion`, `BP-Namespace-RequiredModel`, `BP-Namespace-XmlSchema`,
 `BP-Namespace-Bump`, `BP-Namespace-Alias`).
 
-Removing an ordinary optional component, or an `Organizes`/`HasDescription` reference, is not
-breaking; neither is a metadata-only version bump. A lint finding is never BREAKING: a
-best-practice violation is advice, not a modelling error.
+Removing an ordinary optional component is breaking: consumers may already browse that
+declaration. Removing an `Organizes` or `HasDescription` navigation reference is informational,
+as is a metadata-only version bump. A lint finding is never BREAKING: a best-practice violation
+is advice, not a modelling error.
 
 The JSON form is the CI contract; every entry carries its URI identity and, with `--impact`
 applied, how many nodes depend on it:
@@ -585,14 +585,16 @@ See `docs/architecture.md`, `docs/dependency-resolution.md` and
 `docs/reduction-example.md` — a complete walkthrough of one reduction across two NodeSets
 with cross-namespace dependencies, node by node.
 For a practical start-to-finish workflow, see the [Usage Guide](docs/usage-guide.md).
-Concept documents that are not implemented yet live in `docs/semantic-diff.md` (diff gaps and
-roadmap) and `docs/ui-concept.md` (proposed browser-driven, guided, mobile-first interface —
-preview tier in JS, exported artifact and CI verdict from the Python engine).
+The [semantic diff documentation](docs/semantic-diff.md) describes the current implementation,
+known gaps and roadmap. The [UI concept](docs/ui-concept.md) proposes a browser-driven,
+guided, mobile-first interface — preview tier in JS, exported artifact and CI verdict from the
+Python engine.
 The diff's breaking-change rules derive from the OPC UA best-practices whitepaper (OPC 11030,
 source text in `docs/OPC-11030-v1.03.03.md`); each finding cites its clause, and
 `docs/best-practices-alignment.md` reconciles every clause of that paper against the implemented
 verdict (aligned / stricter / looser / not checked), while
-`docs/best-practices-implementation-plan.md` is the work-plan for closing the gaps it found. A
+`docs/best-practices-implementation-plan.md` records the completed work packages and historical
+pre-implementation analysis. A
 clickable mockup of that interface: `docs/ui-mockup-browser.html` (a wizard you can drive entirely
 in the browser: import real `UANodeSet` files, configure roots/mode/external models, analyse,
 explain, diff, download the reduced NodeSet — simplified against the Python engine).
