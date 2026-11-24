@@ -15,7 +15,7 @@ OPC UA is the industry standard for secure networking in automation. It is defin
 
 - **Machine builders** load Companion Specs from consortia (Machinery, DI, Diagnostics, PackML), which include all their dependencies — but they often need only a fraction of them. They reduce manually, errors occur silently.
 - **Control System Editors** (engineering software like TIA-Portal, Studio 5000, CodeSys) must validate models before publication — for breaking changes, compliance with rules, dependency closure. Today this happens through workarounds or not at all.
-- **Standardization consortia** (Machinery Working Group, UTIMAT, Diagnostics) publish new releases of Companion Specs and need changelogs that explain what changes *for the consumer* — not what changes in the XML.
+- **Standardization consortia** (Machinery Working Group, umati, Diagnostics) publish new releases of Companion Specs and need changelogs that explain what changes *for the consumer* — not what changes in the XML.
 - **Interface governance** is invisible: If a model contains breaking changes, consumers only learn this at live failure, not in CI.
 
 Result: OPC UA models today are as error-prone as code without tests.
@@ -161,7 +161,7 @@ The tool runs in GitHub Actions, GitLab CI, Jenkins — any pipeline. It needs n
 
 ## 7. Why This Is Transformative for Standardization Consortia
 
-OPC UA Companion Specs are published by consortia: Machinery, DI, Diagnostics, PackML, UTIMAT, ISA95-Jobs.
+OPC UA Companion Specs are published by consortia: Machinery, DI, Diagnostics, PackML, umati, ISA95-Jobs.
 They need:
 
 | Use Case | Implementation |
