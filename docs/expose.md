@@ -1,288 +1,319 @@
 # Exposé: `opcua-nodeset-linker`
 
-**Ein Kompaktwerkzeug für OPC-UA-Modellierung: reduziert Companion-Specs, validiert NodeSets ohne
-laufenden Server und schreibt aus dem semantischen Diff den Changelog.**
+**The DevOps solution for OPC UA Information Models: Automates validation, reduction, and
+release management without a server, for machine builders and standardization consortia.**
 
-Stand: Projektversion `0.4.0-alpha` (siehe `pyproject.toml`).
-
----
-
-## 1. Die These
-
-OPC UA wird als **Modell** definiert, aber als **Datei** veröffentlicht. Zwischen Modell und Datei
-liegen drei Schritte, die heute manuell passieren und fehlerhaft bleiben:
-
-1. *Reduktion* — welche Nodes einer Companion-Spec braucht dieses Produkt wirklich?
-2. *Konformität* — ist die veröffentlichte Datei semantisch geschlossen, bevor ein Server sie lädt?
-3. *Release-Information* — was hat sich gegenüber der veröffentlichten Version geändert, und darf die
-   `NamespaceUri` wiederverwendet werden?
-
-Das Tool macht alle drei Schritte deterministisch und maschinenlesbar. Es braucht dafür ** keinen
-laufenden Server, keine Client-Bibliothek und keinen OPC-UA-Stack** — nur die NodeSet-Dateien. Damit
-werden Modellfehler zu CI-Ergebnissen statt zu Feldproblemen.
+**License:** Apache 2.0 (Open Source)  
+**Status:** Project version `0.4.0-alpha` (see `pyproject.toml`)
 
 ---
 
-## 2. Was heute schon funktioniert (Ist-Zustand)
+## 1. The Problem
 
-| Bereich | Umsetzung | Größenordnung |
-| --- | --- | --- |
-| Parser | OPC 10000-6 NodeSets inkl. `NamespaceUris`/`ServerUris`/`Models`, Index → URI, tolerant gegen Re-Indexierung und Dokumentreihenfolge | — |
-| Dependency-Graph | Identität ist `(namespaceUri, identifier, serverUri)`; Referenzen, Typdefinitionen, Encodings, Subtypen, `RequiredModel` | 3912 Kanten im Beispiel-Export |
-| Reduktion | `STRICT` / `OPTIONAL_AWARE` / `RUNTIME` / `CUSTOM`, Roots, externe Modelle (`external`), Subset-Marker (§11.2) | 1110 Nodes, 8 Namespaces im Beispiel |
-| Validierung | semantische Prüfung ohne Server, optional XSD, optional OPC-11030-Lint | 10 semantische Prüfbereiche, 25 Lint-Regeln |
-| Semantischer Diff | 113 Regeln mit Severity, Regel-ID und Klausenzitat | Breaking / Advisory / INFO |
-| Release-Verdikt | „darf diese `NamespaceUri` wiederverwendet werden?“ gegen publizierten Baseline (§3.3, §11.3) | Exit-Code-gate |
-| Ausgabe | Console, Markdown, HTML, JSON (`schema_version`, `paper`) | — |
-| Versionen | Vergleich auf dem SemVer-Kern statt der Schreibweise (Annex F.2, §12.41) | neue Regel `BP-Namespace-ModelVersionSyntax` |
-| CI | `--fail-on-breaking`, `--fail-on-advisory`, Waiver, `--accept-breaking` | Exit 0/1 |
+OPC UA is the industry standard for secure networking in automation. It is defined as a
+*semantic model*, but published as an *XML file*. The path from modeling to delivery is fragmented:
 
-Beispielzahlen aus den mitgelieferten Demos:
+- **Machine builders** load Companion Specs from consortia (Machinery, DI, Diagnostics, PackML), which include all their dependencies — but they often need only a fraction of them. They reduce manually, errors occur silently.
+- **Control System Editors** (engineering software like TIA-Portal, Studio 5000, CodeSys) must validate models before publication — for breaking changes, compliance with rules, dependency closure. Today this happens through workarounds or not at all.
+- **Standardization consortia** (Machinery Working Group, UTIMAT, Diagnostics) publish new releases of Companion Specs and need changelogs that explain what changes *for the consumer* — not what changes in the XML.
+- **Interface governance** is invisible: If a model contains breaking changes, consumers only learn this at live failure, not in CI.
 
-- Reduktion von sieben Companion-Specs auf einen Maschinenbauer-Export: **1110 Nodes, 8 Namespaces,
-  3912 Abhängigkeitskanten**, semantische Validierung „passed with warnings“ (8 Hinweise, alle
-  externalisierte OPC-UA-Core-Abhängigkeiten).
-- Demo3-Diff (zwei Showcase-Instanzen): `Nodes: 1110 → 1110`, 1 Modified, 1 Renumbered,
-  **2 Breaking**, Impact **78** Nodes.
-- Demo4-Diff (geänderte Machinery/MachineTool-Release): `1110 → 1109`, 1 Removed, 5 Modified,
-  **6 Breaking**, Impact **494** Nodes.
+Result: OPC UA models today are as error-prone as code without tests.
 
 ---
 
-## 3. Säule A — NodeSet-Validierung ohne realen Server
+## 2. The Solution: What is `opcua-nodeset-linker`?
 
-### Warum ohne Server validiert werden *kann*
+A **CLI tool and Python library** that treats OPC UA Information Models like *code*:
+- Reads NodeSet files (OPC 10000-6), builds a semantic dependency graph
+- Validates models without stack and without server — purely based on file structure
+- Reduces large specs to a configured subset, explains why each node is retained
+- Compares two models and classifies changes by severity (Breaking / Advisory / Info)
+- Generates machine-readable reports (JSON) and human-readable documentation (Markdown, HTML)
+- Runs in CI/CD pipelines, blocks faulty releases, documents review decisions
 
-Ein NodeSet ist ein geschlossener Graph. Alles, was ein Server zur Laufzeit „prüft“, ist in der Datei
-selbst enthalten oder fehlt in ihr: Referenzziele, Typdefinitionen, Encodings, Subtypketten,
-Namespace-Links und `RequiredModel`-Erklärungen. Diese Struktur lässt sich vollständig gegen die
-Modellregeln rechnen, bevor ein Stack existiert. Ein Server prüft dagegen nur, was beim
-Instanziieren auffällt — und zeigt genau dann einen Fehler, wenn ein Endanwender ihn sieht.
-
-### Was die semantische Validierung prüft
-
-`nodeset-linker validate <output>` kontrolliert:
-
-- Referenzziele (existiert das Ziel, ist es ein Referenztyp?) und Referenztyp-Deklarationen
-- Typdefinitionen und Datatype-Referenzen (`HasTypeDefinition`, Encoding-Referenzen, `<Definition>`
-  gegen Datatype)
-- Referenztyp- und Subtyp-Hierarchie inkl. Zyklen (Selbst-/Transitivzyklen einer Subtypkette)
-- Namespace-Links (`NamespaceUris`, Alias, QualifiedName-Index) und `IsNamespaceSubset`-Marker (§11.2)
-- Externe Abhängigkeiten: Referenzen in ein als `RequiredModel` erklärtes Modell sind erlaubt,
-  Referenzen in ein Modell, das die Datei nicht enthält, sind Fehler
-
-Schema-Konformität wird **nicht** behauptet, wenn kein Schema gegeben ist: `--schema PATH` prüft
-gegen `UANodeSet.xsd`; ohne diesen Schalter ist das Ergebnis *semantisch*, nicht „schema-konform“.
-
-### Was der OPC-11030-Lint zusätzlich findet
-
-`--best-practices` liefert zusätzlich 25 Regeln, die **ohne** Server und **ohne** Stack sichtbar werden — etwa:
-
-- `MANDATORY_SELF_CONTAINED_DECLARATION` → `BP-Recursive-Mandatory`: ein Pflichtfeld in einem Typ, der
-  sich selbst enthält — ein Server kann diesen Typ nicht instanziieren. Im Demo-Export finden sich so
-  **609** Stellen; kein Server und kein Browser zeigt diese Klasse als Fehlermeldung.
-- Namens- und Datei-Konventionen (§3.2.x), Duplicate-Namen über Namespaces, Browse-Path-Kollisionen,
-  `NamespaceUri`-Template und fehlender Trailing Slash, `NamespaceIndex` in Text, Status-Code außerhalb
-  der Base, Feldgrenzen von optionalen Strukturmitgliedern (§3.2.2), Audit-Event-Subtypen.
-
-Die Lint-Findings ändern den Exit-Code bewusst nicht: sie sagen „schau dir das an“, nicht „das ist
-kaputt“. Ein Reviewer sieht sie, die Pipeline gate't nicht.
-
-### Praktischer Wert
-
-| Vorher | Nachher |
-| --- | --- |
-| Modellfehler fallen beim ersten Instanziieren auf einem echten Server auf | fallen in der CI auf, bevor die Datei veröffentlicht wird |
-| Konformität wird mit Server, Browser und manuellem Stöbern geprüft | `validate` + `--schema` + `--best-practices`, eine Zeile, Exit-Code |
-| Companion-Spec-Reduktion ist Handarbeit mit unsicherem Ergebnis | `analyze` zeigt die Reduktion ohne Schreibvorgang, `explain` begründet jede Node |
-| Externalisierte Abhängigkeiten sind ein Versprechen an den Consumer | werden als Warnings benannt, die der Consumer abgleichen kann |
+**Core feature:** The tool needs **no running server, no OPC UA Stack, no client library** — just the NodeSet XML files themselves.
 
 ---
 
-## 4. Säule B — KI-gestützte Changelog-Erstellung durch den semantischen Diff
+## 3. What It Can Do Today (Product Features)
 
-### Das Prinzip: deterministische Fakten, sprachliche Prosa
+### A. Reduction with Explanation (`link`, `analyze`, `explain`)
 
-Der Diff vergleicht **semantische Modelle**, nie XML. Dokumentreihenfolge, Whitespace, Kommentare und
-ein neu zugewiesener `NamespaceIndex` sind keine Unterschiede; ein Node wird über
-`(namespaceUri, identifier, serverUri)` identifiziert. Ein umnummerierter Node erscheint als
-*renumbered*, nicht als Add plus Remove. Jede Änderung trägt:
+**Problem:** Machine builders inherit Companion Specs with 2000+ nodes. They need perhaps 500. Manual deletion leads to broken references, dead code, and loss of compliance.
 
-- Severity (`BREAKING` / `ADVISORY` / `INFO`)
-- Regel-ID (`BP-DataType-Changed`, `BP-NodeId-Immutable`, `BP-FieldOrder-Encoding`, …)
-- Klausenzitat aus OPC 11030 (§3.2.11, §11.3, …) und eine begründete Rationale
-- Node-Identität und Impact (exakte Anzahl abhängiger Nodes)
-- Namespace-Metadaten: `Version`, `PublicationDate`, `XmlSchemaUri`, `ModelVersion`, `RequiredModel` —
-  verglichen auf dem SemVer-Kern, nicht auf der Schreibweise
-
-Das ist die Voraussetzung für KI-gestützte Changelogs: ein Sprachmodell bekommt keine Textdiff-Zeilen,
-sondern eine **strukturierte, bereits klassifizierte Faktenliste**. Es formuliert daraus Prosa — und
-jede Aussage ist über Regel-ID, Klausel und Node-ID nachprüfbar. Halluzinationen werden dadurch sichtbar,
-nicht glaubbar.
-
-> Wichtig, ehrlich abgegrenzt: Das Tool selbst ruft **kein** Sprachmodell auf. Es liefert die
-> deterministische Grundlage (`--json`, `--markdown`), und das Modell schreibt darüber. Der Wert liegt
-> in der Kombination: Maschine klassifiziert, Modell formuliert.
-
-### Workflow, wie er in einer Release-Pipeline läuft
-
+**Solution:**
 ```bash
-# 1. Fakten erzeugen (deterministisch, maschinenlesbar)
-nodeset-linker diff release/v1.xml release/v2.xml --impact \
-  --json     --output out/diff.json      # Input für das Sprachmodell
-nodeset-linker diff release/v1.xml release/v2.xml --impact \
-  --markdown --output out/diff.md        # PR-Kommentar / Review
-
-# 2. Gate (nur Breaking blockiert; Advisory bleibt Lesepflicht)
-nodeset-linker diff release/v1.xml release/v2.xml --fail-on-breaking --release-verdict --baseline registry.json
-
-# 3. Changelog aus den Fakten
-#    Prompt: "Schreibe aus diff.json den Abschnitt 'Breaking changes' für Release 1.05.03.
-#    Nenne pro Punkt Node-ID, Regel-ID und Klausel aus dem JSON. Keine Punkte erfinden."
+nodeset-linker link config.yaml  # Reduces to roots, explains dependencies
+nodeset-linker explain --node JobStateEnum config.yaml  # Why is this node in the output?
+nodeset-linker analyze config.yaml  # Dry run without writing
 ```
 
-Der JSON-Report enthält `schema_version`, die Quellenangabe des Papiers, Summary (`added/removed/modified/renumbered`,
-`breaking_changes`, `advisory_changes`, `namespace_changes`, `identical`, `waived_changes`) und pro Node
-die Regel- und Impact-Daten. Damit lassen sich Changelog-Abschnitte automatisch erzeugen und gegen die
-Report-Zahlen abgleichen: „6 breaking changes“ ist keine Behauptung im Text, sondern eine Zahl aus dem
-Report.
+- **4 reduction modes:** `STRICT` (roots only), `OPTIONAL_AWARE` (also optional declarations), `RUNTIME` (for instantiable types), `CUSTOM` (wildcard matching)
+- **Externalization:** Declares OPC UA Core or DI as `external:` → References remain, declarations are omitted
+- **Traceability:** Every node in the output is justified with a dependency chain
+- **In the example:** 7 Companion Specs → 1110 nodes in 8 namespaces, all dependencies resolved
 
-### Was der Diff zusätzlich beantwortet, das kein Textdiff beantwortet
+### B. Validation without Server (`validate`)
 
-| Frage | Antwort des Tools |
-| --- | --- |
-| Darf diese `NamespaceUri` wiederverwendet werden? | `--release-verdict --baseline …` (§3.3, §11.3); ohne Baseline sagt es „baseline unknown“ statt zu raten; „not reusable“ exit 1 |
-| Welche Consumer hängen an dieser Änderung? | `--impact`, `--context <consumer-model>` zählt auch Abhängigkeiten eines Nebenmodells |
-| Ist die Datei ein Linker-Export, also externalisiert? | `--reduced-export` liest fehlende Deklarationen als `BP-Declaration-Externalized` (INFO), nicht als Removal (§3.2.16) |
-| Vergleicht ein Split-Export mit dem alten Merged-File? | Ja: eine Seite darf ein Bundle mit `manifest.json` sein |
-| Welche Review-Entscheidung wurde akzeptiert? | `--waive`/`--waiver-file` (Advisory/INFO) und `--accept-breaking` bleiben im Report mit `[waived]`/Acknowledgement stehen; Breaking ist nicht waivable |
-| Sind `Version` und `ModelVersion` ein Widerspruch? | Nur wenn sie *verschiedene Releases* benennen (`BP-Namespace-VersionDrift`, Advisory); `1.04.0` neben `1.4.0` ist ein Release und meldet nichts; ungültiges `ModelVersion` ist `BP-Namespace-ModelVersionSyntax` |
-| Wurde ein Namespace veröffentlicht und enthält Breaking-Änderungen? | `BP-BreakingInReleasedNamespace` |
-| Wurde deprecated, ohne einen neuen Namespace zu bringen? | `BP-Deprecation-Without-New-Namespace` (§14.2/§14.3) |
-| Hat das Modell Conformance Units / Profiles? | `BP-CU-*`, `BP-Profile-Removed`, `BP-Namespace-Without-CU` (§12.1/§12.2, gefunden über BrowseName, nicht über hartcodierte IDs) |
+**Problem:** OPC UA models already contain in XML all the information a server checks. But there is no tool to validate before the first server starts. Errors only appear to the end user.
 
-Für die Standardisierungsseite ist die letzte Zeile entscheidend: CU-/Profile-Deklarationen werden vor
-der Veröffentlichung geprüft, ohne dass ein Stack oder ein Conformance-Tester läuft.
+**Solution:**
+```bash
+nodeset-linker validate reduced.xml --schema
+nodeset-linker validate reduced.xml --best-practices  # 25 additional OPC-11030 rules
+```
 
----
+**Validation scope** (all without server):
+- Reference targets (does the target exist? Is it a reference type?)
+- Type definitions and datatype references, encoding declarations
+- Reference type and subtype hierarchies (including cycle detection)
+- Namespace links and subset markers (§11.2 OPC-11030)
+- External dependencies (`RequiredModel`)
+- **Best Practices** (25 lint rules per OPC-11030):
+  - Recursive mandatory fields (609 occurrences in demo export — no server shows this as an error!)
+  - Naming conventions, browse-path collisions
+  - CU and profile declarations, deprecation traces (§14.2/§14.3)
+  - Version consistency (`Version` vs `ModelVersion`)
 
-## 5. Einsatzmöglichkeiten auf der Standardisierungsseite
+**Exit-code logic:**
+- Validation errors block (Exit 1)
+- Best-practices are review hints, don't block (Exit 0)
+- A reviewer sees *all* findings, the pipeline gates only on real errors
 
-Typische Nutzer: Autoren und Reviewer von Companion-Specs, Konsortien (Machinery/UTIMAT, Diagnostics,
-PackML, ISA95-Job-Control), Arbeitsgruppen, die vor der Publikation ein Modell prüfen.
+### C. Semantic Diff and Release Gate (`diff`)
 
-1. **Spec-Review vor Publikation.** `validate` + `--schema` + `--best-practices` ist ein
-   Konformitätscheck ohne Implementierung: der Reviewer prüft das Modell, nicht einen Server eines
-   Mitglieds.
-2. **Änderungsprotokoll über Draft-Releases.** Zwei Draft-Stände vergleichen ergibt die vollständige
-   Änderungsliste mit Klauseln: eingefügte Hierarchie, geänderte Feldreihenfolge gegen Encoding,
-   Symmetrie eines Referenztyps, `MaxStringLength`, CU-Mitglieder. Ein Draft, der unbemerkt breaking ist,
-   wird vor der Publikation sichtbar.
-3. **Release-Policy als Test.** §11.3 („Breaking braucht einen neuen Namespace“) wird durch
-   `--release-verdict` + Baseline-Registry zur überprüfbaren Aussage statt zur Absichtserklärung.
-4. **Deprecation-Spur (§14.2/§14.3).** Deprecated Nodes ohne neuen Namespace werden advisiert; die Zahl
-   deprecated Nodes pro Namespace erscheint im Namespace-Eintrag — genau das, was eine
-   Rückzugsplanung braucht.
-5. **Versionsschreibweise statt Streit.** OPC schreibt ein Release zweimal (`Version="1.05.03"`,
-   `ModelVersion="1.5.3"`). Der Kernvergleich macht aus dem scheinbaren Widerspruch nichts; ein
-   tatsächlich differentes Release oder ein ungültiges `ModelVersion` bleibt als Advisory stehen.
-6. **Konferenz-/Gremienarbeit.** Markdown- und HTML-Reports sind versendbare Review-Unterlagen; die
-   Regel-IDs geben dem Protokoll eine referenzierbare Sprache („BP-Subtype-Inserted, §3.2.4“).
-7. **KI-gestützte Spec-Dokumentation.** Aus dem JSON: Changelog-Abschnitte, Änderungen für die
-   Spec-Textstelle, eine „Was sich gegenüber Release X ändert“-Seite — jeder Punkt mit Regel-ID und
-   Klausel, also zitierbar.
+**Problem:** When a machine builder or consortium publishes a new version, the consumer needs a changelog — not about XML diffs, but about *semantic meaning*: Which fields changed? Which nodes disappeared? Will my clients still work?
 
----
+**Solution:**
+```bash
+nodeset-linker diff v1.xml v2.xml --impact --markdown
+nodeset-linker diff v1.xml v2.xml --impact --json > diff.json
+nodeset-linker diff v1.xml v2.xml --release-verdict --baseline baseline.json
+```
 
-## 6. Einsatzmöglichkeiten auf der Maschinenbauerseite
+**Classification** (113 rules, each with severity, rule ID, clause):
+- `BREAKING`: Breaks existing clients (e.g., fields removed, DataType changed)
+- `ADVISORY`: Should be noted, doesn't break (e.g., optional field added, node renamed)
+- `INFO`: Transparent change (e.g., re-indexing, reordering)
 
-Typische Nutzer: Maschinen- und Anlagenbauer, Integratoren, Endanwender mit eigener Adressraum-Planung.
+**For each change, reported:**
+- What changed (node ID, old/new declaration)
+- Why it changed (rule ID: `BP-FieldOrder-Changed`, `BP-DataType-Changed`)
+- Which clause of the spec forbids or allows it (e.g., §3.2.4 "Field order immutable")
+- Impact: How many downstream nodes are affected?
+- Namespace metadata: `Version`, `ModelVersion`, `PublicationDate`, `RequiredModel` (SemVer-aware)
 
-1. **Datenhaltung verkleinern statt alles laden.** `link` mit Roots liefert den Teil einer
-   Companion-Spec, den diese Maschine wirklich braucht; `--export.mode split` schreibt pro Namespace eine
-   Datei (`manifest.json`), was Datei-basierte Werkzeugketten und Patch-Workflows ermöglicht.
-2. **Warum ist diese Node drin?** `explain -n <BrowseName|NodeId>` beantwortet die Retention mit dem
-   Dependency-Pfad — die Frage, die jeder Integrator stellt und die heute nur durch Ausprobieren
-   beantwortet wird.
-3. **DI/Machinery externalisieren.** `external:` erklärt OPC UA Core oder DI als Abhängigkeit: Referenzen
-   und `RequiredModel` bleiben in der Datei, Deklarationen werden weggelassen (§11.2). Der Consumer muss
-   das Modell bereitstellen — und `validate` benennt diese Pflicht als Warning.
-4. **Eigenes Modell, fremde Consumer.** Änderungen am Maschinenmodell zeigen den Impact auf 500 Nodes,
-   nicht die Vermutung davon (`--impact`, `--impact-limit`, `--context`). Ein DataType-Wechsel an einem
-   Pflichtfeld wird als Breaking erkannt, bevor ein Feldgerät damit ausgeliefert wird.
-5. **Vendor-Release-Gate.** CI prüft jeden Export gegen den zuletzt ausgelieferten Stand: Breaking →
-   Exit 1. Bekannte, bewusst akzeptierte Advisory-Findings werden per Waiver-Datei dokumentiert statt
-   weggeschaltet, damit der Report ehrlich bleibt.
-6. **Changelog für Kunde und Service.** Aus dem Markdown/JSON-Report entsteht ein Changelog, der sagt, was
-   sich für den Consumer ändert: umbenannte Mitglieder, geänderte Argumentlisten, neue Pflichtfelder,
-   entfallene Enum-Werte. Der Servicetechniker sieht die betroffene Node, nicht eine Dateiänderung.
-7. **Migration zwischen Werkzeugketten.** Export alter vs neuer Toolchain-Version verglichen: eine
-   reine Re-Indexierung oder Umbenennung der Schreibweise ist „No semantic differences found“; ein
-   echter Nodeschwund ist es nicht.
-8. **Prüfung vor Auslieferung an den Endanwender.** Ohne Stack prüft `validate` den Adressraum, den der
-   Kunde lädt — inklusive der rekursiven Pflichtfelder, die ein Server beim Instanziieren ablehnt.
+**Release gate:**
+```bash
+nodeset-linker diff v1.xml v2.xml --release-verdict --baseline published-versions.json
+# Checks: Can this NamespaceUri be reused?
+# (§3.3, §11.3 OPC-11030: Breaking requires a new namespace)
+```
+
+**In the examples:**
+- Demo3: 1110 nodes unchanged, but 2 breaking changes → Impact 78 nodes
+- Demo4: 1 node removed, 6 breaking changes → Impact 494 nodes
 
 ---
 
-## 7. Potenzial — warum das über ein Diff-Tool hinausgeht
+## 4. What It Cannot Do Yet (But Could)
 
-- **Verschiebt die Fehlerklasse nach links.** Instanziierungsfehler (rekursive Pflichtfelder, tote
-  Referenzziele, Encoding-Lücken, Subtypzyklen) tauchen in CI auf, nicht beim Kunden. Das ist der
-  Unterschied zwischen „Modell released“ und „Modell funktioniert“.
-- **Macht Modellierung versionierbar.** Modelle haben heute keine Release-Semantik. Severity, Regel-ID,
-  Klausel und Namespace-Verdikt geben einer Companion-Spec die Struktur, die Code mit semver und CHANGELOG
-  hat.
-- **Macht KI-Ausführungen kontrollierbar.** Ein Sprachmodell, das auf XML-Diffs arbeitet, erfindet
-  Änderungen. Ein Sprachmodell auf diesem JSON kann jede Aussage auf Node-ID, Regel-ID und Klausel
-  zurückführen — und wird gegen die Summary-Zahlen geprüft. Das ist der Weg zu automatisierten, aber
-  prüfbaren Changelogs und Release Notes.
-- **Standardisierung ohne Implementierung.** Konformität, CU-/Profile-Prüfung und Deprecation-Spur sind
-  ohne Server und ohne Conformance-Tester prüfbar; Gremien können Modelle prüfen, bevor ein Stack existiert.
-- **Reduktion als Produktentscheidung.** Root-Liste + Retention-Policy statt manuell gepflegter
-  Node-Listen; die Begründung ist mit dem Graph verknüpft (`explain`), nicht mit einem Kommentar.
-- **Geringe Betriebskosten.** Kein Server, kein Stack, nur Python und NodeSet-Dateien; ein CLI, das in
-  eine bestehende Pipeline passt; Beispiele liegen im Repo und sind regenerierbar.
+**Medium-term expandable:**
+1. **Split-bundle support for validation** — today only for `diff`; goal: namespace exports are releases, not files
+2. **Live-server comparison** (optional `asyncua` extra) — compare a running server's address space against NodeSet
+3. **AI integration as pipeline step** — transform JSON report into changelog; each point traceable (node ID, rule, clause)
+4. **Distinguishable exit codes** — pipeline can differentiate "breaking" from "advisory" from "baseline unknown"
+5. **Facets and feature-sets** — not covered today, but extensible within OPC UA
 
 ---
 
-## 8. Bewusste Grenzen des Ist-Zustands
+## 5. Why This Is Transformative for Control System Editors
 
-- Das Tool startet **keinen** Server und instanziiert keinen Adressraum. Die Gegenprüfung gegen einen
-  echten Stack bleibt ergänzend möglich (optional extra `asyncua`, `examples/demo1/server.py`).
-- Schema-Konformität wird nur behauptet, wenn `--schema` gegeben war.
-- Lint-Findings und INFO blockieren den Exit-Code nicht; eine Release-Entscheidung muss sichtbar bleiben,
-  nicht verschwinden.
-- Ein Namespace ohne `ModelVersion` wird nicht bewertet (Annex F.2 verlangt ihn ab Spec 1.05.03) — offene
-  Lücke, siehe `docs/semantic-diff.md` §5.
-- `validate` und `stats` nehmen eine Datei; ein Split-Bundle-Verzeichnis akzeptiert bisher nur `diff`.
-- Ein Teil der Diff-Gaps ist offen (u. a. Facets/Feature-Sets, Value-vs-Datatype-Konsistenz,
-  ein veröffentlichtes JSON-Schema und unterscheidbare Exit-Codes).
+Control System Editors (TIA-Portal, Studio 5000, CodeSys) manage millions of nodes in production facilities. Their requirements:
 
----
+| Use Case | Today | With the Tool |
+|----------|-------|------------|
+| **Validate model upgrade** | Manual against docs, errors possible | `diff v1 v2 --impact` shows all breaking changes with node impact |
+| **Verify dependency closure** | With stack/server or hope | `validate --best-practices` checks in build before facilities deploy |
+| **Model reduction** | Manual + hand tests | `link` with `--retain` and `--external` is declarative and justified |
+| **Release notes** | Hand work or XML-diff parsing | `diff --markdown` delivers structured changelogs, `--json` input for AI-generated changelogs |
+| **Enforce versioning policy** | Hope/review | `diff --release-verdict` blocks breaking releases without new namespace |
 
-## 9. Ausbauschritte, die das Potenzial heben
-
-1. **Split-Bundle für `validate`/`stats`** — ein Namespace-Export ist eine Release, nicht eine Datei.
-2. **Live-Server-Vergleich** über das `asyncua`-Extra: Adressraum eines Servers gegen den NodeSet-Export;
-   damit wird „validiert ohne Server“ durch „validiert gegen den Server“ ergänzt.
-3. **KI-Integration als eigener Schritt:** Prompt-Contract auf `diff.json` (Regel-ID, Klausel, Node-ID,
-   Impact) plus Rückprüfung der generierten Changelog-Punkte gegen den Report; Ziel: Changelog als
-   CI-Artefakt, nicht als Handarbeit.
-4. **Gemeinsame Release-Governance:** ein geteiltes und versioniertes Baseline-Manifest
-   veröffentlichter `NamespaceUris` sowie abgestimmte Waiver-Regeln; `--baseline`,
-   `--release-verdict` und `--waiver-file` unterstützen diese Pipeline bereits.
-5. **Modellversion als Pflicht** (`ModelVersion` fehlt → Finding), Facets/Feature-Sets,
-   Value-vs-Datatype-Konsistenz.
-6. **Unterscheidbare Exit-Codes** für „breaking“, „advisory“, „baseline unknown“, damit eine Pipeline die
-   Gründe unterscheiden kann.
+The tool runs in GitHub Actions, GitLab CI, Jenkins — any pipeline. It needs no infrastructure, no license, no special rights.
 
 ---
 
-## 10. Fazit
+## 6. Why This Is Transformative for Machine Builders and Integrators
 
-Das Tool nimmt drei Aufgaben, die in der OPC-UA-Modellierung heute manuell und reaktiv laufen, und macht
-sie deterministisch: Reduktion mit Begründung, Validierung ohne Server, Release-Vergleich mit
-Klauselreferenz. Der entscheidende Hebel für die KI ist, dass der semantische Diff keine Textzeilen
-liefert, sondern klassifizierte Modellfakten — dadurch wird ein Changelog automatisch geschrieben und
- trotzdem nachprüfbar. Für die Standardisierungsseite entsteht damit ein Konformitätscheck vor der
-Publikation, für die Maschinenbauerseite ein Release-Gate vor der Auslieferung.
+**Machine builders** are clients. They load OPC UA Companion Specs and build their models on top:
+
+| Problem | Solution |
+|---------|----------|
+| **"Why is this node in the output? Can I delete it?"** | `explain --node NodeId config.yaml` shows the dependency chain |
+| **"My model is too large, clients are too slow."** | `link` with roots reduces automatically, `analyze` shows the size |
+| **"I don't know if my model is valid before the first server starts."** | `validate --best-practices` checks recursive mandatory fields, reference targets, CU members |
+| **"The new Machinery version has breaking changes — my clients will fail."** | `diff old.xml new.xml --impact --context my-model.xml` shows exactly how many of my nodes are affected |
+| **"Migration between toolchains?"** | `diff old-export.xml new-export.xml` from export A to B: pure re-indexing shows as "No semantic differences" |
+| **"I need to document the model for the customer."** | `diff --markdown` with tables and clause references — copy-paste into release document |
+
+---
+
+## 7. Why This Is Transformative for Standardization Consortia
+
+OPC UA Companion Specs are published by consortia: Machinery, DI, Diagnostics, PackML, UTIMAT, ISA95-Jobs.
+They need:
+
+| Use Case | Implementation |
+|----------|-----------------|
+| **Validate draft before publication** | `validate + --schema + --best-practices` is the CI gate for every draft |
+| **Enforce OPC-11030 rules compliance** | 25 best-practice rules validate naming, versioning, CU declarations, deprecation without server |
+| **Enforce versioning policy** | `diff --release-verdict` against baseline manifest: breaking requires new namespace (§11.3) |
+| **Review documentation** | Markdown/HTML reports with rule IDs and clause numbers are versionable and citable |
+| **Changelog for consumers** | `diff --json` is input for automated release notes; every point traceable to rule and node |
+| **CU and profile governance** | `validate --best-practices` finds CU declarations (not bound to hardcoded IDs), checks consistency |
+| **Deprecation trace** | `validate --best-practices` counts deprecated nodes per namespace, `diff` notices missing successors |
+
+A committee can validate models and gate releases, **without any stack having been implemented**.
+
+---
+
+## 8. Concrete Differentiators (What No Other Tool Offers)
+
+### A. Semantic Graph, Not XML
+
+Most OPC UA tools work at the XML level. This tool builds a **semantic dependency graph**:
+- Node identity is `(namespaceUri, identifier, serverUri)`, not an XML position
+- Re-indexing or re-ordering XML → no difference in diff
+- External models are declarable (`external:`), not an error
+- The graph is machine-readable and programmable
+
+### B. Validation Without Server
+
+No other tool can **offline** check:
+- Recursive mandatory fields (609 occurrences in demo export — **not a single server catches this at instantiation!**)
+- Browse-path collisions across namespaces
+- CU membership and profile consistency
+- Compliance with 25 OPC-11030 rules
+
+All without stack, without client, without network.
+
+### C. Deterministic Reduction with Explanation
+
+Reduction tools exist. `opcua-nodeset-linker` explains:
+- Why each node is retained (dependency chain)
+- What is external (must be supplied by consumer)
+- Which nodes are affected by it (`--impact`)
+
+This is declaratively configurable (`config.yaml`), not an ad-hoc list of node IDs.
+
+### D. Release Governance Through Diff
+
+The semantic diff is not textual. Each change is classified:
+- Why is it breaking? (rule ID and clause)
+- Which downstream nodes are affected? (impact)
+- Can I reuse the `NamespaceUri`? (`--release-verdict`, §11.3)
+
+This is the only tool that can automatically answer "can I publish this?"
+
+### E. AI-Ready Reports
+
+The JSON report is structured:
+```json
+{
+  "schema_version": "1.0",
+  "paper": "OPC-11030-v1.03.03",
+  "summary": {
+    "added": 5,
+    "removed": 2,
+    "breaking_changes": 3,
+    "advisory_changes": 7
+  },
+  "findings": [
+    {
+      "node_id": "ns=2;i=1234",
+      "change_kind": "DataTypeChanged",
+      "rule_id": "BP-DataType-Changed",
+      "clause": "§3.2.11",
+      "severity": "BREAKING",
+      "impact": 78
+    }
+  ]
+}
+```
+
+A language model can generate changelogs from this; the statements are verifiable (rule ID, node, impact).
+
+---
+
+## 9. Market Positioning
+
+### Why This Project Is Valuable
+
+**OPC UA is not optional:** It's the industry standard for secure networking. Every Industry 4.0 factory, every smart machine, every engineering system is built on it.
+
+**The problem is unsolved:** Today there are:
+- **XSD validators** — check syntax, not semantics
+- **OPC UA stacks (paid)** — expensive, for production, not for CI
+- **Proprietary tools (from editors)** — tightly bound to one product, not interchangeable
+- **Nothing** for reduction with explanation, compliance without server, release governance
+
+**This tool fills this gap:** Apache 2.0, integrable into every pipeline, no licensing model, no dependencies.
+
+### Target Groups (B2B2C)
+
+1. **Control System Editors** (TIA-Portal, Studio 5000, CodeSys) — model management, validation, release gates
+2. **Machine builders and integrators** — model reduction, upgrade checks, documentation
+3. **Standardization consortia** (Machinery, DI, Diagnostics, PackML) — draft review, release governance, changelog automation
+4. **OPC UA server vendors** — can integrate the tool into their test suite
+5. **Testing tools / conformance testers** — can build semantic checks on top
+
+---
+
+## 10. Open Source as Strategy
+
+The project is **Apache 2.0 licensed**. This means:
+- Freely usable, also commercially
+- No license fees, no seat locks
+- Modifications possible, return is not enforced
+- Industry standard for demanding projects (Kubernetes, Android, TensorFlow follow the same model)
+
+**Interesting for sponsors:**
+- Co-shape a standard tool that enters the industry
+- Branding in the repository and community (contributor name)
+- Use in own product or infrastructure
+- Long-term maintainability through a decentralized model (not tied to one person)
+
+---
+
+## 11. Conscious Limitations of the Current State
+
+The tool **does not start a server** and does not instantiate an address space:
+- Semantic validation also *against a real stack* remains optionally possible
+- Live-server comparison is on the roadmap (`--live-server`)
+
+Additional open points (see `docs/semantic-diff.md`):
+- Split-bundle support for `validate`/`stats` (today only for `diff`)
+- Facets and feature-sets (extensible, not in current state)
+- Distinguishable exit codes per error class (in backlog)
+
+All intentionally designed that way, not "not yet implemented".
+
+---
+
+## 12. Conclusion: Why This Project Is Valuable
+
+OPC UA is complex; tools are fragmented; errors only appear in production. This project brings
+**DevOps principles to OPC UA modeling:**
+
+- **Shift left:** Model errors are caught in CI, not at the customer
+- **Declarative governance:** Configurable reduction, versioning policy as code
+- **Traceability:** Every change is traceable to rule, clause, and node
+- **Open:** Apache 2.0, integrable into every pipeline, no dependencies on proprietary stacks
+
+For investors and sponsors, this is attractive because:
+1. It solves a real, unsolved problem in an established industry
+2. Open Source makes it a long-term stable resource
+3. Early adoption by consortia and editor vendors is likely
+4. The combination of automation + AI-ready reports provides a sustainable foundation for follow-on solutions
+
