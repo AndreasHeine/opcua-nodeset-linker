@@ -1,17 +1,19 @@
 # OPC UA NodeSet Linker
 
-A **semantic dependency linker and tree shaker for OPC UA Information Models**.
+Bring software-engineering discipline to OPC UA Information Models.
 
 [![Publish to PyPI](https://github.com/AndreasHeine/opcua-nodeset-linker/actions/workflows/publish.yml/badge.svg)](https://github.com/AndreasHeine/opcua-nodeset-linker/actions/workflows/publish.yml) [![Dependency Graph](https://github.com/AndreasHeine/opcua-nodeset-linker/actions/workflows/dependabot/update-graph/badge.svg)](https://github.com/AndreasHeine/opcua-nodeset-linker/actions/workflows/dependabot/update-graph) [![CI](https://github.com/AndreasHeine/opcua-nodeset-linker/actions/workflows/ci.yml/badge.svg)](https://github.com/AndreasHeine/opcua-nodeset-linker/actions/workflows/ci.yml) [![Coverage](https://codecov.io/gh/AndreasHeine/opcua-nodeset-linker/branch/main/graph/badge.svg)](https://codecov.io/gh/AndreasHeine/opcua-nodeset-linker)
 
-It loads one or more `UANodeSet` XML files, builds the *semantic* graph of the
-information model, computes the dependency closure of user-selected root nodes, drops
-everything unreachable, and writes a reduced NodeSet that stays semantically valid for its
-declared dependencies — while explaining **why each dependency-reached node exists**. Models
-listed under `external:` are intentionally not bundled; the importing application must provide them.
+**Catch model issues before deployment. Keep only the model your application needs. Know when a
+new release could break consumers.** OPC UA NodeSet Linker is an offline CLI and Python library
+that understands NodeSets semantically—not as text files. It validates model consistency, reduces
+large NodeSets to selected roots while explaining every retained dependency, and compares releases
+with impact reports and CI-ready release gates. No server or OPC UA stack required.
 
-It is deliberately **not** an XML minifier: XML is treated as a serialization format
-only. All decisions are made on the semantic model.
+Reduced exports can leave declared external models to be supplied by the importing application.
+
+
+For the broader project vision and target users, see the [project exposé](docs/expose.md).
 
 ## Install
 
