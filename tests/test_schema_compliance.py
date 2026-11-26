@@ -33,6 +33,10 @@ def validate(path: Path, xsd: XMLSchema) -> str | None:
 
 
 class TestSchemaCompliance:
+    def test_runtime_schema_matches_the_test_schema(self, nodeset_schema) -> None:
+        runtime_schema = Path(__file__).resolve().parents[1] / "src" / "nodeset_linker" / "data" / "UANodeSet.xsd"
+        assert runtime_schema.read_bytes() == nodeset_schema.read_bytes()
+
     def test_full_export_is_schema_valid(self, tmp_path, nodeset_schema) -> None:
         model = load_nodesets([DATA / "ua_base.xml", DATA / "machinery.xml"])
         out = export(model, set(FULL), tmp_path / "full.xml")

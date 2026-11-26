@@ -54,7 +54,7 @@ class DocumentInfo:
     namespaces: tuple[Namespace, ...] = ()
     models: tuple[ModelInfo, ...] = ()
     server_uris: tuple[str, ...] = ()
-    """The ``ServerUris`` table: entry *n* (1-based) is the ``ServerIndex`` of ``srv=<n>``."""
+    """The ``ServerUris`` table: entry *n* (1-based) is the ``ServerIndex`` of ``svr=<n>``."""
 
 
 def alias_from_uri(uri: str) -> str | None:

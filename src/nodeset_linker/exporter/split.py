@@ -112,13 +112,20 @@ def export_split(
             bundle = Path(temporary) / "bundle"
             bundle.mkdir()
             for uri, filename in files.items():
-                NodeSetExporter(
+                exporter = NodeSetExporter(
                     model,
                     shipped,
                     mark_namespace_subsets=mark_namespace_subsets,
                     external=external,
                     document_namespace=uri,
-                ).write(bundle / filename)
+                )
+                document = exporter.build_document()
+                if exporter.dropped:
+                    raise ExportError(
+                        "export blocked: identifiers cannot be written: "
+                        + "; ".join(exporter.dropped)
+                    )
+                exporter.write(bundle / filename, document)
             manifest = {
                 "schema_version": MANIFEST_SCHEMA_VERSION,
                 "export_mode": "split",

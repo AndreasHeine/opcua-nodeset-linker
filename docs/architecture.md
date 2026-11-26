@@ -21,9 +21,9 @@ Indexes do appear twice, in ways that are worth knowing about:
   use the URI rather than the index. `QualifiedName` retains the source index as a hint as well as
   its resolved URI; an index the document does not declare is a `ParseError`, never a silent
   fallback;
-* the same happens for `srv=<index>`: the position in the document's `ServerUris` table becomes a
-  server URI on the identifier (`srv=0` means "the server this document was written for" and is
-  stored unqualified);
+* the same happens for standard `svr=<index>` identifiers: the position in the document's
+  `ServerUris` table becomes a server URI (`svr=0` means "the server this document was written
+  for" and is stored unqualified); the older linker spelling `srv=` is accepted on input only;
 * a root selector `ns=<index>` is resolved against the **merged** namespace table, not
   against one document — see *Dependency Resolution*, "Roots", for the load-order trap this creates.
 
@@ -68,7 +68,7 @@ objects and returns domain objects.
 | --- | --- | --- |
 | `models/` | Fully typed domain objects: `UANode`, subclasses, `ExpandedNodeId`, `QualifiedName`, `FieldMetadata` (the per-field attributes of a datatype definition), `NodeClass`, `NodeRole`, `ModellingRule`, `DependencyKind`, `MandatoryLevel`, namespace/model metadata including the `ServerUris` table of a document, namespace-metadata helpers. | No |
 | `utils/` | Glob matching, file reading, the error hierarchy (`ParseError`, `ResolutionError`, `ExportError`, `ValidationError`). | File IO only |
-| `parser/` | Reads `UANodeSet` XML into domain objects; resolves `nsu=`/`ns=`/bare ids and `srv=` ids to URIs, resolves a qualified `BrowseName` against the document's own namespace table, and reads every `DataTypeField` attribute (`SymbolicName`, `ValueRank`, `ArrayDimensions`, `MaxStringLength`, `AllowSubTypes`, `Value`, `IsOptional`). Undeclared `ns=`/`srv=` indexes are `ParseError`s. The *only* place XML is interpreted. | Yes (read) |
+| `parser/` | Reads `UANodeSet` XML into domain objects; resolves `nsu=`/`ns=`/bare ids and standard `svr=`/`svu=` identifiers to URIs, resolves a qualified `BrowseName` against the document's own namespace table, and reads every `DataTypeField` attribute (`SymbolicName`, `ValueRank`, `ArrayDimensions`, `MaxStringLength`, `AllowSubTypes`, `Value`, `IsOptional`). Undeclared namespace/server indexes are `ParseError`s. The *only* place XML is interpreted. | Yes (read) |
 | `repository/` | Merged `SemanticModel`: node registry keyed by URI identity, namespace/model metadata, duplicate detection (strict for a reduction, tolerant for a diff — a conflict keeps the first declaration and is recorded as a `MergeConflict` naming both documents), which document contributed each node, lookup helpers, unresolved-target detection, reference-type name/id completion. | No |
 | `graph/` | `networkx.MultiDiGraph` over `ExpandedNodeId`, edge metadata `{reference_type, dependency_kind, is_forward, mandatory}`, implicit semantic edges, induced subgraphs. | No |
 | `resolver/` | Root selectors and directional dependency closure with per-node reasons, CUSTOM-retain seeds, and navigation-only ancestor context. | No |
@@ -195,7 +195,7 @@ namespace would silently re-point its ids there. Even a subset that retains no O
 numbers its namespaces from 1, and the OPC UA URI is absent from `NamespaceUris` only because
 nothing in the document refers to it. Servers are collected the same way: every identifier that
 carries a server URI (node id, reference target or reference type) goes into a `ServerUris` table
-in URI order, and `srv=<index>` is written from that table (`exporter/nodeset.py`,
+in URI order, and `svr=<index>` is written from that table (`exporter/nodeset.py`,
 `NodeSetExporter._server_table`).
 
 Nodes are emitted sorted by assigned id, references and definitions in declaration order, and
@@ -210,6 +210,10 @@ qualified with the index of *the namespace the name belongs to* (`exporter/nodes
 `NodeSetExporter._browse_name`),
 and interfaces as `UAObjectType` (the schema has no `UAInterface` element). Three details are worth
 stating exactly:
+
+Every built document is validated against the bundled OPC Foundation `UANodeSet.xsd` before it
+can be written. The same check applies to each file in a split export; semantic validation remains
+a separate additional check.
 
 * a **`Model` entry** is written only for a namespace the retained nodes actually use: a
   namespace that contributed no node contributes no `Model` entry, and an externalized model
@@ -244,9 +248,9 @@ Older spellings are read but never written, so an importer that validates agains
 `UANodeSet.xsd` accepts the file. What the reader still accepts silently: rule ids 290/387 and
 a `<ModellingRule Id="…">` element, attribute-form references (`ReferenceType`/`TypeId`/
 `TargetId`), `UriIndex`/`Alias` on `<Uri>` entries, a `<NamespaceMetadata>` header element,
-`DefinitionType`/`EnumeratedValues` in definitions, a `<UAInterface>` element, and a `srv=` part
-that is a URI rather than a table index (`srv=http://…;ns=1;i=5`) — the written form always uses
-the index. A `ns=` or `srv=` index the document does not declare is *not* accepted silently: it
+`DefinitionType`/`EnumeratedValues` in definitions, a `<UAInterface>` element, and the legacy
+`srv=` server prefix — it is normalized to the standard `svr=`/`svu=` form on output. A `ns=`
+or `svr=` index the document does not declare is *not* accepted silently: it
 raises `ParseError`. A `DataType` spelling that neither the document's `Aliases` table nor a
 standard OPC UA name resolves raises `ParseError` too — guessing a datatype would silently
 retype a variable or a structure field. Only a field that declares *no* `DataType` takes the

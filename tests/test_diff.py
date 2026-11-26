@@ -1121,7 +1121,7 @@ def test_server_qualified_identifier_containing_a_pipe_survives_the_diff() -> No
     """``|`` is legal inside a string identifier, so the identity key must not split on it.
 
     The engine keys nodes by ``(namespaceUri, identifier, serverUri)`` and hands that key to
-    target lookups as text.  A ``srv=`` identifier whose string value contains ``|`` used to be
+    target lookups as text. A server-qualified identifier whose string value contains ``|`` used to be
     read back as a different identifier — the report then named a target that is not in the
     model.
     """
@@ -1143,7 +1143,7 @@ def test_server_qualified_identifier_containing_a_pipe_survives_the_diff() -> No
     removed = next(item for item in entry.changes if item.kind == "removed")
     added = next(item for item in entry.changes if item.kind == "added")
     assert "Part|Axis" in removed.subject
-    assert "srv=urn:server/" in removed.subject
+    assert "svu=urn:server/" in removed.subject
     assert "s=part|axis" in removed.subject
     assert "Other|Axis" in added.subject
 

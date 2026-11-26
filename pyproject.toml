@@ -46,6 +46,7 @@ nodeset-linker = "nodeset_linker.cli.main:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/nodeset_linker"]
+include = ["src/nodeset_linker/data/UANodeSet.xsd"]
 
 [tool.ruff]
 line-length = 100

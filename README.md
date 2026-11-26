@@ -180,8 +180,12 @@ children. Namespace metadata is retained explicitly. See
 * qualified browse names: a `BrowseName="1:Foo"` is resolved against the namespace table of
   *its own* document and stored as that namespace URI, so the name keeps its namespace after
   reduction even when the node's NodeId lives in a different one
-* server-qualified identifiers (`ServerUris` / `srv=<index>`): the table position is resolved
+* server-qualified identifiers (`ServerUris` / standard `svr=<index>` and `svu=<uri>`): the table position is resolved
   to the server URI at parse time and re-indexed into the written `ServerUris` table
+* NodeIds, ExpandedNodeIds and QualifiedNames embedded in Variant values are re-indexed against
+  the output namespace and server tables
+* localized DisplayNames, Descriptions, inverse names, datatype-field metadata and Value
+  translations retain their locale tags
 * method signatures: `InputArguments` / `OutputArguments` and their argument datatypes
 * Binary / XML / JSON encodings of retained custom data types — the standard
   `Default Binary` / `Default XML` / `Default JSON` objects of the UA namespace too
@@ -202,8 +206,11 @@ namespaces, reference targets *and* the namespaces of qualified browse names) is
 in URI order, and every identifier and browse name is rewritten to that index; servers are
 numbered the same way in a `ServerUris` table.
 
-An `ns=<index>` or `srv=<index>` the document does not declare is a parse error, not a silent
+An `ns=<index>` or `svr=<index>` the document does not declare is a parse error, not a silent
 fallback to 0 or to the OPC UA namespace.
+
+Every serialized output is validated against the bundled OPC Foundation UANodeSet schema before
+it is written; semantic checks are still performed separately unless explicitly disabled.
 
 Loading two documents that declare the *same* identifier differently fails with
 `DuplicateNodeError`; identical re-declarations of one node are merged.
@@ -290,7 +297,7 @@ The written document is a plain `UANodeSet` in
   than presented as a dependency nothing in the document resolves
 * `<Aliases>` for the UA reference types the file refers to by name, sorted by identifier
 * node ids of namespace 0 bare (`i=24`), others as `ns=1;i=2001`, server-qualified as
-  `srv=1;ns=1;i=2001`
+  `svr=1;ns=1;i=2001`
 * browse names qualified with the index of *the name's* namespace (`BrowseName="1:JobDataType"`),
   bare when the name belongs to the OPC UA namespace
 * modelling rules as `<Reference ReferenceType="HasModellingRule">i=78</Reference>`

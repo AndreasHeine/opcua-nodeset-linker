@@ -24,7 +24,7 @@ Identity = (namespaceUri, identifier, serverUri)
 `serverUri` is the third part because OPC 10000-6 makes it part of the node's identity: an
 identifier qualified with a `ServerUri` points into *another server's address space*. An
 unqualified identifier is stored as `serverUri=None`, which is what a document written for its
-own server produces (`srv=0`), so re-exporting a file never invents a difference.
+own server produces (`svr=0`), so re-exporting a file never invents a difference.
 
 Consequences of this design (tests in `tests/test_diff.py`, `TestIdentityNotXml`):
 
@@ -46,8 +46,8 @@ Nothing in `diff/` looks at XML. The module sits above `repository/` and `graph/
 ### 2.1 Indexing
 
 `ModelIndex.of(model)` builds a dictionary keyed by `(namespaceUri, identifier, serverUri)` —
-the same triple `ExpandedNodeId` compares on, so a model that contains both `srv=1;ns=1;i=5` and
-`srv=2;ns=1;i=5` keeps both nodes instead of letting the last one win.
+the same triple `ExpandedNodeId` compares on, so a model that contains both `svr=1;ns=1;i=5` and
+`svr=2;ns=1;i=5` keeps both nodes instead of letting the last one win.
 
 ### 2.2 Set algebra and renumbering pairing
 
@@ -332,7 +332,7 @@ the `clause` it comes from, so the mapping lives in the report rather than in a 
    `ServerUri` reads as a removal plus an addition, and the renumbering pairing no longer pairs
    across servers.
 2. **Server-qualified nodes can collide inside one model** *(closed)*. `ModelIndex.nodes` is
-   keyed by the full triple, so a model containing `srv=1;ns=1;i=5` and `srv=2;ns=1;i=5` keeps
+   keyed by the full triple, so a model containing `svr=1;ns=1;i=5` and `svr=2;ns=1;i=5` keeps
    both nodes instead of letting the last one win.
 3. **The renumbering heuristic pairs blindly** *(partly closed)*. Grouping by
    `(namespace, serverUri, BrowseName, NodeClass)` and `zip`-pairing sorted identifiers still

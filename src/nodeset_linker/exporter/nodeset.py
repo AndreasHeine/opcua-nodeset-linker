@@ -33,7 +33,12 @@ from lxml.etree import Element, SubElement, tostring
 from lxml.etree import indent as xml_indent
 
 from nodeset_linker.graph.engine import SemanticGraph
-from nodeset_linker.models.identifiers import UA_NAMESPACE_URI, ExpandedNodeId, IdentifierKind
+from nodeset_linker.models.identifiers import (
+    UA_NAMESPACE_URI,
+    ExpandedNodeId,
+    IdentifierKind,
+    encode_uri,
+)
 from nodeset_linker.models.namespace import NODESET_XML_NAMESPACE, ModelInfo, Namespace
 from nodeset_linker.models.namespace_metadata import (
     marked_namespaces,
@@ -45,6 +50,7 @@ from nodeset_linker.models.node import (
     NODE_CLASS_BY_XML_TAG,
     Definition,
     FieldMetadata,
+    LocalizedText,
     Reference,
     UADataType,
     UANode,
@@ -54,6 +60,7 @@ from nodeset_linker.models.node_class import ModellingRule, NodeClass
 from nodeset_linker.repository.model import SemanticModel
 from nodeset_linker.retention.engine import repair_navigation
 from nodeset_linker.utils.errors import ExportError
+from nodeset_linker.utils.schema import validate_nodeset_document
 from nodeset_linker.utils.xml import parse_fragment
 from nodeset_linker.validator.semantic import SemanticValidator
 
@@ -257,6 +264,9 @@ class NodeSetExporter:
             for node in self._nodes
             if node.browse_name.namespace_uri
         )
+        used_uris.update(
+            uri for node in self._nodes for _, uri in node.value_qualified_names
+        )
         namespaces = {uri: self._namespace(uri) for uri in used_uris}
         assigner = NamespaceIndexAssigner(namespaces)
         servers = self._server_table()
@@ -334,7 +344,9 @@ class NodeSetExporter:
 
         xml_indent(root)
         document = tostring(root, encoding="utf-8", pretty_print=True)
-        return bytes(document)
+        serialized = bytes(document)
+        validate_nodeset_document(serialized)
+        return serialized
 
     def _server_table(self) -> dict[str, int]:
         """The ``ServerUris`` table for the servers this subset references.
@@ -420,6 +432,21 @@ class NodeSetExporter:
             server = self._server_indices.get(node_id.server_uri or "")
             return _id_xml(index, node_id.identifier.as_xml(), server)
         return None
+
+    def _value_id_xml(
+        self, node_id: ExpandedNodeId, assigner: NamespaceIndexAssigner
+    ) -> str:
+        """Re-index a NodeId carried as data without requiring its node to be retained."""
+        server = self._server_indices.get(node_id.server_uri or "")
+        if node_id.server_uri and server is None:
+            raise ExportError(
+                f"value identifier uses an undeclared server URI {node_id.server_uri}"
+            )
+        return _id_xml(
+            assigner.index_of(node_id.namespace),
+            node_id.identifier.as_xml(),
+            server,
+        )
 
     def _alias_table(self) -> dict[int, str]:
         """Aliases for the reference types this document uses — as official files do.
@@ -509,10 +536,8 @@ class NodeSetExporter:
             if name in allowed and value:
                 element.set(name, value)
 
-        if node.display_name:
-            SubElement(element, "DisplayName").text = node.display_name
-        if node.description:
-            SubElement(element, "Description").text = node.description
+        self._append_localized(element, "DisplayName", node.display_names, node.display_name)
+        self._append_localized(element, "Description", node.descriptions, node.description)
         for category in node.categories:
             SubElement(element, "Category").text = category
         if node.documentation:
@@ -543,28 +568,85 @@ class NodeSetExporter:
         }:
             value = parse_fragment(node.value_xml)
             dependencies = dict(node.value_dependencies)
-            for field in value.iter():
-                if field.tag.rsplit("}", 1)[-1] not in {"TypeId", "DataType"}:
+            identifiers = dict(node.value_identifiers)
+            identifiers.update(dependencies)
+            for value_field in value.iter():
+                field_name = value_field.tag.rsplit("}", 1)[-1]
+                if field_name not in {"TypeId", "DataType", "NodeId", "ExpandedNodeId"}:
                     continue
-                for identifier in field:
-                    if identifier.tag.rsplit("}", 1)[-1] != "Identifier":
-                        continue
-                    dependency = dependencies.get((identifier.text or "").strip())
-                    if dependency is not None:
-                        target = self._id_of(dependency, ids, assigner)
-                        if target is None:
-                            raise ExportError(f"value dependency {dependency} was removed")
-                        identifier.text = target
+                identifier = next(
+                    (
+                        child
+                        for child in value_field
+                        if child.tag.rsplit("}", 1)[-1] == "Identifier"
+                    ),
+                    None,
+                )
+                if identifier is None:
+                    continue
+                raw_identifier = (identifier.text or "").strip()
+                resolved = identifiers.get(raw_identifier)
+                if resolved is None:
+                    if field_name in {"TypeId", "DataType"}:
+                        raise ExportError(
+                            f"value dependency {raw_identifier!r} has no resolved source identifier"
+                        )
+                    if not raw_identifier.startswith(("i=", "s=", "g=", "b=")):
+                        raise ExportError(
+                            f"value identifier {raw_identifier!r} cannot be re-indexed without "
+                            "its source namespace/server table"
+                        )
+                    continue
+                if field_name in {"TypeId", "DataType"}:
+                    target = self._id_of(resolved, ids, assigner)
+                    if target is None:
+                        raise ExportError(f"value dependency {resolved} was removed")
+                else:
+                    target = self._value_id_xml(resolved, assigner)
+                identifier.text = target
+            qualified_names = dict(node.value_qualified_names)
+            for qualified_name in value.iter():
+                if qualified_name.tag.rsplit("}", 1)[-1] != "QualifiedName":
+                    continue
+                namespace_index = next(
+                    (
+                        child
+                        for child in qualified_name
+                        if child.tag.rsplit("}", 1)[-1] == "NamespaceIndex"
+                    ),
+                    None,
+                )
+                if namespace_index is None:
+                    continue
+                source_index = (namespace_index.text or "").strip()
+                namespace_uri = qualified_names.get(source_index)
+                if namespace_uri is not None:
+                    namespace_index.text = str(assigner.index_of(namespace_uri))
+                elif source_index != "0":
+                    raise ExportError(
+                        f"QualifiedName namespace index {source_index!r} cannot be re-indexed "
+                        "without its source namespace table"
+                    )
             element.append(value)
         elif node.value_xml is not None:
             self._record_omitted(node, "value")
+        if node.translations_xml:
+            if node.node_class is NodeClass.VARIABLE:
+                for serialized in node.translations_xml:
+                    element.append(self._nodeset_fragment(serialized))
+            else:
+                self._record_omitted(node, "translation")
         # ``InverseName`` belongs to reference types only; on any other class it would
         # make the written document fail the schema — record it, do not write it.
         if node.inverse_name:
             if node.node_class is NodeClass.REFERENCE_TYPE:
-                SubElement(element, "InverseName").text = node.inverse_name
+                self._append_localized(
+                    element, "InverseName", node.inverse_names, node.inverse_name
+                )
             else:
                 self._record_omitted(node, "inverse name")
+        elif node.inverse_names and node.node_class is NodeClass.REFERENCE_TYPE:
+            self._append_localized(element, "InverseName", node.inverse_names, None)
 
         if isinstance(node, UADataType) and node.definition is not None:
             self._serialise_definition(element, node, node.definition, ids, assigner)
@@ -628,14 +710,14 @@ class NodeSetExporter:
         """An identifier that is not part of this subset: the URI is written out, not an index.
 
         The namespace URI survives, so an importer can still resolve it; only the server is
-        re-indexed, because ``srv=`` is a table position in *this* document.
+        re-indexed, because ``svr=`` is a table position in *this* document.
         """
         prefix = ""
         server = self._server_indices.get(node_id.server_uri or "")
         if server is not None:
-            prefix += f"srv={server};"
+            prefix += f"svr={server};"
         if node_id.namespace_uri is not None:
-            prefix += f"nsu={node_id.namespace_uri};"
+            prefix += f"nsu={encode_uri(node_id.namespace_uri)};"
         return prefix + node_id.identifier.as_xml()
 
     @staticmethod
@@ -679,6 +761,7 @@ class NodeSetExporter:
         for field in definition.fields:
             target = self._id_of(field.data_type, ids, assigner)
             if target is None:
+                self._record_drop(node, field.data_type, f"datatype field {field.name}")
                 continue
             field_attrs = self._field_attributes(
                 field.name, field.metadata, DataType=target
@@ -686,10 +769,12 @@ class NodeSetExporter:
             if field.is_optional:
                 field_attrs["IsOptional"] = "true"
             field_el = SubElement(def_el, "Field", **field_attrs)
-            if field.display_name:
-                SubElement(field_el, "DisplayName").text = field.display_name
-            if field.description:
-                SubElement(field_el, "Description").text = field.description
+            self._append_localized(
+                field_el, "DisplayName", field.display_names, field.display_name
+            )
+            self._append_localized(
+                field_el, "Description", field.descriptions, field.description
+            )
         for enum_value in definition.enum_values:
             value_el = SubElement(
                 def_el,
@@ -698,13 +783,18 @@ class NodeSetExporter:
                     enum_value.name, enum_value.metadata, Value=str(enum_value.value)
                 ),
             )
-            if enum_value.display_name:
-                SubElement(value_el, "DisplayName").text = enum_value.display_name
-            if enum_value.description:
-                SubElement(value_el, "Description").text = enum_value.description
+            self._append_localized(
+                value_el, "DisplayName", enum_value.display_names, enum_value.display_name
+            )
+            self._append_localized(
+                value_el, "Description", enum_value.descriptions, enum_value.description
+            )
         for alternative in definition.union_alternatives:
             target = self._id_of(alternative.data_type, ids, assigner)
             if target is None:
+                self._record_drop(
+                    node, alternative.data_type, f"union alternative {alternative.name}"
+                )
                 continue
             alternative_el = SubElement(
                 def_el,
@@ -713,10 +803,18 @@ class NodeSetExporter:
                     alternative.name, alternative.metadata, DataType=target
                 ),
             )
-            if alternative.display_name:
-                SubElement(alternative_el, "DisplayName").text = alternative.display_name
-            if alternative.description:
-                SubElement(alternative_el, "Description").text = alternative.description
+            self._append_localized(
+                alternative_el,
+                "DisplayName",
+                alternative.display_names,
+                alternative.display_name,
+            )
+            self._append_localized(
+                alternative_el,
+                "Description",
+                alternative.descriptions,
+                alternative.description,
+            )
         for option_value in definition.option_set_values:
             value_el = SubElement(
                 def_el,
@@ -725,19 +823,50 @@ class NodeSetExporter:
                     option_value.name, option_value.metadata, Value=str(option_value.value)
                 ),
             )
-            if option_value.display_name:
-                SubElement(value_el, "DisplayName").text = option_value.display_name
-            if option_value.description:
-                SubElement(value_el, "Description").text = option_value.description
+            self._append_localized(
+                value_el,
+                "DisplayName",
+                option_value.display_names,
+                option_value.display_name,
+            )
+            self._append_localized(
+                value_el,
+                "Description",
+                option_value.descriptions,
+                option_value.description,
+            )
+
+    @staticmethod
+    def _append_localized(
+        parent: Element,
+        name: str,
+        values: tuple[LocalizedText, ...],
+        fallback: str | None,
+    ) -> None:
+        if values:
+            for value in values:
+                attrs = {"Locale": value.locale} if value.locale is not None else {}
+                SubElement(parent, name, **attrs).text = value.text
+        elif fallback is not None:
+            SubElement(parent, name).text = fallback
+
+    @staticmethod
+    def _nodeset_fragment(serialized: str) -> Element:
+        """Re-namespace a schema fragment read from either supported NodeSet namespace."""
+        element = parse_fragment(serialized)
+        for child in element.iter():
+            local = child.tag.rsplit("}", 1)[-1]
+            child.tag = f"{{{NODESET_XML_NAMESPACE}}}{local}"
+        return element
 
 
 def _id_xml(index: int, local: str, server_index: int | None = None) -> str:
     """Namespace 0 is written without a prefix, exactly as official NodeSets do.
 
-    ``srv=<index>`` is a position in this document's ``ServerUris`` table, so it is written
+    ``svr=<index>`` is a position in this document's ``ServerUris`` table, so it is written
     whenever the identifier is qualified against another server.
     """
-    prefix = f"srv={server_index};" if server_index else ""
+    prefix = f"svr={server_index};" if server_index else ""
     return prefix + local if index == 0 else f"{prefix}ns={index};{local}"
 
 

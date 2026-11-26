@@ -16,7 +16,14 @@ from nodeset_linker.exporter.nodeset import (
 from nodeset_linker.models.identifiers import QualifiedName
 from nodeset_linker.models.namespace import Namespace
 from nodeset_linker.models.namespace_metadata import TYPES_XML_NAMESPACE
-from nodeset_linker.models.node import Reference, UANode, UAObject
+from nodeset_linker.models.node import (
+    Definition,
+    Reference,
+    StructureField,
+    UADataType,
+    UANode,
+    UAObject,
+)
 from nodeset_linker.models.node_class import NodeClass, NodeRole
 from nodeset_linker.repository.model import build_model, load_nodesets
 from nodeset_linker.utils.errors import ExportError
@@ -218,6 +225,76 @@ class TestExport:
         out = tmp_path / "dangling.xml"
         with pytest.raises(ExportError, match="cannot be written"):
             export(model, {source.node_id}, out, validate=False)
+        assert not out.exists()
+
+    def test_export_refuses_to_drop_a_definition_field_even_without_validation(
+        self, tmp_path
+    ) -> None:
+        missing_type = node_id(31999, Machinery_NS)
+        structure = UADataType(
+            node_id=node_id(31009, Machinery_NS),
+            browse_name=QualifiedName(name="Incomplete"),
+            node_class=NodeClass.DATA_TYPE,
+            role=NodeRole.STRUCTURE,
+            definition=Definition(
+                kind="Structure",
+                fields=(StructureField(name="LostField", data_type=missing_type),),
+            ),
+        )
+        out = tmp_path / "incomplete-definition.xml"
+        with pytest.raises(ExportError, match="datatype field LostField"):
+            export(build_model([structure]), {structure.node_id}, out, validate=False)
+        assert not out.exists()
+
+    def test_default_export_rejects_schema_invalid_attributes(self, tmp_path) -> None:
+        node = UAObject(
+            node_id=node_id(31010, Machinery_NS),
+            browse_name=QualifiedName(name="InvalidMask"),
+            node_class=NodeClass.OBJECT,
+            role=NodeRole.INSTANCE,
+            attributes={"WriteMask": "not-a-number"},
+        )
+        out = tmp_path / "invalid-mask.xml"
+        with pytest.raises(ExportError, match="not schema-valid"):
+            export(build_model([node]), {node.node_id}, out)
+        assert not out.exists()
+
+    @pytest.mark.parametrize(
+        ("value_xml", "message"),
+        [
+            (
+                '<Value xmlns="http://opcfoundation.org/UA/2008/02/Types.xsd">'
+                "<NodeId><Identifier>ns=2;i=99</Identifier></NodeId></Value>",
+                "cannot be re-indexed",
+            ),
+            (
+                '<Value xmlns="http://opcfoundation.org/UA/2008/02/Types.xsd">'
+                "<QualifiedName><NamespaceIndex>2</NamespaceIndex><Name>Unknown</Name>"
+                "</QualifiedName></Value>",
+                "cannot be re-indexed",
+            ),
+        ],
+    )
+    def test_export_refuses_value_indexes_without_source_tables(
+        self, tmp_path, value_xml: str, message: str
+    ) -> None:
+        variable = UANode(
+            node_id=node_id(31011, Machinery_NS),
+            browse_name=QualifiedName(name="UnresolvedValue"),
+            node_class=NodeClass.VARIABLE,
+            role=NodeRole.INSTANCE,
+            attributes={"DataType": "i=12"},
+            value_xml=value_xml,
+        )
+        out = tmp_path / "unresolved-value.xml"
+        with pytest.raises(ExportError, match=message):
+            export(
+                build_model([variable]),
+                {variable.node_id},
+                out,
+                validate=False,
+                mark_namespace_subsets=False,
+            )
         assert not out.exists()
 
     def test_split_document_without_a_declared_model_has_no_models_element(self, tmp_path) -> None:

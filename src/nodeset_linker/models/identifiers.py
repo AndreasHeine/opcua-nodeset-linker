@@ -12,8 +12,20 @@ import re
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Self
+from urllib.parse import quote, unquote
 
 UA_NAMESPACE_URI = "http://opcfoundation.org/UA/"
+_URI_SAFE = ":/?#[]@!$&'()*+,=%"
+
+
+def encode_uri(uri: str) -> str:
+    """Encode a URI for a NodeId string, escaping the semicolon delimiter."""
+    return quote(uri, safe=_URI_SAFE)
+
+
+def decode_uri(uri: str) -> str:
+    """Decode a URI from a NodeId string."""
+    return unquote(uri)
 
 
 class IdentifierKind(Enum):
@@ -107,11 +119,12 @@ class ExpandedNodeId:
 
     @classmethod
     def parse(cls, text: str) -> Self:
-        """Parse ``nsu=<uri>;i=1234`` / ``ns=1;i=1234`` / bare ``i=1234``.
+        """Parse a standard ExpandedNodeId string form.
 
         ``ns=<index>`` is accepted for input convenience and resolved to a URI by
         the repository; it is never stored as identity.  A bare identifier means the
-        OPC UA namespace, so parsed identifiers stay comparable with document ones.
+        OPC UA namespace. Index-based server qualification is retained as an unresolved
+        marker because resolving it requires the document's ServerUris table.
         """
         parts = text.split(";")
         namespace_uri: str | None = UA_NAMESPACE_URI
@@ -119,11 +132,20 @@ class ExpandedNodeId:
         local_parts: list[str] = []
         for part in parts:
             if part.startswith("nsu="):
-                namespace_uri = part[4:]
+                namespace_uri = decode_uri(part[4:])
             elif part.startswith("ns="):
                 namespace_uri = f"index:{part[3:]}"  # marker, resolved by repository
+            elif part.startswith("svr="):
+                raw = part[4:]
+                if not raw.isdigit():
+                    raise ValueError(f"server index is not numeric: {raw!r}")
+                server_uri = f"index:{raw}" if int(raw) else None
+            elif part.startswith("svu="):
+                server_uri = decode_uri(part[4:])
             elif part.startswith("srv="):
-                server_uri = part[4:]
+                # Accept the non-standard spelling emitted by older linker versions.
+                raw = part[4:]
+                server_uri = f"index:{raw}" if raw.isdigit() else decode_uri(raw)
             else:
                 local_parts.append(part)
         if not local_parts:
@@ -136,10 +158,13 @@ class ExpandedNodeId:
 
     def as_xml(self) -> str:
         prefix = ""
-        if self.namespace_uri is not None:
-            prefix += f"nsu={self.namespace_uri};"
         if self.server_uri is not None:
-            prefix += f"srv={self.server_uri};"
+            if self.server_uri.startswith("index:"):
+                prefix += f"svr={self.server_uri[6:]};"
+            else:
+                prefix += f"svu={encode_uri(self.server_uri)};"
+        if self.namespace_uri is not None and self.namespace_uri != UA_NAMESPACE_URI:
+            prefix += f"nsu={encode_uri(self.namespace_uri)};"
         return prefix + self.identifier.as_xml()
 
     def __str__(self) -> str:

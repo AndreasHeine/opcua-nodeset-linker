@@ -62,6 +62,15 @@ class TestExpandedNodeId:
         assert parsed.namespace == UA
         assert parsed.namespace_uri == UA
 
+    def test_standard_expanded_node_id_string_encoding(self) -> None:
+        parsed = ExpandedNodeId.parse(
+            "svu=urn:server%3Bwest;nsu=urn:vendor%3Bmodel;s=Part"
+        )
+        assert parsed.server_uri == "urn:server;west"
+        assert parsed.namespace_uri == "urn:vendor;model"
+        assert parsed.as_xml() == "svu=urn:server%3Bwest;nsu=urn:vendor%3Bmodel;s=Part"
+        assert ExpandedNodeId.parse("i=9").as_xml() == "i=9"
+
     def test_is_hashable_and_immutable(self) -> None:
         ids = {ExpandedNodeId.parse("nsu=http://x/;i=1"), ExpandedNodeId.parse("nsu=http://x/;i=1")}
         assert len(ids) == 1

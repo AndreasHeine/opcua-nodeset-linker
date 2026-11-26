@@ -117,16 +117,16 @@ SERVER_FIXTURE = f"""{HEADER}
   <Aliases>
     <Alias Alias="HasComponent">i=47</Alias>
   </Aliases>
-  <UAVariable NodeId="srv=2;ns=1;i=200" BrowseName="1:RemoteTemp" DataType="i=26">
+  <UAVariable NodeId="svr=2;ns=1;i=200" BrowseName="1:RemoteTemp" DataType="i=26">
     <DisplayName>RemoteTemp</DisplayName>
   </UAVariable>
   <UAVariable NodeId="ns=1;i=201" BrowseName="1:LocalTemp" DataType="i=26">
     <DisplayName>LocalTemp</DisplayName>
     <References>
-      <Reference ReferenceType="HasComponent">srv=2;ns=1;i=200</Reference>
+      <Reference ReferenceType="HasComponent">svr=2;ns=1;i=200</Reference>
     </References>
   </UAVariable>
-  <UAVariable NodeId="srv=1;ns=1;i=202" BrowseName="1:OtherTemp" DataType="i=26">
+  <UAVariable NodeId="svr=1;ns=1;i=202" BrowseName="1:OtherTemp" DataType="i=26">
     <DisplayName>OtherTemp</DisplayName>
   </UAVariable>
 </UANodeSet>
@@ -159,7 +159,7 @@ BAD_SERVER_FIXTURE = f"""{HEADER}
   <ServerUris>
     <Uri>http://example.com/svc-a/</Uri>
   </ServerUris>
-  <UAVariable NodeId="srv=3;ns=1;i=200" BrowseName="1:Temp" DataType="i=26">
+  <UAVariable NodeId="svr=3;ns=1;i=200" BrowseName="1:Temp" DataType="i=26">
     <DisplayName>Temp</DisplayName>
   </UAVariable>
 </UANodeSet>
@@ -353,7 +353,7 @@ class TestServerQualifiedIdentifiers:
         assert "<ServerUris>" in xml
         assert xml.count("<Uri>http://example.com/") == 1
         assert '<Uri>http://example.com/svc-b/</Uri>' in xml
-        assert 'NodeId="srv=1;ns=1;i=200"' in xml
+        assert 'NodeId="svr=1;ns=1;i=200"' in xml
 
     def test_round_trip_keeps_the_server_uri(self, tmp_path) -> None:
         model = load_nodesets([str(DATA / "ua_base.xml"), str(write(tmp_path, "srv.xml", SERVER_FIXTURE))])
@@ -372,9 +372,9 @@ class TestServerQualifiedIdentifiers:
         xml = path.read_text(encoding="utf-8")
         assert "<Uri>http://example.com/svc-a/</Uri>" in xml
         assert "<Uri>http://example.com/svc-b/</Uri>" in xml
-        assert 'NodeId="srv=1;ns=1;i=202"' in xml
-        assert 'NodeId="srv=2;ns=1;i=200"' in xml
-        assert ">srv=2;ns=1;i=200<" in xml
+        assert 'NodeId="svr=1;ns=1;i=202"' in xml
+        assert 'NodeId="svr=2;ns=1;i=200"' in xml
+        assert ">svr=2;ns=1;i=200<" in xml
 
     def test_a_subset_that_drops_a_server_qualified_target_is_not_written(self, tmp_path) -> None:
         """The qualification is never quietly lost: validation blocks the export instead."""
@@ -386,6 +386,125 @@ class TestServerQualifiedIdentifiers:
         }
         with pytest.raises(ExportError, match="export blocked"):
             export(model, keep, tmp_path / "out.xml")
+
+
+class TestVariantIndexRewriting:
+    def test_node_ids_expanded_ids_and_qualified_names_use_export_tables(self, tmp_path) -> None:
+        xml = f"""{HEADER}
+          <NamespaceUris>
+            <Uri>http://z.example/unused/</Uri>
+            <Uri>{ALPHA_NS}</Uri>
+            <Uri>{BETA_NS}</Uri>
+          </NamespaceUris>
+          <ServerUris><Uri>urn:server;one</Uri></ServerUris>
+          <UAVariable NodeId="ns=2;i=500" BrowseName="2:Holder">
+            <Value xmlns:ua="http://opcfoundation.org/UA/2008/02/Types.xsd">
+              <ua:NodeId><ua:Identifier>ns=2;i=700</ua:Identifier></ua:NodeId>
+            </Value>
+          </UAVariable>
+          <UAVariable NodeId="ns=2;i=501" BrowseName="2:Expanded">
+            <Value xmlns:ua="http://opcfoundation.org/UA/2008/02/Types.xsd">
+              <ua:ExpandedNodeId><ua:Identifier>svr=1;ns=3;i=701</ua:Identifier></ua:ExpandedNodeId>
+            </Value>
+          </UAVariable>
+          <UAVariable NodeId="ns=2;i=502" BrowseName="2:Qualified">
+            <Value xmlns:ua="http://opcfoundation.org/UA/2008/02/Types.xsd">
+              <ua:QualifiedName>
+                <ua:NamespaceIndex>3</ua:NamespaceIndex><ua:Name>RemoteName</ua:Name>
+              </ua:QualifiedName>
+            </Value>
+          </UAVariable>
+        </UANodeSet>"""
+        model = load_nodesets([str(write(tmp_path, "value-indexes.xml", xml))])
+        out = export(
+            model,
+            {node.node_id for node in model.iter_nodes()},
+            tmp_path / "value-indexes-out.xml",
+            validate=False,
+            mark_namespace_subsets=False,
+        )
+        root = parse(str(out)).getroot()
+        by_name = {el.get("BrowseName"): el for el in root if el.get("NodeId")}
+        node_id_value = next(el for el in by_name["1:Holder"].iter() if el.tag.endswith("Identifier"))
+        expanded_value = next(el for el in by_name["1:Expanded"].iter() if el.tag.endswith("Identifier"))
+        qname_index = next(
+            el.text
+            for el in by_name["1:Qualified"].iter()
+            if el.tag.endswith("NamespaceIndex")
+        )
+        assert node_id_value.text == "ns=1;i=700"
+        assert expanded_value.text == "svr=1;ns=2;i=701"
+        assert qname_index == "2"
+        assert xsd_valid(out)
+
+
+class TestLocalizedMetadata:
+    def test_locales_and_value_translations_survive_round_trip(self, tmp_path) -> None:
+        xml = f"""{HEADER}
+          <NamespaceUris><Uri>{Machinery_NS}</Uri></NamespaceUris>
+          <UAVariable NodeId="ns=1;i=600" BrowseName="1:Localized">
+            <DisplayName Locale="en-US">Localized</DisplayName>
+            <DisplayName Locale="de-DE">Lokalisiert</DisplayName>
+            <Description Locale="en-US">English description</Description>
+            <Description Locale="de-DE">Deutsche Beschreibung</Description>
+            <Value><String xmlns="http://opcfoundation.org/UA/2008/02/Types.xsd">Hello</String></Value>
+            <Translation><Text Locale="de-DE">Hallo</Text></Translation>
+          </UAVariable>
+          <UADataType NodeId="i=24" BrowseName="BaseDataType"/>
+          <UADataType NodeId="ns=1;i=601" BrowseName="1:LocalizedStruct">
+            <Definition Name="LocalizedStruct">
+              <Field Name="Label" DataType="i=24">
+                <DisplayName Locale="en-US">Label</DisplayName>
+                <DisplayName Locale="de-DE">Beschriftung</DisplayName>
+                <Description Locale="de-DE">Feldbeschreibung</Description>
+              </Field>
+            </Definition>
+          </UADataType>
+        </UANodeSet>"""
+        model = load_nodesets([str(write(tmp_path, "localized.xml", xml))])
+        out = export(
+            model,
+            {node.node_id for node in model.iter_nodes()},
+            tmp_path / "localized-out.xml",
+            validate=False,
+            mark_namespace_subsets=False,
+        )
+        root = parse(str(out)).getroot()
+        variable = next(el for el in root if el.get("BrowseName") == "1:Localized")
+        displays = [
+            (el.get("Locale"), el.text)
+            for el in variable
+            if el.tag.endswith("DisplayName")
+        ]
+        assert displays == [("en-US", "Localized"), ("de-DE", "Lokalisiert")]
+        descriptions = [
+            (el.get("Locale"), el.text)
+            for el in variable
+            if el.tag.endswith("Description")
+        ]
+        assert descriptions == [
+            ("en-US", "English description"),
+            ("de-DE", "Deutsche Beschreibung"),
+        ]
+        assert any(
+            el.tag.endswith("Text") and el.get("Locale") == "de-DE" and el.text == "Hallo"
+            for el in variable.iter()
+        )
+        datatype = next(el for el in root if el.get("BrowseName") == "1:LocalizedStruct")
+        field = next(el for el in datatype.iter() if el.tag.endswith("Field"))
+        field_displays = [
+            (el.get("Locale"), el.text)
+            for el in field
+            if el.tag.endswith("DisplayName")
+        ]
+        assert field_displays == [("en-US", "Label"), ("de-DE", "Beschriftung")]
+        assert any(
+            el.tag.endswith("Description")
+            and el.get("Locale") == "de-DE"
+            and el.text == "Feldbeschreibung"
+            for el in field
+        )
+        assert xsd_valid(out)
 
 
 class TestUndeclaredIndexes:
@@ -414,3 +533,25 @@ class TestUndeclaredIndexes:
     def test_declared_indexes_still_work(self, tmp_path) -> None:
         model = load_nodesets([str(write(tmp_path, "ok.xml", SERVER_FIXTURE))])
         assert node_by_name(model, "LocalTemp").node_id.namespace == Machinery_NS
+
+    def test_legacy_srv_spelling_is_read_but_exported_as_standard_svr(self, tmp_path) -> None:
+        legacy = SERVER_FIXTURE.replace("svr=", "srv=").replace(' DataType="i=26"', "")
+        model = load_nodesets([str(write(tmp_path, "legacy-srv.xml", legacy))])
+        node = node_by_name(model, "RemoteTemp")
+        out = export(model, {node.node_id}, tmp_path / "standard-svr.xml")
+        assert 'NodeId="svr=1;ns=1;i=200"' in out.read_text(encoding="utf-8")
+
+    def test_server_uri_expanded_node_id_is_decoded_and_reindexed(self, tmp_path) -> None:
+        server_uri = "http://example.com/svc;a/"
+        xml = f"""{HEADER}
+          <NamespaceUris><Uri>{Machinery_NS}</Uri></NamespaceUris>
+          <UAVariable NodeId="svu=http://example.com/svc%3Ba/;ns=1;i=205"
+                      BrowseName="1:RemoteByUri"/>
+        </UANodeSet>"""
+        model = load_nodesets([str(write(tmp_path, "svu.xml", xml))])
+        node = node_by_name(model, "RemoteByUri")
+        assert node.node_id.server_uri == server_uri
+        out = export(model, {node.node_id}, tmp_path / "svu-out.xml", mark_namespace_subsets=False)
+        output = out.read_text(encoding="utf-8")
+        assert '<Uri>http://example.com/svc;a/</Uri>' in output
+        assert 'NodeId="svr=1;ns=1;i=205"' in output

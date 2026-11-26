@@ -26,6 +26,7 @@ from nodeset_linker.models.identifiers import (
     IdentifierKind,
     NodeId,
     QualifiedName,
+    decode_uri,
 )
 from nodeset_linker.models.namespace import (
     DocumentInfo,
@@ -39,6 +40,7 @@ from nodeset_linker.models.node import (
     Definition,
     EnumValue,
     FieldMetadata,
+    LocalizedText,
     OptionSetValue,
     Reference,
     StructureField,
@@ -189,7 +191,7 @@ class NamespaceResolver:
         return self._by_index.get(index)
 
     def server_uri_for_index(self, index: int) -> str | None:
-        """``srv=0`` means the server the document was written for: no qualification."""
+        """``svr=0`` means the server the document was written for: no qualification."""
         if index == 0:
             return None
         if 1 <= index <= len(self._servers):
@@ -201,7 +203,7 @@ class NamespaceResolver:
 
         An identifier without a namespace prefix belongs to the OPC UA namespace: that is
         how official NodeSets refer to their bases (``i=49``, ``ParentNodeId="i=2004"``).
-        An ``ns=<index>`` or ``srv=<index>`` that the document did not declare is an error,
+        An ``ns=<index>`` or ``svr=<index>`` that the document did not declare is an error,
         never a silent fallback to namespace 0 — guessing would point the identifier at the
         wrong namespace and make the reduced file claim a node that does not exist.
         """
@@ -210,7 +212,7 @@ class NamespaceResolver:
         local_parts: list[str] = []
         for part in text.split(";"):
             if part.startswith("nsu="):
-                namespace_uri = part[4:]
+                namespace_uri = decode_uri(part[4:])
             elif part.startswith("ns="):
                 raw = part[3:]
                 if not raw.isdigit():
@@ -222,7 +224,21 @@ class NamespaceResolver:
                         " does not declare in NamespaceUris"
                     )
                 namespace_uri = resolved
+            elif part.startswith("svu="):
+                server_uri = decode_uri(part[4:])
+            elif part.startswith("svr="):
+                raw = part[4:]
+                if not raw.isdigit():
+                    raise ParseError(f"identifier {text!r} has a non-numeric svr= index")
+                resolved_server = self.server_uri_for_index(int(raw))
+                if int(raw) and resolved_server is None:
+                    raise ParseError(
+                        f"identifier {text!r} uses server index {raw}, which this document"
+                        " does not declare in ServerUris"
+                    )
+                server_uri = resolved_server
             elif part.startswith("srv="):
+                # Accept the non-standard spelling emitted by older linker versions.
                 raw = part[4:]
                 if raw.isdigit():
                     resolved_server = self.server_uri_for_index(int(raw))
@@ -233,7 +249,7 @@ class NamespaceResolver:
                         )
                     server_uri = resolved_server
                 else:
-                    server_uri = raw  # some project files spell the ApplicationUri directly
+                    server_uri = decode_uri(raw)
             elif part:
                 local_parts.append(part)
         if not local_parts:
@@ -468,6 +484,8 @@ class NodeSetParser:
             "node_class": node_class,
             "display_name": self._text(_child(element, "DisplayName")),
             "description": self._text(_child(element, "Description")),
+            "display_names": self._localized_texts(element, "DisplayName"),
+            "descriptions": self._localized_texts(element, "Description"),
             "references": references,
             "modelling_rule": modelling_rule,
             "is_abstract": (element.get("IsAbstract") or "false").lower() == "true",
@@ -485,11 +503,17 @@ class NodeSetParser:
             "documentation": self._text(_child(element, "Documentation")),
             "value_xml": self._serialize(_child(element, "Value")),
             "value_dependencies": self._value_dependencies(_child(element, "Value")),
+            "value_identifiers": self._value_identifiers(_child(element, "Value"), resolver),
+            "value_qualified_names": self._value_qualified_names(
+                _child(element, "Value"), resolver
+            ),
             "extensions_xml": self._serialized_children(element, "Extensions", "Extension"),
             "role_permissions_xml": self._serialized_children(
                 element, "RolePermissions", "RolePermission"
             ),
             "inverse_name": self._text(_child(element, "InverseName")),
+            "inverse_names": self._localized_texts(element, "InverseName"),
+            "translations_xml": self._serialized_elements(element, "Translation"),
         }
         match node_class:
             case NodeClass.DATA_TYPE:
@@ -804,6 +828,8 @@ class NodeSetParser:
                 display_name=self._text(_child(el, "DisplayName")),
                 is_optional=(el.get("IsOptional") or "false").lower() == "true",
                 metadata=self._field_metadata(el),
+                display_names=self._localized_texts(el, "DisplayName"),
+                descriptions=self._localized_texts(el, "Description"),
             )
             for el in fields_el
             if el.get("DataType") is not None or kind in {"Structure", "Union"}
@@ -816,6 +842,8 @@ class NodeSetParser:
                     description=self._text(_child(el, "Description")),
                     display_name=self._text(_child(el, "DisplayName")),
                     metadata=self._field_metadata(el),
+                    display_names=self._localized_texts(el, "DisplayName"),
+                    descriptions=self._localized_texts(el, "Description"),
                 )
                 for el in (
                     _children(def_el, "EnumeratedValues")
@@ -834,6 +862,8 @@ class NodeSetParser:
                     description=self._text(_child(el, "Description")),
                     display_name=self._text(_child(el, "DisplayName")),
                     metadata=self._field_metadata(el),
+                    display_names=self._localized_texts(el, "DisplayName"),
+                    descriptions=self._localized_texts(el, "Description"),
                 )
                 for el in (
                     _children(def_el, "Values")
@@ -858,6 +888,8 @@ class NodeSetParser:
                     description=self._text(_child(el, "Description")),
                     display_name=self._text(_child(el, "DisplayName")),
                     metadata=self._field_metadata(el),
+                    display_names=self._localized_texts(el, "DisplayName"),
+                    descriptions=self._localized_texts(el, "Description"),
                 )
                 for el in (
                     _children(def_el, "Alternatives")
@@ -902,6 +934,50 @@ class NodeSetParser:
                 dependencies[text] = resolved
         return tuple(dependencies.items())
 
+    def _value_identifiers(
+        self, value: _Element | None, resolver: NamespaceResolver
+    ) -> tuple[tuple[str, ExpandedNodeId], ...]:
+        """Resolve NodeId-valued Variant fields so export can re-index them."""
+        identifiers: dict[str, ExpandedNodeId] = {}
+        wrappers = {"TypeId", "DataType", "NodeId", "ExpandedNodeId"}
+        if value is not None:
+            for element in value.iter():
+                if _local(element.tag) not in wrappers:
+                    continue
+                text = self._text(_child(element, "Identifier"))
+                if text is None:
+                    continue
+                resolved = self.aliases.get(text) or resolver.resolve(text)
+                identifiers[text] = resolved
+        return tuple(identifiers.items())
+
+    def _value_qualified_names(
+        self, value: _Element | None, resolver: NamespaceResolver
+    ) -> tuple[tuple[str, str], ...]:
+        """Map Variant QualifiedName indexes to source namespace URIs."""
+        names: dict[str, str] = {}
+        if value is not None:
+            for element in value.iter():
+                if _local(element.tag) != "QualifiedName":
+                    continue
+                index_el = _child(element, "NamespaceIndex")
+                if index_el is None or not (index_el.text or "").strip():
+                    continue
+                raw_index = (index_el.text or "").strip()
+                if not raw_index.isdigit():
+                    raise ParseError(
+                        f"QualifiedName inside <Value> has a non-numeric NamespaceIndex "
+                        f"{raw_index!r}"
+                    )
+                namespace_uri = resolver.uri_for_index(int(raw_index))
+                if namespace_uri is None:
+                    raise ParseError(
+                        f"QualifiedName inside <Value> uses namespace index {raw_index}, "
+                        "which this document does not declare in NamespaceUris"
+                    )
+                names[raw_index] = namespace_uri
+        return tuple(names.items())
+
     def _field_metadata(self, element: _Element) -> FieldMetadata:
         """The optional ``DataTypeField`` attributes, kept as they were stated.
 
@@ -917,6 +993,19 @@ class NodeSetParser:
             array_dimensions=tuple(part for part in (dims_raw or "").split(",") if part),
             max_string_length=int(max_raw) if max_raw is not None else None,
             allow_sub_types=(element.get("AllowSubTypes") or "false").lower() == "true",
+        )
+
+    def _localized_texts(self, element: _Element, name: str) -> tuple[LocalizedText, ...]:
+        return tuple(
+            LocalizedText(text=child.text or "", locale=child.get("Locale"))
+            for child in _children(element, name)
+        )
+
+    def _serialized_elements(self, element: _Element, name: str) -> tuple[str, ...]:
+        return tuple(
+            serialized
+            for serialized in (self._serialize(child) for child in _children(element, name))
+            if serialized
         )
 
     @staticmethod

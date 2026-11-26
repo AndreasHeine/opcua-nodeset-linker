@@ -54,6 +54,14 @@ class FieldMetadata:
 
 
 @dataclass(frozen=True, slots=True)
+class LocalizedText:
+    """A NodeSet LocalizedText value, retaining its locale."""
+
+    text: str
+    locale: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class StructureField:
     """One field of a ``StructureDefinition``."""
 
@@ -63,6 +71,8 @@ class StructureField:
     display_name: str | None = None
     is_optional: bool = False
     metadata: FieldMetadata = field(default_factory=FieldMetadata)
+    display_names: tuple[LocalizedText, ...] = ()
+    descriptions: tuple[LocalizedText, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,6 +84,8 @@ class EnumValue:
     description: str | None = None
     display_name: str | None = None
     metadata: FieldMetadata = field(default_factory=FieldMetadata)
+    display_names: tuple[LocalizedText, ...] = ()
+    descriptions: tuple[LocalizedText, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,6 +97,8 @@ class UnionAlternative:
     description: str | None = None
     display_name: str | None = None
     metadata: FieldMetadata = field(default_factory=FieldMetadata)
+    display_names: tuple[LocalizedText, ...] = ()
+    descriptions: tuple[LocalizedText, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,6 +110,8 @@ class OptionSetValue:
     description: str | None = None
     display_name: str | None = None
     metadata: FieldMetadata = field(default_factory=FieldMetadata)
+    display_names: tuple[LocalizedText, ...] = ()
+    descriptions: tuple[LocalizedText, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,6 +153,12 @@ class UANode:
     extensions_xml: tuple[str, ...] = ()
     role_permissions_xml: tuple[str, ...] = ()
     inverse_name: str | None = None
+    display_names: tuple[LocalizedText, ...] = ()
+    descriptions: tuple[LocalizedText, ...] = ()
+    inverse_names: tuple[LocalizedText, ...] = ()
+    translations_xml: tuple[str, ...] = ()
+    value_identifiers: tuple[tuple[str, ExpandedNodeId], ...] = ()
+    value_qualified_names: tuple[tuple[str, str], ...] = ()
 
     @property
     def type_definition(self) -> ExpandedNodeId | None:
@@ -311,4 +333,5 @@ def referenced_identifiers(node: UANode) -> tuple[ExpandedNodeId, ...]:
         found.extend(field.data_type for field in definition.fields)
         found.extend(alternative.data_type for alternative in definition.union_alternatives)
     found.extend(identifier for _, identifier in node.value_dependencies)
+    found.extend(identifier for _, identifier in node.value_identifiers)
     return tuple(dict.fromkeys(found))

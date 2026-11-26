@@ -2057,7 +2057,7 @@ def _same_target(
 #: Separator of the internal identity text.  An XML attribute value cannot carry a control
 #: character (a document containing one is not well-formed), so it can never appear in a
 #: NamespaceUri, a NodeId or a ServerUri.  ``|`` can: ``s=…`` identifiers may legally contain
-#: it, and splitting on it would read back a different identifier — with a ``srv=`` part
+#: it, and splitting on it would read back a different identifier — with an ``svu=`` part
 #: present, even the identifier itself was corrupted.
 _IDENTITY_SEPARATOR = "\x1f"
 
