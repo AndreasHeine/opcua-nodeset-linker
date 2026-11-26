@@ -4,7 +4,7 @@
 release management without a server, for machine builders and standardization consortia.**
 
 **License:** Apache 2.0 (Open Source)  
-**Status:** Project version `0.4.0-alpha` (see `pyproject.toml`)
+**Status:** Project version `0.5.0-alpha` (see `pyproject.toml`)
 
 ---
 

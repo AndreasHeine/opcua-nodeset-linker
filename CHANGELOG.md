@@ -7,6 +7,36 @@ Rule ids are `BP-*` slugs that never encode a clause number of one paper revisio
 `§` numbers refer to OPC 11030 *Best Practices for Companion Models* v1.03.03, whose source
 text ships in `docs/OPC-11030-v1.03.03.md`.
 
+## 0.5.0-alpha — 2026-11-26
+
+This release makes NodeSet exports safer to reduce and more faithful to their source documents.
+
+### Added
+
+- **Schema-validated exports** — every serialized NodeSet, including split exports and exports
+  with semantic validation disabled, is checked against the bundled OPC UA NodeSet XSD v1.05.04.
+  The schema is included in built wheels.
+- **Variant index re-mapping** — NodeIds, ExpandedNodeIds and QualifiedNames inside `Value`
+  elements are resolved through their source namespace/server tables and re-indexed for output.
+  Export refuses unresolved indexes rather than copying potentially stale values.
+- **Localized metadata preservation** — locale-bearing display names, descriptions, inverse names
+  and datatype-field metadata, as well as value translations, survive parsing and export.
+
+### Changed
+
+- **ExpandedNodeId serialization follows the standard** — output uses `svr=` and `svu=` forms
+  with encoded URI components; the parser continues to accept legacy `srv=` input.
+
+### Fixed
+
+- **Export no longer silently loses definition data** — if a datatype field or union alternative
+  cannot be represented in the output, normal and split exports refuse instead of pruning it.
+
+### Scope of this release
+
+Exports are checked against the bundled NodeSet XSD and the implementation is tested against
+official NodeSets. This does not certify every OPC UA semantic or runtime conformance requirement.
+
 ## 0.4.0-alpha — 2026-11-10
 
 An audit pass over the input paths and the export: every XML read hardened, every refusal stated
